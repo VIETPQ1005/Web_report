@@ -231,10 +231,11 @@
       .replace("Non-Store (Phone)", "Phone");
   }
 
-  // --- LOCAL INDEXEDDB CACHE (FALLBACK WHEN RUNNING OFFLINE / FILE://) ---
+  // --- LOCAL INDEXEDDB CACHE (FALLBACK + SAVED SOURCE DIRECTORY HANDLE) ---
   const IDB_NAME = "cyberpulse_sales_db";
   const IDB_STORE = "datasets";
   const IDB_KEY = "latest";
+  const IDB_DIR_KEY = "source_dir_handle";
 
   function openLocalDb() {
     return new Promise((resolve, reject) => {
@@ -252,12 +253,12 @@
     });
   }
 
-  async function idbGetLatest() {
+  async function idbGetKey(key) {
     try {
       const db = await openLocalDb();
       return await new Promise((resolve) => {
         const tx = db.transaction(IDB_STORE, "readonly");
-        const req = tx.objectStore(IDB_STORE).get(IDB_KEY);
+        const req = tx.objectStore(IDB_STORE).get(key);
         req.onsuccess = () => resolve(req.result || null);
         req.onerror = () => resolve(null);
       });
@@ -266,12 +267,12 @@
     }
   }
 
-  async function idbSetLatest(payload) {
+  async function idbSetKey(key, value) {
     try {
       const db = await openLocalDb();
       await new Promise((resolve, reject) => {
         const tx = db.transaction(IDB_STORE, "readwrite");
-        tx.objectStore(IDB_STORE).put(payload, IDB_KEY);
+        tx.objectStore(IDB_STORE).put(value, key);
         tx.oncomplete = () => resolve();
         tx.onerror = () => reject(tx.error);
       });
@@ -281,12 +282,12 @@
     }
   }
 
-  async function idbClearLatest() {
+  async function idbDeleteKey(key) {
     try {
       const db = await openLocalDb();
       await new Promise((resolve) => {
         const tx = db.transaction(IDB_STORE, "readwrite");
-        tx.objectStore(IDB_STORE).delete(IDB_KEY);
+        tx.objectStore(IDB_STORE).delete(key);
         tx.oncomplete = () => resolve();
         tx.onerror = () => resolve();
       });
@@ -294,6 +295,13 @@
       // ignore
     }
   }
+
+  const idbGetLatest = () => idbGetKey(IDB_KEY);
+  const idbSetLatest = (payload) => idbSetKey(IDB_KEY, payload);
+  const idbClearLatest = () => idbDeleteKey(IDB_KEY);
+  const idbGetSourceDir = () => idbGetKey(IDB_DIR_KEY);
+  const idbSetSourceDir = (handle) => idbSetKey(IDB_DIR_KEY, handle);
+  const idbClearSourceDir = () => idbDeleteKey(IDB_DIR_KEY);
 
   async function loadBaselineData() {
     if (window.REPORT_DATA && Array.isArray(window.REPORT_DATA.rows)) {
@@ -3637,58 +3645,6 @@
     return { directPayload: null, salesRecords, invRecords, salesSources, invSources };
   }
 
-  function rebuildPendingPayload() {
-    const hasSalesNew = state.pendingSalesRecords && state.pendingSalesRecords.length > 0;
-    const hasInvNew = state.pendingInvRecords && state.pendingInvRecords.length > 0;
-    if (!hasSalesNew && !hasInvNew && !state.pendingPayload) return;
-
-    if (hasSalesNew || hasInvNew) {
-      let nextPayload = null;
-
-      if (hasSalesNew) {
-        let recs = state.pendingSalesRecords;
-        let srcs = [...state.pendingSalesSources];
-        if (state.updateMode === "merge" && state.raw) {
-          recs = extractExistingRecords(state.raw).concat(recs);
-          srcs = (state.raw.meta?.sources || []).map((s) => ({ ...s })).concat(srcs);
-        }
-        nextPayload = buildPayloadFromRecords(recs, srcs);
-      } else if (state.raw) {
-        // Keep existing Sales untouched when user uploads only Inventory
-        nextPayload = {
-          meta: { ...state.raw.meta, updatedAt: new Date().toISOString() },
-          lookups: state.raw.lookups,
-          siteDirectory: state.raw.siteDirectory,
-          rows: state.raw.rows,
-        };
-      }
-
-      if (!nextPayload || !Array.isArray(nextPayload.rows) || nextPayload.rows.length === 0) {
-        showUpdateFeedback("Thiếu dữ liệu Sales nền tảng — hãy tải kèm file Sale_Revenue_Detail.xlsx.", "error");
-        document.getElementById("updatePreviewCard").classList.add("hidden");
-        document.getElementById("publishUpdateBtn").disabled = true;
-        return;
-      }
-
-      if (hasInvNew) {
-        let invRecs = state.pendingInvRecords;
-        let invSrcs = [...state.pendingInvSources];
-        if (state.updateMode === "merge" && state.raw?.inventory) {
-          invRecs = extractExistingInvRecords(state.raw.inventory).concat(invRecs);
-          invSrcs = (state.raw.inventory.meta?.sources || []).map((s) => ({ ...s })).concat(invSrcs);
-        }
-        nextPayload.inventory = buildInventoryPayloadFromRecords(invRecs, invSrcs);
-      } else if (state.raw?.inventory) {
-        // Keep existing Inventory untouched when user uploads only Sales
-        nextPayload.inventory = state.raw.inventory;
-      }
-
-      state.pendingPayload = nextPayload;
-    }
-
-    renderUpdatePreview(state.pendingPayload);
-  }
-
   function showUpdateFeedback(msg, type = "info") {
     const el = document.getElementById("updateFeedback");
     if (!el) return;
@@ -3702,89 +3658,37 @@
     el.classList.remove("hidden");
   }
 
-  function renderUpdatePreview(payload) {
-    const card = document.getElementById("updatePreviewCard");
-    const hasSalesNew = state.pendingKinds.includes("sales");
-    const hasInvNew = state.pendingKinds.includes("inventory");
-    const invOnly = hasInvNew && !hasSalesNew && payload.inventory;
+  function supportsDirectorySync() {
+    return typeof window.showDirectoryPicker === "function" && window.isSecureContext;
+  }
 
-    if (invOnly) {
-      const inv = payload.inventory;
-      const curInv = state.raw?.inventory?.meta;
-      const next = inv.meta;
-      const filesStr = (next.sources || []).map((s) => s.file).join(" + ");
-      document.getElementById("previewFileNames").textContent = `[TỒN KHO] ${filesStr}`;
-      document.getElementById("pvRows").textContent = `${fmtInt(next.rowCount)} dòng BIN`;
-      document.getElementById("pvDateRange").textContent = `Snapshot ${next.snapshotDate || "--"}`;
-      document.getElementById("pvMonthsCount").textContent = `${fmtInt(next.uniqueSkuCount)} SKUs`;
-      document.getElementById("pvSales").textContent = fmtCompactVnd(next.totals.value);
-      document.getElementById("pvQty").textContent = `${fmtInt(next.totals.qty)} units`;
-      document.getElementById("pvGp").textContent = fmtCompactVnd(next.totals.sellableValue);
-      document.getElementById("pvGm").textContent = `Hư hỏng: ${fmtCompactVnd(next.totals.damagedValue)}`;
-      document.getElementById("pvCoverage").textContent = `${inv.lookups.sites.length} Kho • ${inv.lookups.binTypes.length} BIN Type`;
-
-      const setInvDelta = (id, diff, formatter) => {
-        const el = document.getElementById(id);
-        if (!el) return;
-        if (!curInv) { el.textContent = "Dữ liệu tồn kho mới"; el.classList.remove("neg"); return; }
-        const sign = diff > 0 ? "+" : "";
-        el.textContent = diff === 0 ? "Không đổi so với hiện tại" : `${sign}${formatter(diff)} so với hiện tại`;
-        el.classList.toggle("neg", diff < 0);
-      };
-      setInvDelta("pvRowsDelta", next.rowCount - (curInv?.rowCount || 0), (v) => `${fmtInt(v)} BIN`);
-      setInvDelta("pvSalesDelta", next.totals.value - (curInv?.totals?.value || 0), (v) => fmtCompactVnd(v));
-      setInvDelta("pvQtyDelta", next.totals.qty - (curInv?.totals?.qty || 0), (v) => `${fmtInt(v)} units`);
-    } else {
-      const cur = state.raw?.meta;
-      const next = payload.meta;
-      const filesStr = [
-        ...(next.sources || []).map((s) => s.file),
-        ...(hasInvNew && payload.inventory?.meta?.sources ? payload.inventory.meta.sources.map((s) => s.file) : []),
-      ].join(" + ");
-      document.getElementById("previewFileNames").textContent = filesStr;
-      document.getElementById("pvRows").textContent = `${fmtInt(next.rowCount)} dòng`;
-      document.getElementById("pvDateRange").textContent = `${next.dateMin || "?"} → ${next.dateMax || "?"}`;
-      const monthsSet = new Set(payload.rows.map((r) => r[C.MONTH]));
-      document.getElementById("pvMonthsCount").textContent = hasInvNew && payload.inventory
-        ? `${monthsSet.size} tháng + ${fmtInt(payload.inventory.meta.rowCount)} BIN kho`
-        : `${monthsSet.size} tháng`;
-      document.getElementById("pvSales").textContent = fmtCompactVnd(next.totals.sales);
-      document.getElementById("pvQty").textContent = `${fmtInt(next.totals.qty)} units`;
-      document.getElementById("pvGp").textContent = fmtCompactVnd(next.totals.gp);
-      document.getElementById("pvGm").textContent = `GM ${fmtPct(next.totals.gmPct)}`;
-      document.getElementById("pvCoverage").textContent = `${payload.lookups.sites.length} Sites • ${payload.lookups.regions.length} Regions`;
-
-      const setDelta = (id, diff, formatter) => {
-        const el = document.getElementById(id);
-        if (!el || !cur) return;
-        const sign = diff > 0 ? "+" : "";
-        el.textContent = diff === 0 ? "Không đổi so với hiện tại" : `${sign}${formatter(diff)} so với hiện tại`;
-        el.classList.toggle("neg", diff < 0);
-      };
-      if (cur) {
-        setDelta("pvRowsDelta", next.rowCount - cur.rowCount, (v) => `${fmtInt(v)} dòng`);
-        setDelta("pvSalesDelta", next.totals.sales - cur.totals.sales, (v) => fmtCompactVnd(v));
-        setDelta("pvQtyDelta", next.totals.qty - cur.totals.qty, (v) => `${fmtInt(v)} units`);
-      }
+  function setSyncButtonsBusy(busy, label = "Đang đồng bộ...") {
+    const topBtn = document.getElementById("autoSyncDataBtn");
+    const topTxt = document.getElementById("autoSyncBtnText");
+    const railBtn = document.getElementById("updateDataRailBtn");
+    const modalSyncBtn = document.getElementById("syncNowFromModalBtn");
+    if (topBtn) {
+      topBtn.disabled = busy;
+      topBtn.classList.toggle("is-syncing", busy);
     }
-
-    card.classList.remove("hidden");
-    document.getElementById("publishUpdateBtn").disabled = false;
-    document.getElementById("downloadParsedJsonBtn").classList.remove("hidden");
+    if (topTxt) topTxt.textContent = busy ? label : "Update Data";
+    if (railBtn) {
+      railBtn.disabled = busy;
+      railBtn.classList.toggle("is-syncing", busy);
+    }
+    if (modalSyncBtn) modalSyncBtn.disabled = busy;
   }
 
   async function refreshCloudStatus() {
     const dot = document.getElementById("cloudStatusDot");
     const txt = document.getElementById("cloudStatusText");
     const passRow = document.getElementById("passcodeRow");
-    const pubLbl = document.getElementById("publishBtnLabel");
 
     if (location.protocol !== "http:" && location.protocol !== "https:") {
       state.cloudAvailable = false;
-      dot.className = "status-dot local";
-      txt.textContent = "Đang chạy file cục bộ (Offline) — Dữ liệu mới sẽ lưu vào trình duyệt này và cho phép tải file JSON.";
-      pubLbl.textContent = "💾 Cập nhật báo cáo (Local)";
-      passRow.classList.add("hidden");
+      if (dot) dot.className = "status-dot local";
+      if (txt) txt.textContent = "Đang chạy file cục bộ (Offline) — Mở website trên Netlify HTTPS để bật đồng bộ tự động từ thư mục gốc.";
+      if (passRow) passRow.classList.add("hidden");
       return;
     }
 
@@ -3795,13 +3699,12 @@
         const info = await res.json();
         state.cloudAvailable = Boolean(info.cloudAvailable);
         state.cloudAuthRequired = Boolean(info.authRequired);
-        dot.className = "status-dot online";
+        if (dot) dot.className = "status-dot online";
         const lastInfo = info.exists && info.metadata?.updatedAt
-          ? `Lần cập nhật gần nhất: ${formatIsoVn(info.metadata.updatedAt)} (${fmtInt(info.metadata.rowCount)} dòng)`
-          : "Đang dùng dữ liệu gốc từ GitHub — sẵn sàng nhận dữ liệu mới";
-        txt.textContent = `☁ Netlify Cloud Live đã kết nối • ${lastInfo}`;
-        pubLbl.textContent = "☁ Cập nhật lên Web (Live)";
-        passRow.classList.toggle("hidden", !state.cloudAuthRequired);
+          ? `Cập nhật gần nhất: ${formatIsoVn(info.metadata.updatedAt)} (${fmtInt(info.metadata.rowCount)} Sales${info.metadata.inventoryRows ? ` + ${fmtInt(info.metadata.inventoryRows)} Kho` : ""})`
+          : "Đang dùng bản gốc GitHub — sẵn sàng đồng bộ Live";
+        if (txt) txt.textContent = `☁ Netlify Cloud Live đã kết nối • ${lastInfo}`;
+        if (passRow) passRow.classList.toggle("hidden", !state.cloudAuthRequired);
         return;
       }
     } catch {
@@ -3809,29 +3712,61 @@
     }
 
     state.cloudAvailable = false;
-    dot.className = "status-dot local";
-    txt.textContent = "Máy chủ hiện tại không có Netlify Function — Dữ liệu mới sẽ lưu trên trình duyệt này (Local Cache).";
-    pubLbl.textContent = "💾 Cập nhật báo cáo (Local)";
-    passRow.classList.add("hidden");
+    if (dot) dot.className = "status-dot local";
+    if (txt) txt.textContent = "Máy chủ hiện tại không có Netlify Function — dữ liệu đồng bộ sẽ lưu Local Cache.";
+    if (passRow) passRow.classList.add("hidden");
+  }
+
+  async function refreshLinkedFolderUi() {
+    const card = document.getElementById("sourceFolderCard");
+    const title = document.getElementById("linkedFolderTitle");
+    const sub = document.getElementById("linkedFolderSub");
+    const linkBtn = document.getElementById("linkSourceFolderBtn");
+    const linkLbl = document.getElementById("linkFolderBtnLabel");
+    const syncNowBtn = document.getElementById("syncNowFromModalBtn");
+    const unlinkBtn = document.getElementById("unlinkFolderBtn");
+    if (!card || !title || !sub) return;
+
+    if (!supportsDirectorySync()) {
+      card.classList.remove("linked");
+      title.textContent = "Trình duyệt chưa hỗ trợ liên kết thư mục tự động";
+      sub.innerHTML = "Hãy mở <code>https://web-report-47sq.netlify.app/</code> bằng <strong>Chrome hoặc Edge</strong> trên máy tính để liên kết thư mục <code>D:\\Project_AI\\Website\\data</code>, hoặc dùng file <code>UPDATE_DATA.bat</code> trên PC.";
+      if (linkBtn) linkBtn.classList.add("hidden");
+      if (syncNowBtn) syncNowBtn.classList.add("hidden");
+      if (unlinkBtn) unlinkBtn.classList.add("hidden");
+      return;
+    }
+
+    if (linkBtn) linkBtn.classList.remove("hidden");
+    const dirHandle = await idbGetSourceDir();
+    if (dirHandle) {
+      card.classList.add("linked");
+      title.textContent = `✅ Đang liên kết thư mục gốc: "${dirHandle.name}/"`;
+      sub.innerHTML = "Mỗi khi bạn cập nhật file Excel trong thư mục này, chỉ cần bấm nút <strong>Update Data</strong> ở góc trên là Web tự động đọc tất cả file <code>*.xlsx</code> và đồng bộ lên Cloud.";
+      if (linkLbl) linkLbl.textContent = "📁 Đổi thư mục khác";
+      if (syncNowBtn) syncNowBtn.classList.remove("hidden");
+      if (unlinkBtn) unlinkBtn.classList.remove("hidden");
+    } else {
+      card.classList.remove("linked");
+      title.textContent = "Chưa liên kết thư mục dữ liệu gốc";
+      sub.innerHTML = "Bấm nút bên dưới và chọn thư mục <code>D:\\Project_AI\\Website\\data</code> <strong>1 lần duy nhất</strong>. Từ lần sau bấm <strong>Update Data</strong> sẽ tự động cập nhật ngay lập tức!";
+      if (linkLbl) linkLbl.textContent = "📁 Liên kết thư mục gốc & Cập nhật ngay";
+      if (syncNowBtn) syncNowBtn.classList.add("hidden");
+      if (unlinkBtn) unlinkBtn.classList.add("hidden");
+    }
   }
 
   function openUpdateModal() {
     const modal = document.getElementById("updateDataModal");
     if (!modal) return;
-    state.pendingPayload = null;
-    state.pendingSalesRecords = null;
-    state.pendingInvRecords = null;
-    state.pendingSalesSources = [];
-    state.pendingInvSources = [];
-    state.pendingKinds = [];
-    document.getElementById("excelFileInput").value = "";
-    document.getElementById("updatePreviewCard").classList.add("hidden");
-    document.getElementById("downloadParsedJsonBtn").classList.add("hidden");
-    document.getElementById("publishUpdateBtn").disabled = true;
     showUpdateFeedback("", "info");
+    const savedPass = sessionStorage.getItem("cyberpulse_update_key") || "";
+    const passInput = document.getElementById("updatePasscodeInput");
+    if (passInput && savedPass && !passInput.value) passInput.value = savedPass;
     modal.classList.add("open");
     modal.setAttribute("aria-hidden", "false");
     refreshCloudStatus();
+    refreshLinkedFolderUi();
   }
 
   function closeUpdateModal() {
@@ -3841,120 +3776,240 @@
     modal.setAttribute("aria-hidden", "true");
   }
 
-  async function handleFilesSelected(files) {
-    if (!files || !files.length) return;
-    showUpdateFeedback(`Đang phân tích ${files.length} file và nhận diện Sales / Inventory (Zero-PII)...`, "info");
-    document.getElementById("publishUpdateBtn").disabled = true;
+  async function verifyDirReadPermission(dirHandle) {
+    const opts = { mode: "read" };
+    if ((await dirHandle.queryPermission(opts)) === "granted") return true;
+    return (await dirHandle.requestPermission(opts)) === "granted";
+  }
+
+  async function readExcelFilesFromDirectory(dirHandle) {
+    const files = [];
+    for await (const [name, entry] of dirHandle.entries()) {
+      if (entry.kind !== "file") continue;
+      if (name.startsWith("~$") || name.startsWith(".")) continue;
+      if (!/\.(xlsx|xls)$/i.test(name)) continue;
+      files.push(await entry.getFile());
+    }
+    files.sort((a, b) => a.name.localeCompare(b.name));
+    return files;
+  }
+
+  async function publishPayloadDirectly(payload) {
+    // Re-check cloud availability if unknown
+    if (!state.cloudAvailable && (location.protocol === "http:" || location.protocol === "https:")) {
+      try {
+        const probe = await fetchWithTimeout("/api/report-data?meta=1", { cache: "no-store" }, 3000);
+        if (probe.ok && (probe.headers.get("content-type") || "").includes("application/json")) {
+          const info = await probe.json();
+          state.cloudAvailable = Boolean(info.cloudAvailable);
+          state.cloudAuthRequired = Boolean(info.authRequired);
+        }
+      } catch {
+        // ignore
+      }
+    }
+
+    if (state.cloudAvailable) {
+      const headers = { "Content-Type": "application/json" };
+      const passInputVal = (document.getElementById("updatePasscodeInput")?.value || "").trim();
+      const pass = passInputVal || (sessionStorage.getItem("cyberpulse_update_key") || "").trim();
+      if (pass) {
+        headers["x-update-key"] = pass;
+        sessionStorage.setItem("cyberpulse_update_key", pass);
+      }
+
+      const res = await fetch("/api/report-data", {
+        method: "POST",
+        headers,
+        body: JSON.stringify(payload),
+      });
+      const body = await res.json().catch(() => ({}));
+
+      if (!res.ok) {
+        if (res.status === 401) {
+          state.cloudAuthRequired = true;
+          openUpdateModal();
+          document.getElementById("passcodeRow")?.classList.remove("hidden");
+          document.getElementById("updatePasscodeInput")?.focus();
+          throw new Error("Cần nhập mã bảo vệ UPDATE_DATA_KEY để đồng bộ lên Web.");
+        }
+        throw new Error(body.error || `HTTP ${res.status}`);
+      }
+
+      if (body.metadata?.updatedAt) {
+        payload.meta.updatedAt = body.metadata.updatedAt;
+        state.cloudUpdatedAt = body.metadata.updatedAt;
+      }
+      await idbClearLatest();
+      applyNewDataset(payload, "cloud");
+      return "cloud";
+    }
+
+    await idbSetLatest(payload);
+    applyNewDataset(payload, "local");
+    return "local";
+  }
+
+  async function syncFromDirectoryHandle(dirHandle) {
+    setSyncButtonsBusy(true, "Đang đồng bộ...");
+    showUpdateFeedback(`Đang quét tất cả file Excel trong thư mục "${dirHandle.name}/"...`, "info");
 
     try {
+      const granted = await verifyDirReadPermission(dirHandle);
+      if (!granted) {
+        throw new Error("Bạn chưa cấp quyền đọc thư mục dữ liệu gốc.");
+      }
+
+      const files = await readExcelFilesFromDirectory(dirHandle);
+      if (!files.length) {
+        throw new Error(`Không tìm thấy file .xlsx nào trong thư mục "${dirHandle.name}/".`);
+      }
+
       const res = await parseUploadedFiles(files);
-      state.pendingSalesSources = res.salesSources || [];
-      state.pendingInvSources = res.invSources || [];
-      if (res.directPayload) {
-        state.pendingSalesRecords = null;
-        state.pendingInvRecords = null;
-        state.pendingKinds = ["sales", ...(res.directPayload.inventory ? ["inventory"] : [])];
-        state.pendingPayload = res.directPayload;
-      } else {
-        state.pendingSalesRecords = res.salesRecords;
-        state.pendingInvRecords = res.invRecords;
-        state.pendingKinds = [
-          ...(res.salesRecords.length ? ["sales"] : []),
-          ...(res.invRecords.length ? ["inventory"] : []),
-        ];
-        state.pendingPayload = null;
+      let nextPayload = null;
+
+      if (res.salesRecords.length > 0) {
+        nextPayload = buildPayloadFromRecords(res.salesRecords, res.salesSources);
+      } else if (state.raw) {
+        nextPayload = {
+          meta: { ...state.raw.meta, updatedAt: new Date().toISOString() },
+          lookups: state.raw.lookups,
+          siteDirectory: state.raw.siteDirectory,
+          rows: state.raw.rows,
+        };
       }
-      rebuildPendingPayload();
-      if (state.pendingPayload) {
-        const parts = [];
-        if (state.pendingKinds.includes("sales")) parts.push(`Sales (${fmtInt(state.pendingPayload.meta.rowCount)} dòng)`);
-        if (state.pendingKinds.includes("inventory") && state.pendingPayload.inventory) {
-          parts.push(`Tồn Kho (${fmtInt(state.pendingPayload.inventory.meta.rowCount)} dòng BIN)`);
-        }
-        showUpdateFeedback(
-          `Đã nhận diện & đọc thành công: ${parts.join(" + ")}. Kiểm tra số liệu bên dưới và bấm "Cập nhật lên Web".`,
-          "success"
-        );
+
+      if (!nextPayload || !Array.isArray(nextPayload.rows) || nextPayload.rows.length === 0) {
+        throw new Error("Không tìm thấy dữ liệu Sales hợp lệ trong thư mục gốc.");
       }
+
+      if (res.invRecords.length > 0) {
+        nextPayload.inventory = buildInventoryPayloadFromRecords(res.invRecords, res.invSources);
+      } else if (state.raw?.inventory) {
+        nextPayload.inventory = state.raw.inventory;
+      }
+
+      const mode = await publishPayloadDirectly(nextPayload);
+      closeUpdateModal();
+
+      const summaryParts = [];
+      if (res.salesRecords.length > 0) {
+        summaryParts.push(`Sales: ${fmtInt(nextPayload.meta.rowCount)} dòng (${fmtCompactVnd(nextPayload.meta.totals.sales)})`);
+      }
+      if (res.invRecords.length > 0 && nextPayload.inventory) {
+        summaryParts.push(`Tồn kho: ${fmtInt(nextPayload.inventory.meta.rowCount)} BIN (${fmtCompactVnd(nextPayload.inventory.meta.totals.value)})`);
+      }
+      const destLabel = mode === "cloud" ? "☁ Web Live" : "💾 Local Cache";
+      showToast(`✅ Tự động cập nhật từ "${dirHandle.name}/" → ${destLabel} | ${summaryParts.join(" • ")}`);
     } catch (err) {
-      state.pendingPayload = null;
-      state.pendingSalesRecords = null;
-      state.pendingInvRecords = null;
-      state.pendingKinds = [];
-      document.getElementById("updatePreviewCard").classList.add("hidden");
-      showUpdateFeedback(`Lỗi đọc file: ${err.message}`, "error");
+      if (err && err.name === "AbortError") return;
+      showUpdateFeedback(`Lỗi đồng bộ: ${err.message}`, "error");
+      showToast(`Lỗi đồng bộ dữ liệu gốc: ${err.message}`, true);
+    } finally {
+      setSyncButtonsBusy(false);
     }
   }
 
-  async function publishPendingUpdate() {
-    if (!state.pendingPayload) return;
-    const btn = document.getElementById("publishUpdateBtn");
-    const lbl = document.getElementById("publishBtnLabel");
-    const origText = lbl.textContent;
-    btn.disabled = true;
-    lbl.textContent = "Đang đồng bộ lên Web...";
-
+  async function linkSourceFolderAndSync() {
+    if (!supportsDirectorySync()) {
+      showUpdateFeedback("Trình duyệt không hỗ trợ liên kết thư mục. Hãy dùng Chrome/Edge trên HTTPS Netlify.", "error");
+      return;
+    }
     try {
-      if (state.cloudAvailable) {
-        const headers = { "Content-Type": "application/json" };
-        const pass = (document.getElementById("updatePasscodeInput")?.value || "").trim();
-        if (pass) headers["x-update-key"] = pass;
-
-        const res = await fetch("/api/report-data", {
-          method: "POST",
-          headers,
-          body: JSON.stringify(state.pendingPayload),
-        });
-        const body = await res.json().catch(() => ({}));
-
-        if (!res.ok) {
-          if (res.status === 401) {
-            state.cloudAuthRequired = true;
-            document.getElementById("passcodeRow").classList.remove("hidden");
-            document.getElementById("updatePasscodeInput").focus();
-          }
-          throw new Error(body.error || `HTTP ${res.status}`);
-        }
-
-        // Update timestamp from server metadata and clear stale local cache
-        if (body.metadata?.updatedAt) {
-          state.pendingPayload.meta.updatedAt = body.metadata.updatedAt;
-          state.cloudUpdatedAt = body.metadata.updatedAt;
-        }
-        await idbClearLatest();
-        applyNewDataset(state.pendingPayload, "cloud");
-        closeUpdateModal();
-        showToast(`☁ Đã cập nhật ${fmtInt(state.pendingPayload.rows.length)} dòng lên Web Live! Mọi người mở link sẽ thấy số liệu mới ngay.`);
-      } else {
-        await idbSetLatest(state.pendingPayload);
-        applyNewDataset(state.pendingPayload, "local");
-        closeUpdateModal();
-        showToast(`💾 Đã cập nhật ${fmtInt(state.pendingPayload.rows.length)} dòng trên trình duyệt (Local Cache).`);
-      }
+      const dirHandle = await window.showDirectoryPicker({
+        id: "cyberpulse-source-data",
+        mode: "read",
+      });
+      await idbSetSourceDir(dirHandle);
+      await refreshLinkedFolderUi();
+      await syncFromDirectoryHandle(dirHandle);
     } catch (err) {
-      showUpdateFeedback(`Không thể cập nhật: ${err.message}`, "error");
-      showToast(`Lỗi cập nhật: ${err.message}`, true);
+      if (err && err.name === "AbortError") return;
+      showUpdateFeedback(`Không thể liên kết thư mục: ${err.message}`, "error");
+    }
+  }
+
+  async function runAutoUpdateFromSource() {
+    // 1. If a source folder is already linked -> instant 1-click auto-sync (NO modal, NO file drag!)
+    if (supportsDirectorySync()) {
+      const dirHandle = await idbGetSourceDir();
+      if (dirHandle) {
+        await syncFromDirectoryHandle(dirHandle);
+        return;
+      }
+      // First time on Chrome/Edge HTTPS: open 1-click source folder setup dialog
+      openUpdateModal();
+      return;
+    }
+
+    // 2. On other browsers / mobile (no local folder API): pull latest live data directly from Cloud
+    await refreshFromCloud();
+  }
+
+  async function refreshFromCloud() {
+    setSyncButtonsBusy(true, "Đang tải mới...");
+    showUpdateFeedback("Đang kiểm tra dữ liệu mới nhất trên Web Cloud...", "info");
+    try {
+      const isHttp = location.protocol === "http:" || location.protocol === "https:";
+      let fresh = null;
+      let mode = "default";
+
+      if (isHttp) {
+        try {
+          const res = await fetchWithTimeout(`/api/report-data?t=${Date.now()}`, { cache: "no-store" }, 5000);
+          if (res.ok && (res.headers.get("content-type") || "").includes("application/json")) {
+            const json = await res.json();
+            if (json && Array.isArray(json.rows) && json.rows.length > 0) {
+              fresh = json;
+              mode = "cloud";
+            }
+          }
+        } catch {
+          // fallback to static JSON
+        }
+        if (!fresh) {
+          const res2 = await fetchWithTimeout(`./data/report_data.json?t=${Date.now()}`, { cache: "no-store" }, 5000);
+          if (res2.ok) {
+            fresh = await res2.json();
+            mode = "default";
+          }
+        }
+      } else {
+        fresh = await loadBaselineData();
+      }
+
+      if (!fresh || !Array.isArray(fresh.rows)) {
+        throw new Error("Không tải được dữ liệu mới từ máy chủ.");
+      }
+
+      applyNewDataset(fresh, mode);
+      closeUpdateModal();
+      const invPart = fresh.inventory?.meta ? ` + Kho ${fmtInt(fresh.inventory.meta.rowCount)} BIN` : "";
+      showToast(`🔄 Đã tải dữ liệu mới nhất từ Web (${fmtInt(fresh.meta.rowCount)} Sales${invPart}).`);
+    } catch (err) {
+      showUpdateFeedback(`Lỗi tải dữ liệu từ Web: ${err.message}`, "error");
+      showToast(`Lỗi tải dữ liệu: ${err.message}`, true);
     } finally {
-      btn.disabled = false;
-      lbl.textContent = origText;
+      setSyncButtonsBusy(false);
     }
   }
 
   async function revertToDefaultData() {
-    if (!confirm("Khôi phục về dữ liệu gốc trong GitHub? Dữ liệu đã upload lên Web sẽ bị xóa.")) return;
+    if (!confirm("Khôi phục về dữ liệu gốc trong GitHub? Bản cập nhật Cloud hiện tại sẽ bị xóa.")) return;
     showUpdateFeedback("Đang khôi phục dữ liệu gốc...", "info");
 
     try {
       if (state.cloudAvailable) {
         const headers = {};
-        const pass = (document.getElementById("updatePasscodeInput")?.value || "").trim();
+        const pass = (document.getElementById("updatePasscodeInput")?.value || "").trim() ||
+          (sessionStorage.getItem("cyberpulse_update_key") || "").trim();
         if (pass) headers["x-update-key"] = pass;
 
         const res = await fetch("/api/report-data", { method: "DELETE", headers });
         if (!res.ok && res.status !== 404) {
           const body = await res.json().catch(() => ({}));
           if (res.status === 401) {
-            document.getElementById("passcodeRow").classList.remove("hidden");
+            document.getElementById("passcodeRow")?.classList.remove("hidden");
           }
           throw new Error(body.error || `HTTP ${res.status}`);
         }
@@ -3963,27 +4018,29 @@
       const baseline = await loadBaselineData();
       applyNewDataset(baseline, "default");
       closeUpdateModal();
-      showToast("↺ Đã khôi phục về dữ liệu gốc thành công.");
+      showToast("↺ Đã khôi phục về dữ liệu gốc GitHub thành công.");
     } catch (err) {
       showUpdateFeedback(`Không thể khôi phục: ${err.message}`, "error");
     }
   }
 
   function bindUpdateModalEvents() {
+    const autoSyncBtn = document.getElementById("autoSyncDataBtn");
     const openBtn = document.getElementById("openUpdateModalBtn");
     const railBtn = document.getElementById("updateDataRailBtn");
     const closeBtn = document.getElementById("closeUpdateModalBtn");
     const cancelBtn = document.getElementById("cancelUpdateModalBtn");
     const modal = document.getElementById("updateDataModal");
-    const dropzone = document.getElementById("excelDropzone");
-    const fileInput = document.getElementById("excelFileInput");
-    const publishBtn = document.getElementById("publishUpdateBtn");
+    const linkFolderBtn = document.getElementById("linkSourceFolderBtn");
+    const syncNowBtn = document.getElementById("syncNowFromModalBtn");
+    const unlinkBtn = document.getElementById("unlinkFolderBtn");
+    const refreshCloudBtn = document.getElementById("refreshFromCloudBtn");
     const revertBtn = document.getElementById("revertDefaultDataBtn");
-    const downloadJsonBtn = document.getElementById("downloadParsedJsonBtn");
-    const modeGroup = document.getElementById("updateModeGroup");
+    const downloadJsonBtn = document.getElementById("downloadCurrentJsonBtn");
 
+    if (autoSyncBtn) autoSyncBtn.addEventListener("click", runAutoUpdateFromSource);
+    if (railBtn) railBtn.addEventListener("click", runAutoUpdateFromSource);
     if (openBtn) openBtn.addEventListener("click", openUpdateModal);
-    if (railBtn) railBtn.addEventListener("click", openUpdateModal);
     if (closeBtn) closeBtn.addEventListener("click", closeUpdateModal);
     if (cancelBtn) cancelBtn.addEventListener("click", closeUpdateModal);
 
@@ -3999,47 +4056,28 @@
       }
     });
 
-    if (modeGroup) {
-      modeGroup.addEventListener("click", (e) => {
-        const btn = e.target.closest(".seg-btn");
-        if (!btn) return;
-        modeGroup.querySelectorAll(".seg-btn").forEach((b) => b.classList.remove("active"));
-        btn.classList.add("active");
-        state.updateMode = btn.dataset.val || "replace";
-        if (state.pendingSalesRecords?.length || state.pendingInvRecords?.length) rebuildPendingPayload();
+    if (linkFolderBtn) linkFolderBtn.addEventListener("click", linkSourceFolderAndSync);
+    if (syncNowBtn) {
+      syncNowBtn.addEventListener("click", async () => {
+        const dirHandle = await idbGetSourceDir();
+        if (dirHandle) await syncFromDirectoryHandle(dirHandle);
+        else await linkSourceFolderAndSync();
       });
     }
-
-    if (dropzone && fileInput) {
-      dropzone.addEventListener("click", () => fileInput.click());
-      dropzone.addEventListener("keydown", (e) => {
-        if (e.key === "Enter" || e.key === " ") {
-          e.preventDefault();
-          fileInput.click();
-        }
-      });
-      dropzone.addEventListener("dragover", (e) => {
-        e.preventDefault();
-        dropzone.classList.add("dragover");
-      });
-      dropzone.addEventListener("dragleave", () => dropzone.classList.remove("dragover"));
-      dropzone.addEventListener("drop", (e) => {
-        e.preventDefault();
-        dropzone.classList.remove("dragover");
-        if (e.dataTransfer?.files?.length) handleFilesSelected(e.dataTransfer.files);
-      });
-      fileInput.addEventListener("change", (e) => {
-        if (e.target.files?.length) handleFilesSelected(e.target.files);
+    if (unlinkBtn) {
+      unlinkBtn.addEventListener("click", async () => {
+        await idbClearSourceDir();
+        await refreshLinkedFolderUi();
+        showUpdateFeedback("Đã hủy liên kết thư mục gốc.", "info");
       });
     }
-
-    if (publishBtn) publishBtn.addEventListener("click", publishPendingUpdate);
+    if (refreshCloudBtn) refreshCloudBtn.addEventListener("click", refreshFromCloud);
     if (revertBtn) revertBtn.addEventListener("click", revertToDefaultData);
 
     if (downloadJsonBtn) {
       downloadJsonBtn.addEventListener("click", () => {
-        if (!state.pendingPayload) return;
-        const blob = new Blob([JSON.stringify(state.pendingPayload)], { type: "application/json;charset=utf-8" });
+        if (!state.raw) return;
+        const blob = new Blob([JSON.stringify(state.raw)], { type: "application/json;charset=utf-8" });
         const url = URL.createObjectURL(blob);
         const a = document.createElement("a");
         a.href = url;

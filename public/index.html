@@ -59,8 +59,8 @@
       </nav>
 
       <div class="rail-bottom">
-        <button class="rail-item rail-update-btn" id="updateDataRailBtn" title="Tải file Excel mới để cập nhật dữ liệu lên Web">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M12 16V4m0 0l-4 4m4-4l4 4"/><path d="M20 16.5A4.5 4.5 0 0 0 17.5 8h-.7A6 6 0 1 0 5 14.5"/><path d="M4 19h16"/></svg>
+        <button class="rail-item rail-update-btn" id="updateDataRailBtn" title="Tự động đồng bộ dữ liệu mới từ thư mục gốc D:\Project_AI\Website\data lên Web">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/><path d="M16 16h5v5"/></svg>
           <span>Update<br/>Data</span>
         </button>
         <button class="rail-item" id="exportCsvRailBtn" title="Xuất dữ liệu đang lọc ra file CSV">
@@ -214,10 +214,13 @@
             <span class="date-sep">—</span>
             <select id="filterMonthTo" class="date-select" aria-label="Đến tháng"></select>
           </div>
-          <button type="button" class="btn-update-data" id="openUpdateModalBtn" title="Tải file Excel Sales hoặc Inventory mới để cập nhật báo cáo lên Web">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 16V4m0 0l-4 4m4-4l4 4"/><path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/></svg>
-            <span>Update Data</span>
-          </button>
+          <div class="update-split-btn">
+            <button type="button" class="btn-update-data" id="autoSyncDataBtn" title="Bấm 1 lần để tự động đọc tất cả file Excel trong thư mục gốc và cập nhật lên Web">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/><path d="M16 16h5v5"/></svg>
+              <span id="autoSyncBtnText">Update Data</span>
+            </button>
+            <button type="button" class="btn-update-gear" id="openUpdateModalBtn" title="Cài đặt thư mục dữ liệu gốc & tùy chọn đồng bộ" aria-label="Cài đặt nguồn dữ liệu gốc">⚙</button>
+          </div>
         </div>
       </header>
 
@@ -661,14 +664,14 @@
   </div>
 
   <!-- ======================================================================
-       UPDATE DATA MODAL (UPLOAD EXCEL -> ZERO-PII ETL -> LIVE NETLIFY BLOBS)
+       AUTO-SYNC SOURCE DATA MODAL (LINK SOURCE FOLDER ONCE -> 1-CLICK SYNC)
        ====================================================================== -->
   <div class="modal-backdrop" id="updateDataModal" aria-hidden="true" role="dialog" aria-modal="true" aria-labelledby="updateModalTitle">
     <div class="modal-dialog">
       <div class="modal-header">
         <div>
-          <h2 class="modal-title" id="updateModalTitle">Cập nhật dữ liệu mới lên Web</h2>
-          <p class="modal-subtitle">Tải file Excel Sales (`.xlsx`) và/hoặc Tồn Kho (`Inventory_Details.xlsx`) — hệ thống tự nhận diện loại báo cáo, lọc bỏ PII ngay trên trình duyệt và cập nhật trực tiếp lên Web.</p>
+          <h2 class="modal-title" id="updateModalTitle">Đồng bộ Tự động từ Dữ liệu Gốc</h2>
+          <p class="modal-subtitle">Liên kết thư mục gốc <code>D:\Project_AI\Website\data</code> 1 lần duy nhất. Từ lần sau chỉ cần bấm nút <strong>Update Data</strong> là Web tự quét toàn bộ file Excel Sales &amp; Tồn kho và cập nhật ngay lập tức — không cần kéo thả file.</p>
         </div>
         <button type="button" class="modal-close-btn" id="closeUpdateModalBtn" aria-label="Đóng">×</button>
       </div>
@@ -680,67 +683,38 @@
           <span id="cloudStatusText">Đang kiểm tra kết nối lưu trữ Web...</span>
         </div>
 
-        <!-- Import Mode Switcher -->
-        <div class="update-mode-row">
-          <span class="update-mode-label">Chế độ cập nhật:</span>
-          <div class="seg-tabs" id="updateModeGroup">
-            <button type="button" class="seg-btn active" data-val="replace" title="Thay thế toàn bộ báo cáo bằng file Excel mới tải lên">Thay thế toàn bộ (Replace)</button>
-            <button type="button" class="seg-btn" data-val="merge" title="Gộp thêm các dòng mới vào dữ liệu hiện đang có trên Web">Gộp thêm (Merge)</button>
+        <!-- Source Folder Auto-Link Card -->
+        <div class="source-folder-card" id="sourceFolderCard">
+          <div class="source-folder-head">
+            <div class="source-folder-icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 7a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"/></svg>
+            </div>
+            <div class="source-folder-info">
+              <div class="source-folder-title" id="linkedFolderTitle">Chưa liên kết thư mục dữ liệu gốc</div>
+              <div class="source-folder-sub" id="linkedFolderSub">Chọn thư mục chứa file Excel (ví dụ <code>D:\Project_AI\Website\data</code>) — trình duyệt ghi nhớ vĩnh viễn để bấm 1 nút là tự cập nhật.</div>
+            </div>
+          </div>
+
+          <div class="source-folder-actions">
+            <button type="button" class="btn-publish-live" id="linkSourceFolderBtn">
+              <span id="linkFolderBtnLabel">📁 Liên kết thư mục gốc &amp; Cập nhật ngay</span>
+            </button>
+            <button type="button" class="btn-sync-emerald hidden" id="syncNowFromModalBtn">↻ Đồng bộ ngay từ thư mục này</button>
+            <button type="button" class="btn-mini hidden" id="unlinkFolderBtn">Hủy liên kết</button>
           </div>
         </div>
 
-        <!-- Drag & Drop Upload Zone -->
-        <div class="dropzone" id="excelDropzone" tabindex="0" role="button" aria-label="Chọn hoặc kéo thả file Excel">
-          <input type="file" id="excelFileInput" accept=".xlsx,.xls,.csv,.json" multiple hidden />
-          <div class="dropzone-icon">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M12 16V4m0 0l-4 4m4-4l4 4"/><path d="M20 16.5A4.5 4.5 0 0 0 17.5 8h-.7A6 6 0 1 0 5 14.5"/><path d="M4 19h16"/></svg>
+        <!-- Live Server Pull (for viewers on other PC / mobile without local folder) -->
+        <div class="cloud-pull-row">
+          <div>
+            <div class="cloud-pull-title">Xem trên máy khác / Điện thoại?</div>
+            <div class="cloud-pull-sub">Kéo dữ liệu mới nhất vừa được cập nhật trên Netlify Cloud về màn hình ngay mà không cần tải lại trang.</div>
           </div>
-          <div class="dropzone-title">Kéo thả file Excel vào đây hoặc <span class="link-accent">chọn từ máy tính</span></div>
-          <div class="dropzone-hint">Hỗ trợ chọn 1 hoặc nhiều file cùng lúc (`Sale_Revenue_Detail.xlsx`, `Inventory_Details.xlsx`, `.json`) — Tự động nhận diện báo cáo Doanh thu (Sales) &amp; Tồn Kho (Inventory)</div>
+          <button type="button" class="btn-mini" id="refreshFromCloudBtn">🔄 Tải mới từ Web</button>
         </div>
 
         <!-- Validation / Progress message -->
         <div class="update-feedback hidden" id="updateFeedback"></div>
-
-        <!-- Parsed Preview & Reconciliation Summary -->
-        <div class="preview-card hidden" id="updatePreviewCard">
-          <div class="preview-head">
-            <span class="preview-title">Kết quả đối soát dữ liệu mới</span>
-            <span class="mono preview-files" id="previewFileNames">--</span>
-          </div>
-          <div class="preview-grid">
-            <div class="preview-stat">
-              <span class="preview-lbl">Tổng giao dịch</span>
-              <strong class="mono" id="pvRows">--</strong>
-              <span class="mono preview-delta" id="pvRowsDelta"></span>
-            </div>
-            <div class="preview-stat">
-              <span class="preview-lbl">Khoảng ngày</span>
-              <strong class="mono" id="pvDateRange">--</strong>
-              <span class="mono preview-delta" id="pvMonthsCount"></span>
-            </div>
-            <div class="preview-stat">
-              <span class="preview-lbl">Total Sales</span>
-              <strong class="mono" id="pvSales">--</strong>
-              <span class="mono preview-delta" id="pvSalesDelta"></span>
-            </div>
-            <div class="preview-stat">
-              <span class="preview-lbl">Total Sales QTY</span>
-              <strong class="mono" id="pvQty">--</strong>
-              <span class="mono preview-delta" id="pvQtyDelta"></span>
-            </div>
-            <div class="preview-stat">
-              <span class="preview-lbl">Lợi nhuận (GP / GM%)</span>
-              <strong class="mono" id="pvGp">--</strong>
-              <span class="mono preview-delta" id="pvGm">--</span>
-            </div>
-            <div class="preview-stat">
-              <span class="preview-lbl">Site Code / Region</span>
-              <strong class="mono" id="pvCoverage">--</strong>
-              <span class="mono preview-delta">Zero-PII Verified ✓</span>
-            </div>
-          </div>
-        </div>
 
         <!-- Optional Passcode Row (auto-shown if UPDATE_DATA_KEY is configured in Netlify) -->
         <div class="passcode-row hidden" id="passcodeRow">
@@ -751,14 +725,11 @@
 
       <div class="modal-footer">
         <div class="modal-footer-left">
-          <button type="button" class="btn-ghost-danger" id="revertDefaultDataBtn" title="Xóa dữ liệu đã upload và quay về dữ liệu gốc trong GitHub">↺ Khôi phục dữ liệu gốc</button>
-          <button type="button" class="btn-mini hidden" id="downloadParsedJsonBtn" title="Tải file report_data.json đã xử lý để sao lưu">⬇ Tải JSON</button>
+          <button type="button" class="btn-ghost-danger" id="revertDefaultDataBtn" title="Xóa bản cập nhật cloud và quay về dữ liệu gốc trong GitHub">↺ Khôi phục bản GitHub</button>
+          <button type="button" class="btn-mini" id="downloadCurrentJsonBtn" title="Tải file report_data.json hiện tại để sao lưu">⬇ Sao lưu JSON</button>
         </div>
         <div class="modal-footer-right">
-          <button type="button" class="btn-mini" id="cancelUpdateModalBtn">Hủy</button>
-          <button type="button" class="btn-publish-live" id="publishUpdateBtn" disabled>
-            <span id="publishBtnLabel">☁ Cập nhật lên Web</span>
-          </button>
+          <button type="button" class="btn-mini" id="cancelUpdateModalBtn">Đóng</button>
         </div>
       </div>
     </div>

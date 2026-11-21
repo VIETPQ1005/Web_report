@@ -6,10 +6,14 @@ compact row-level JSON + JS for the CYBERPULSE Sales & Inventory Command Dashboa
 Zero external Python dependencies (uses stdlib zipfile + xml.etree.ElementTree).
 """
 
+import argparse
 import datetime
 import json
+import os
 import re
 import sys
+import urllib.error
+import urllib.request
 import zipfile
 import xml.etree.ElementTree as ET
 from pathlib import Path
@@ -509,7 +513,33 @@ def build():
             f"Qty: {it['qty']:,} | Value: {it['value']:,.2f} VND | Net: {it['netValue']:,.2f} VND | "
             f"Sellable: {it['sellableValue']:,.0f} ({it['sellableQty']} qty) | Damaged: {it['damagedValue']:,.0f} ({it['damagedQty']} qty)"
         )
+    return json_str
+
+
+def push_live(site_url: str, json_str: str, update_key: str = ""):
+    endpoint = site_url.rstrip("/") + "/api/report-data"
+    headers = {"Content-Type": "application/json; charset=utf-8"}
+    if update_key:
+        headers["x-update-key"] = update_key
+    req = urllib.request.Request(endpoint, data=json_str.encode("utf-8"), headers=headers, method="POST")
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            body = resp.read().decode("utf-8", errors="replace")
+            print(f"[CLOUD LIVE] HTTP {resp.status} -> {endpoint} | {body}")
+    except urllib.error.HTTPError as e:
+        err_body = e.read().decode("utf-8", errors="replace")
+        print(f"[CLOUD LIVE ERROR] HTTP {e.code} -> {err_body}", file=sys.stderr)
+        sys.exit(1)
+    except Exception as e:
+        print(f"[CLOUD LIVE ERROR] {e}", file=sys.stderr)
+        sys.exit(1)
 
 
 if __name__ == "__main__":
-    build()
+    parser = argparse.ArgumentParser(description="Build unified Sales + Inventory JSON from data/*.xlsx")
+    parser.add_argument("--push-url", default="", help="Optional Netlify site URL to push live immediately (e.g. https://web-report-47sq.netlify.app)")
+    parser.add_argument("--key", default=os.environ.get("UPDATE_DATA_KEY", ""), help="Optional UPDATE_DATA_KEY passcode")
+    args = parser.parse_args()
+    data_str = build()
+    if args.push_url:
+        push_live(args.push_url, data_str, args.key)

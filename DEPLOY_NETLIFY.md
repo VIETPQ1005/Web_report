@@ -43,7 +43,25 @@ Dự án đã có sẵn file cấu hình `netlify.toml` (tự động chỉ đ�
 
 ## Bước 3: Quy trình cập nhật dữ liệu báo cáo sau này
 
-Mỗi khi có file Excel mới trong `D:\Project_AI\Website\data\`:
+### Cách 1: Bấm nút **⬆ Update Data** ngay trên Website (Nhanh nhất — 3 giây)
+
+1. Mở website báo cáo trên Netlify → bấm nút **⬆ Update Data** ở góc trên bên phải (hoặc trên thanh menu xanh bên trái).
+2. Chọn chế độ:
+   - **Thay thế toàn bộ (Replace):** thay toàn bộ báo cáo bằng file Excel mới.
+   - **Gộp thêm (Merge):** nối thêm tháng/giao dịch mới vào dữ liệu đang hiển thị.
+3. Kéo thả hoặc chọn file `.xlsx` (hỗ trợ nhiều file cùng lúc). Hệ thống tự động lọc bỏ toàn bộ thông tin cá nhân (Zero-PII) ngay trên máy bạn và hiển thị bảng đối soát số liệu (`Total Sales`, `Total Qty`, `GP`, `GM%`, số dòng chênh lệch).
+4. Bấm **☁ Cập nhật lên Web (Live)** → Dữ liệu được lưu vào **Netlify Blobs** thông qua Netlify Function (`/api/report-data`), có hiệu lực **ngay lập tức cho mọi người truy cập link web** mà không cần push Git hay deploy lại.
+
+> **Bảo mật tùy chọn (Khuyên dùng khi bật Public Web):**
+> Để tránh người lạ trên mạng tự ý tải đè dữ liệu lên web công khai, vào **Netlify Dashboard → Project configuration → Environment variables → Add a variable**:
+> - **Key:** `UPDATE_DATA_KEY`
+> - **Value:** mật khẩu/mã PIN bạn chọn (ví dụ `MySecret2026!`)
+> - **Scopes:** bật **Functions**
+> - Sau đó vào **Deploys → Trigger deploy** để áp dụng. Từ lúc đó, khi bấm **Cập nhật lên Web** sẽ yêu cầu nhập đúng mã bảo vệ này.
+
+### Cách 2: Chạy nhanh 1-click từ máy tính (Đồng bộ cả GitHub)
+
+Chép file Excel mới vào `D:\Project_AI\Website\data\` rồi nhấp đúp file **`UPDATE_DATA.bat`** (hoặc chạy lệnh):
 
 ```powershell
 cd D:\Project_AI\Website
@@ -53,4 +71,4 @@ git commit -m "data: update sales revenue report"
 git push
 ```
 
-Netlify sẽ tự động phát hiện commit mới trên GitHub và cập nhật website sau ~10 giây!
+Netlify sẽ tự động phát hiện commit mới trên GitHub và cập nhật dữ liệu gốc sau ~15 giây!

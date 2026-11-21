@@ -1,3 +1,7 @@
+# Dependencies & Netlify local state
+node_modules/
+.netlify/
+
 # Raw Excel data (keep private if pushing to a public repo)
 data/*.xlsx
 ~$*.xlsx

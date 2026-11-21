@@ -60,6 +60,14 @@
 
   const state = {
     raw: null,
+    dataSourceMode: "default",    // cloud | local | default
+    cloudAvailable: false,
+    cloudAuthRequired: false,
+    cloudUpdatedAt: "",
+    updateMode: "replace",        // replace | merge
+    pendingPayload: null,
+    pendingRawRecords: null,
+    pendingSources: [],
     monthsAll: [],
     activeView: "dashboard",
     // Filters
@@ -149,34 +157,222 @@
       .replace("Non-Store (Phone)", "Phone");
   }
 
+  // --- LOCAL INDEXEDDB CACHE (FALLBACK WHEN RUNNING OFFLINE / FILE://) ---
+  const IDB_NAME = "cyberpulse_sales_db";
+  const IDB_STORE = "datasets";
+  const IDB_KEY = "latest";
+
+  function openLocalDb() {
+    return new Promise((resolve, reject) => {
+      if (typeof indexedDB === "undefined") {
+        reject(new Error("IndexedDB unavailable"));
+        return;
+      }
+      const req = indexedDB.open(IDB_NAME, 1);
+      req.onupgradeneeded = () => {
+        const db = req.result;
+        if (!db.objectStoreNames.contains(IDB_STORE)) db.createObjectStore(IDB_STORE);
+      };
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    });
+  }
+
+  async function idbGetLatest() {
+    try {
+      const db = await openLocalDb();
+      return await new Promise((resolve) => {
+        const tx = db.transaction(IDB_STORE, "readonly");
+        const req = tx.objectStore(IDB_STORE).get(IDB_KEY);
+        req.onsuccess = () => resolve(req.result || null);
+        req.onerror = () => resolve(null);
+      });
+    } catch {
+      return null;
+    }
+  }
+
+  async function idbSetLatest(payload) {
+    try {
+      const db = await openLocalDb();
+      await new Promise((resolve, reject) => {
+        const tx = db.transaction(IDB_STORE, "readwrite");
+        tx.objectStore(IDB_STORE).put(payload, IDB_KEY);
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(tx.error);
+      });
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  async function idbClearLatest() {
+    try {
+      const db = await openLocalDb();
+      await new Promise((resolve) => {
+        const tx = db.transaction(IDB_STORE, "readwrite");
+        tx.objectStore(IDB_STORE).delete(IDB_KEY);
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => resolve();
+      });
+    } catch {
+      // ignore
+    }
+  }
+
+  async function loadBaselineData() {
+    if (window.REPORT_DATA && Array.isArray(window.REPORT_DATA.rows)) {
+      return window.REPORT_DATA;
+    }
+    const res = await fetch("./data/report_data.json", { cache: "no-store" });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return await res.json();
+  }
+
+  async function fetchWithTimeout(url, options = {}, timeoutMs = 4500) {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+    try {
+      return await fetch(url, { ...options, signal: ctrl.signal });
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
   // --- INIT ---
   async function init() {
-    try {
-      if (window.REPORT_DATA && Array.isArray(window.REPORT_DATA.rows)) {
-        state.raw = window.REPORT_DATA;
-      } else {
-        const res = await fetch("./data/report_data.json");
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        state.raw = await res.json();
+    const isHttp = location.protocol === "http:" || location.protocol === "https:";
+    let loaded = null;
+    let sourceMode = "default";
+
+    // 1. Prefer live cloud dataset on Netlify Blobs when served over HTTP/HTTPS
+    if (isHttp) {
+      try {
+        const res = await fetchWithTimeout("/api/report-data", { cache: "no-store" }, 4500);
+        if (res.ok) {
+          const ct = res.headers.get("content-type") || "";
+          if (ct.includes("application/json")) {
+            const json = await res.json();
+            if (json && Array.isArray(json.rows) && json.rows.length > 0) {
+              loaded = json;
+              sourceMode = "cloud";
+              state.cloudAvailable = true;
+              state.cloudAuthRequired = res.headers.get("x-auth-required") === "1";
+              state.cloudUpdatedAt = res.headers.get("x-data-updated-at") || json.meta?.updatedAt || "";
+            }
+          }
+        } else if (res.status === 404) {
+          // API is live, just no cloud upload yet
+          try {
+            const body = await res.json();
+            state.cloudAvailable = true;
+            state.cloudAuthRequired = Boolean(body?.authRequired);
+          } catch {
+            // Static host returning HTML 404
+          }
+        }
+      } catch {
+        // Offline or local dev without Netlify Functions
       }
-    } catch (err) {
-      document.getElementById("insightText").textContent =
-        `Lỗi tải dữ liệu (${err.message}). Hãy chạy lại python scripts/build_data.py.`;
-      return;
     }
+
+    // 2. Fallback to browser-saved local override (IndexedDB)
+    if (!loaded) {
+      const localCached = await idbGetLatest();
+      if (localCached && Array.isArray(localCached.rows) && localCached.rows.length > 0) {
+        loaded = localCached;
+        sourceMode = "local";
+      }
+    }
+
+    // 3. Fallback to bundled baseline dataset
+    if (!loaded) {
+      try {
+        loaded = await loadBaselineData();
+        sourceMode = "default";
+      } catch (err) {
+        document.getElementById("insightText").textContent =
+          `Lỗi tải dữ liệu (${err.message}). Hãy chạy lại python scripts/build_data.py hoặc bấm Update Data.`;
+        return;
+      }
+    }
+
+    state.raw = loaded;
+    state.dataSourceMode = sourceMode;
 
     initMeta();
     populateFilters();
     initCharts();
     bindEvents();
+    bindUpdateModalEvents();
     renderAll();
   }
 
+  function formatIsoVn(isoStr) {
+    if (!isoStr) return "";
+    const d = new Date(isoStr);
+    if (isNaN(d.getTime())) return isoStr;
+    return d.toLocaleString("vi-VN", {
+      day: "2-digit", month: "2-digit", year: "numeric",
+      hour: "2-digit", minute: "2-digit",
+    });
+  }
+
   function initMeta() {
-    const { meta } = state.raw;
+    const { meta, lookups } = state.raw;
     const files = (meta.sources || []).map((s) => s.file).join(", ");
+    const updatedTag = meta.updatedAt ? ` • Cập nhật: ${formatIsoVn(meta.updatedAt)}` : "";
     document.getElementById("footerSource").textContent =
-      `Source: ${files || "Sale_Revenue_Detail.xlsx"} • ${fmtInt(meta.rowCount)} rows (${meta.dateMin} → ${meta.dateMax})`;
+      `Source: ${files || "Sale_Revenue_Detail.xlsx"} • ${fmtInt(meta.rowCount)} rows (${meta.dateMin} → ${meta.dateMax})${updatedTag}`;
+
+    const pill = document.getElementById("dataSourcePill");
+    if (pill) {
+      pill.classList.remove("cloud", "local");
+      if (state.dataSourceMode === "cloud") {
+        pill.textContent = "☁ CLOUD LIVE";
+        pill.classList.add("cloud");
+      } else if (state.dataSourceMode === "local") {
+        pill.textContent = "LOCAL CACHE";
+        pill.classList.add("local");
+      } else {
+        pill.textContent = "REPO BASELINE";
+      }
+    }
+
+    // Update dynamic counts across UI
+    const siteCount = lookups.sites.length;
+    const rankAllBtn = document.getElementById("rankAllBtn");
+    if (rankAllBtn) rankAllBtn.textContent = `All ${siteCount}`;
+    const siteTotalLbl = document.getElementById("siteTotalCountLabel");
+    if (siteTotalLbl) siteTotalLbl.textContent = String(siteCount);
+    const rawTabBtn = document.getElementById("rawTabBtn");
+    if (rawTabBtn) rawTabBtn.textContent = `Chi tiết ${fmtInt(meta.rowCount)} giao dịch`;
+  }
+
+  function applyNewDataset(payload, sourceMode) {
+    state.raw = payload;
+    state.dataSourceMode = sourceMode;
+    state.region = "";
+    state.site = "";
+    state.channel = "";
+    state.orderType = "";
+    state.clickedMonth = "";
+    state.excludeBulk = false;
+    state.storeRegionsOnly = false;
+    state.tablePage = 1;
+
+    initMeta();
+    populateFilters();
+
+    document.getElementById("filterRegion").value = "";
+    document.getElementById("filterSite").value = "";
+    document.getElementById("filterChannel").value = "";
+    document.getElementById("filterOrderType").value = "";
+    document.getElementById("excludeBulkToggle").checked = false;
+    document.getElementById("storeRegionsOnlyToggle").checked = false;
+
+    renderAll();
   }
 
   function populateFilters() {
@@ -738,7 +934,7 @@
     if (state.orderType) add(state.orderType === "don_xuat_ban" ? "Xuất bán" : "Hoàn bán", "amber", () => {
       state.orderType = ""; document.getElementById("filterOrderType").value = ""; renderAll();
     });
-    if (state.excludeBulk) add("Ẩn đơn sỉ T8 (≥100 Qty)", "amber", () => {
+    if (state.excludeBulk) add("Ẩn đơn sỉ (≥100 Qty)", "amber", () => {
       state.excludeBulk = false; document.getElementById("excludeBulkToggle").checked = false; renderAll();
     });
     if (state.storeRegionsOnly) add("Chỉ 5 Region CH", "amber", () => {
@@ -769,8 +965,15 @@
     let peakM = "", peakS = -Infinity;
     byMonth.forEach((v, k) => { if (v > peakS) { peakS = v; peakM = k; } });
 
-    const note = !state.excludeBulk && peakM === "2026-08" && !state.storeRegionsOnly
-      ? " (gồm 6 đơn sỉ 8,250 Qty)"
+    let bulkInPeak = 0, bulkQtyInPeak = 0;
+    for (let i = 0; i < rows.length; i++) {
+      if (rows[i][C.MONTH] === peakM && Math.abs(rows[i][C.QTY]) >= 100) {
+        bulkInPeak++;
+        bulkQtyInPeak += rows[i][C.QTY];
+      }
+    }
+    const note = !state.excludeBulk && bulkInPeak > 0
+      ? ` (gồm ${fmtInt(bulkInPeak)} đơn sỉ ${fmtInt(bulkQtyInPeak)} Qty)`
       : "";
     insightEl.textContent = `Đỉnh doanh thu: Tháng ${peakM} (${fmtCompactVnd(peakS)})${note}`;
   }
@@ -1804,6 +2007,667 @@
     a.download = filename;
     a.click();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+
+  // =========================================================================
+  // UPDATE DATA ENGINE: CLIENT-SIDE ZERO-PII EXCEL ETL + NETLIFY BLOBS SYNC
+  // =========================================================================
+  let toastTimer = null;
+  function showToast(msg, isError = false) {
+    const el = document.getElementById("toastNotice");
+    if (!el) return;
+    el.textContent = msg;
+    el.classList.toggle("error", Boolean(isError));
+    el.classList.add("show");
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => el.classList.remove("show"), 4200);
+  }
+
+  function parseExcelDateJs(rawVal) {
+    if (rawVal === null || rawVal === undefined) return null;
+    if (rawVal instanceof Date && !isNaN(rawVal.getTime())) {
+      return {
+        y: rawVal.getFullYear(),
+        m: rawVal.getMonth() + 1,
+        d: rawVal.getDate(),
+      };
+    }
+    const s = String(rawVal).trim();
+    if (!s) return null;
+
+    // Excel serial number (same logic as scripts/build_data.py)
+    const num = Number(s);
+    if (isFinite(num) && num >= 30000 && num <= 70000) {
+      const dt = new Date(Date.UTC(1899, 11, 30) + Math.floor(num) * 86400000);
+      return { y: dt.getUTCFullYear(), m: dt.getUTCMonth() + 1, d: dt.getUTCDate() };
+    }
+
+    // YYYY-MM-DD or YYYY/MM/DD
+    let m = s.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})/);
+    if (m) return { y: Number(m[1]), m: Number(m[2]), d: Number(m[3]) };
+
+    // DD.MM.YY or DD.MM.YYYY or DD/MM/YYYY
+    m = s.match(/^(\d{1,2})[./-](\d{1,2})[./-](\d{2,4})$/);
+    if (m) {
+      let a = Number(m[1]), b = Number(m[2]), y = Number(m[3]);
+      if (y < 100) y += 2000;
+      // If first number > 12 it is definitely DD/MM; otherwise assume DD/MM (VN/Excel export convention)
+      let d = a, mo = b;
+      if (b > 12 && a <= 12) { mo = a; d = b; }
+      if (mo >= 1 && mo <= 12 && d >= 1 && d <= 31) return { y, m: mo, d };
+    }
+    return null;
+  }
+
+  function formatDateParts(p) {
+    const yy = String(p.y).padStart(4, "0");
+    const mm = String(p.m).padStart(2, "0");
+    const dd = String(p.d).padStart(2, "0");
+    return { iso: `${yy}-${mm}-${dd}`, month: `${yy}-${mm}` };
+  }
+
+  function getIsoWeekJs(y, m, d) {
+    const dt = new Date(Date.UTC(y, m - 1, d));
+    const dayNum = dt.getUTCDay() || 7;
+    dt.setUTCDate(dt.getUTCDate() + 4 - dayNum);
+    const yearStart = new Date(Date.UTC(dt.getUTCFullYear(), 0, 1));
+    const weekNo = Math.ceil((((dt - yearStart) / 86400000) + 1) / 7);
+    return `${dt.getUTCFullYear()}-W${String(weekNo).padStart(2, "0")}`;
+  }
+
+  function cleanSubcatJs(val) {
+    const s = String(val ?? "").trim();
+    if (!s) return "Khác";
+    const m = s.match(/^NH\d+(?:-\d+)+-(.+)$/);
+    return m ? m[1].trim() : s;
+  }
+
+  function parseNumericVal(v) {
+    if (typeof v === "number") return isFinite(v) ? v : 0;
+    if (v === null || v === undefined) return 0;
+    const s = String(v).trim().replace(/,/g, "");
+    if (!s) return 0;
+    const n = Number(s);
+    return isFinite(n) ? n : 0;
+  }
+
+  function findHeaderValue(recLower, candidates) {
+    for (let i = 0; i < candidates.length; i++) {
+      const val = recLower[candidates[i]];
+      if (val !== undefined && val !== null && String(val).trim() !== "") return val;
+    }
+    return null;
+  }
+
+  function extractExistingRecords(payload) {
+    if (!payload || !Array.isArray(payload.rows) || !payload.lookups) return [];
+    const { rows, lookups, siteDirectory = {} } = payload;
+    return rows.map((r) => {
+      const site = lookups.sites[r[C.SITE]] || "UNKNOWN";
+      const store = lookups.stores[r[C.STORE]] || site;
+      const reg = lookups.regions[r[C.REGION]] || "";
+      const ch = lookups.channels[r[C.CHANNEL]] || "Other";
+      const rawReg = siteDirectory[site]?.rawRegion ?? (reg.startsWith("Non-Store") ? "" : reg);
+      const skuLabel = lookups.skus[r[C.SKU]] || "";
+      const dashIdx = skuLabel.indexOf(" — ");
+      const skuCode = dashIdx >= 0 ? skuLabel.slice(0, dashIdx) : "";
+      const skuName = dashIdx >= 0 ? skuLabel.slice(dashIdx + 3) : skuLabel;
+      return {
+        "report date": r[C.DATE],
+        "sales site code": site,
+        "store name": store,
+        "region name": rawReg,
+        "sales channel": ch,
+        "subcat 2 (code - name)": lookups.subcats[r[C.SUBCAT]] || "Khác",
+        "brand name": lookups.brands[r[C.BRAND]] || "Khác",
+        "order type": lookups.orderTypes[r[C.ORDER_TYPE]] || "don_xuat_ban",
+        "sku": skuCode,
+        "sku name": skuName,
+        "sales qty": r[C.QTY],
+        "sales": r[C.SALES],
+        "cogs": r[C.COGS],
+        "gp": r[C.GP],
+      };
+    });
+  }
+
+  function buildPayloadFromRecords(rawRecords, sourceMeta) {
+    const lookups = {
+      sites: [],
+      stores: [],
+      regions: [],
+      channels: [],
+      subcats: [],
+      brands: [],
+      orderTypes: [],
+      skus: [],
+    };
+    const lookupMaps = {};
+    Object.keys(lookups).forEach((k) => { lookupMaps[k] = new Map(); });
+
+    const getIdx = (key, val) => {
+      const m = lookupMaps[key];
+      if (!m.has(val)) {
+        m.set(val, lookups[key].length);
+        lookups[key].push(val);
+      }
+      return m.get(val);
+    };
+
+    const compactRows = [];
+    const siteDirectory = {};
+    let totSales = 0, totQty = 0, totCogs = 0, totGp = 0;
+    let minDate = null, maxDate = null;
+    let bulkCount = 0, bulkSales = 0, bulkQty = 0;
+
+    for (let i = 0; i < rawRecords.length; i++) {
+      const rec = rawRecords[i];
+      const rawDate = findHeaderValue(rec, ["report date", "report_date", "date", "ngày báo cáo"]);
+      const dp = parseExcelDateJs(rawDate);
+      if (!dp) continue;
+
+      const { iso: dateIso, month: monthStr } = formatDateParts(dp);
+      if (!minDate || dateIso < minDate) minDate = dateIso;
+      if (!maxDate || dateIso > maxDate) maxDate = dateIso;
+      const weekStr = getIsoWeekJs(dp.y, dp.m, dp.d);
+
+      const site = String(findHeaderValue(rec, ["sales site code", "site code", "site"]) || "UNKNOWN").trim();
+      const store = String(findHeaderValue(rec, ["store name", "store"]) || "").trim() || site;
+      const rawRegion = String(findHeaderValue(rec, ["region name", "region"]) || "").trim();
+      const channel = String(findHeaderValue(rec, ["sales channel", "channel"]) || "Other").trim();
+      const region = rawRegion || `Non-Store (${channel})`;
+      const subcat = cleanSubcatJs(findHeaderValue(rec, ["subcat 2 (code - name)", "subcat 2", "subcat"]) || "");
+      const brand = String(findHeaderValue(rec, ["brand name", "brand"]) || "Khác").trim();
+      const orderType = String(findHeaderValue(rec, ["order type", "order_type"]) || "don_xuat_ban").trim();
+      const skuCode = String(findHeaderValue(rec, ["sku", "sku code"]) || "").trim();
+      const skuName = String(findHeaderValue(rec, ["sku name", "product name"]) || "").trim();
+      const skuLabel = skuCode ? (skuName ? `${skuCode} — ${skuName}` : skuCode) : skuName;
+
+      const qty = Math.round(parseNumericVal(findHeaderValue(rec, ["sales qty", "qty", "quantity"])));
+      const sales = Math.round(parseNumericVal(findHeaderValue(rec, ["sales", "revenue", "doanh thu"])) * 100) / 100;
+      const cogs = Math.round(parseNumericVal(findHeaderValue(rec, ["cogs", "giá vốn"])) * 100) / 100;
+      const gp = Math.round(parseNumericVal(findHeaderValue(rec, ["gp", "gross profit", "lợi nhuận"])) * 100) / 100;
+
+      totSales += sales;
+      totQty += qty;
+      totCogs += cogs;
+      totGp += gp;
+
+      if (Math.abs(qty) >= 100) {
+        bulkCount++;
+        bulkSales += sales;
+        bulkQty += qty;
+      }
+
+      if (!siteDirectory[site]) {
+        siteDirectory[site] = {
+          siteCode: site,
+          storeName: store,
+          region,
+          rawRegion,
+          channel,
+        };
+      }
+
+      compactRows.push([
+        dateIso,
+        monthStr,
+        weekStr,
+        getIdx("sites", site),
+        getIdx("stores", store),
+        getIdx("regions", region),
+        getIdx("channels", channel),
+        getIdx("subcats", subcat),
+        getIdx("brands", brand),
+        getIdx("orderTypes", orderType),
+        getIdx("skus", skuLabel),
+        qty,
+        sales,
+        cogs,
+        gp,
+      ]);
+    }
+
+    compactRows.sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0));
+
+    return {
+      meta: {
+        generatedAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        sources: sourceMeta,
+        rowCount: compactRows.length,
+        dateMin: minDate,
+        dateMax: maxDate,
+        totals: {
+          sales: Math.round(totSales * 100) / 100,
+          qty: totQty,
+          cogs: Math.round(totCogs * 100) / 100,
+          gp: Math.round(totGp * 100) / 100,
+          gmPct: totSales ? Math.round((totGp / totSales) * 10000) / 100 : 0,
+        },
+        bulkOutliers: {
+          thresholdQty: 100,
+          rowCount: bulkCount,
+          sales: Math.round(bulkSales * 100) / 100,
+          qty: bulkQty,
+        },
+        columns: [
+          "date", "month", "week", "siteIdx", "storeIdx", "regionIdx",
+          "channelIdx", "subcatIdx", "brandIdx", "orderTypeIdx", "skuIdx",
+          "qty", "sales", "cogs", "gp",
+        ],
+      },
+      lookups,
+      siteDirectory,
+      rows: compactRows,
+    };
+  }
+
+  async function parseUploadedFiles(fileList) {
+    const files = Array.from(fileList || []);
+    if (!files.length) throw new Error("Chưa chọn file nào.");
+
+    // Direct JSON upload shortcut (single report_data.json)
+    if (files.length === 1 && files[0].name.toLowerCase().endsWith(".json")) {
+      const text = await files[0].text();
+      const parsed = JSON.parse(text);
+      if (!parsed || !Array.isArray(parsed.rows) || !parsed.lookups || !parsed.meta) {
+        throw new Error("File JSON không đúng định dạng report_data.json chuẩn.");
+      }
+      return { directPayload: parsed, rawRecords: null, sources: [{ file: files[0].name, sizeBytes: files[0].size, rows: parsed.rows.length }] };
+    }
+
+    if (typeof XLSX === "undefined") {
+      throw new Error("Thư viện đọc Excel (SheetJS) chưa tải xong. Kiểm tra kết nối mạng và thử lại.");
+    }
+
+    const allRecords = [];
+    const sources = [];
+
+    for (let fIdx = 0; fIdx < files.length; fIdx++) {
+      const file = files[fIdx];
+      const buf = await file.arrayBuffer();
+      const wb = XLSX.read(buf, { type: "array", raw: true });
+      let fileRowCount = 0;
+
+      wb.SheetNames.forEach((sheetName) => {
+        const sheet = wb.Sheets[sheetName];
+        if (!sheet) return;
+        const rows2d = XLSX.utils.sheet_to_json(sheet, { header: 1, raw: true, defval: null });
+        if (!rows2d || rows2d.length < 2) return;
+
+        // Locate header row (first row containing "report date" or non-empty headers)
+        let headerRowIdx = 0;
+        for (let r = 0; r < Math.min(10, rows2d.length); r++) {
+          const joined = (rows2d[r] || []).map((v) => String(v || "").trim().toLowerCase());
+          if (joined.includes("report date") || joined.includes("sales site code")) {
+            headerRowIdx = r;
+            break;
+          }
+        }
+
+        const headers = (rows2d[headerRowIdx] || []).map((h) => String(h || "").trim().toLowerCase());
+        for (let r = headerRowIdx + 1; r < rows2d.length; r++) {
+          const row = rows2d[r];
+          if (!row || !row.length) continue;
+          const firstCell = String(row[0] ?? "").trim();
+          const firstLower = firstCell.toLowerCase();
+          if (!firstCell || firstLower === "total" || firstLower.startsWith("applied filters")) {
+            continue;
+          }
+          const rec = {};
+          for (let c = 0; c < headers.length; c++) {
+            const h = headers[c];
+            if (h) rec[h] = c < row.length ? row[c] : null;
+          }
+          allRecords.push(rec);
+          fileRowCount++;
+        }
+      });
+
+      sources.push({ file: file.name, sizeBytes: file.size, rows: fileRowCount });
+    }
+
+    if (allRecords.length === 0) {
+      throw new Error("Không tìm thấy dòng dữ liệu hợp lệ nào. Kiểm tra cột Report Date, Sales, Sales QTY.");
+    }
+
+    return { directPayload: null, rawRecords: allRecords, sources };
+  }
+
+  function rebuildPendingPayload() {
+    if (!state.pendingRawRecords && !state.pendingPayload) return;
+
+    if (state.pendingRawRecords) {
+      let recordsToBuild = state.pendingRawRecords;
+      let sourcesToBuild = [...state.pendingSources];
+
+      if (state.updateMode === "merge" && state.raw) {
+        const existingRecs = extractExistingRecords(state.raw);
+        recordsToBuild = existingRecs.concat(state.pendingRawRecords);
+        const existingSources = (state.raw.meta?.sources || []).map((s) => ({ ...s }));
+        sourcesToBuild = existingSources.concat(state.pendingSources);
+      }
+
+      state.pendingPayload = buildPayloadFromRecords(recordsToBuild, sourcesToBuild);
+    }
+
+    if (!state.pendingPayload || state.pendingPayload.rows.length === 0) {
+      showUpdateFeedback("Không đọc được dòng dữ liệu hợp lệ nào (kiểm tra định dạng cột Report Date).", "error");
+      document.getElementById("updatePreviewCard").classList.add("hidden");
+      document.getElementById("publishUpdateBtn").disabled = true;
+      return;
+    }
+
+    renderUpdatePreview(state.pendingPayload);
+  }
+
+  function showUpdateFeedback(msg, type = "info") {
+    const el = document.getElementById("updateFeedback");
+    if (!el) return;
+    if (!msg) {
+      el.classList.add("hidden");
+      el.textContent = "";
+      return;
+    }
+    el.className = `update-feedback ${type}`;
+    el.textContent = msg;
+    el.classList.remove("hidden");
+  }
+
+  function renderUpdatePreview(payload) {
+    const card = document.getElementById("updatePreviewCard");
+    const cur = state.raw?.meta;
+    const next = payload.meta;
+
+    const filesStr = (next.sources || []).map((s) => s.file).join(" + ");
+    document.getElementById("previewFileNames").textContent = filesStr;
+    document.getElementById("pvRows").textContent = `${fmtInt(next.rowCount)} dòng`;
+    document.getElementById("pvDateRange").textContent = `${next.dateMin || "?"} → ${next.dateMax || "?"}`;
+    const monthsSet = new Set(payload.rows.map((r) => r[C.MONTH]));
+    document.getElementById("pvMonthsCount").textContent = `${monthsSet.size} tháng`;
+    document.getElementById("pvSales").textContent = fmtCompactVnd(next.totals.sales);
+    document.getElementById("pvQty").textContent = `${fmtInt(next.totals.qty)} units`;
+    document.getElementById("pvGp").textContent = fmtCompactVnd(next.totals.gp);
+    document.getElementById("pvGm").textContent = `GM ${fmtPct(next.totals.gmPct)}`;
+    document.getElementById("pvCoverage").textContent = `${payload.lookups.sites.length} Sites • ${payload.lookups.regions.length} Regions`;
+
+    const setDelta = (id, diff, formatter) => {
+      const el = document.getElementById(id);
+      if (!el || !cur) return;
+      const sign = diff > 0 ? "+" : "";
+      el.textContent = diff === 0 ? "Không đổi so với hiện tại" : `${sign}${formatter(diff)} so với hiện tại`;
+      el.classList.toggle("neg", diff < 0);
+    };
+
+    if (cur) {
+      setDelta("pvRowsDelta", next.rowCount - cur.rowCount, (v) => `${fmtInt(v)} dòng`);
+      setDelta("pvSalesDelta", next.totals.sales - cur.totals.sales, (v) => fmtCompactVnd(v));
+      setDelta("pvQtyDelta", next.totals.qty - cur.totals.qty, (v) => `${fmtInt(v)} units`);
+    }
+
+    card.classList.remove("hidden");
+    document.getElementById("publishUpdateBtn").disabled = false;
+    document.getElementById("downloadParsedJsonBtn").classList.remove("hidden");
+  }
+
+  async function refreshCloudStatus() {
+    const dot = document.getElementById("cloudStatusDot");
+    const txt = document.getElementById("cloudStatusText");
+    const passRow = document.getElementById("passcodeRow");
+    const pubLbl = document.getElementById("publishBtnLabel");
+
+    if (location.protocol !== "http:" && location.protocol !== "https:") {
+      state.cloudAvailable = false;
+      dot.className = "status-dot local";
+      txt.textContent = "Đang chạy file cục bộ (Offline) — Dữ liệu mới sẽ lưu vào trình duyệt này và cho phép tải file JSON.";
+      pubLbl.textContent = "💾 Cập nhật báo cáo (Local)";
+      passRow.classList.add("hidden");
+      return;
+    }
+
+    try {
+      const res = await fetchWithTimeout("/api/report-data?meta=1", { cache: "no-store" }, 4000);
+      const ct = res.headers.get("content-type") || "";
+      if (res.ok && ct.includes("application/json")) {
+        const info = await res.json();
+        state.cloudAvailable = Boolean(info.cloudAvailable);
+        state.cloudAuthRequired = Boolean(info.authRequired);
+        dot.className = "status-dot online";
+        const lastInfo = info.exists && info.metadata?.updatedAt
+          ? `Lần cập nhật gần nhất: ${formatIsoVn(info.metadata.updatedAt)} (${fmtInt(info.metadata.rowCount)} dòng)`
+          : "Đang dùng dữ liệu gốc từ GitHub — sẵn sàng nhận dữ liệu mới";
+        txt.textContent = `☁ Netlify Cloud Live đã kết nối • ${lastInfo}`;
+        pubLbl.textContent = "☁ Cập nhật lên Web (Live)";
+        passRow.classList.toggle("hidden", !state.cloudAuthRequired);
+        return;
+      }
+    } catch {
+      // ignore
+    }
+
+    state.cloudAvailable = false;
+    dot.className = "status-dot local";
+    txt.textContent = "Máy chủ hiện tại không có Netlify Function — Dữ liệu mới sẽ lưu trên trình duyệt này (Local Cache).";
+    pubLbl.textContent = "💾 Cập nhật báo cáo (Local)";
+    passRow.classList.add("hidden");
+  }
+
+  function openUpdateModal() {
+    const modal = document.getElementById("updateDataModal");
+    if (!modal) return;
+    state.pendingPayload = null;
+    state.pendingRawRecords = null;
+    state.pendingSources = [];
+    document.getElementById("excelFileInput").value = "";
+    document.getElementById("updatePreviewCard").classList.add("hidden");
+    document.getElementById("downloadParsedJsonBtn").classList.add("hidden");
+    document.getElementById("publishUpdateBtn").disabled = true;
+    showUpdateFeedback("", "info");
+    modal.classList.add("open");
+    modal.setAttribute("aria-hidden", "false");
+    refreshCloudStatus();
+  }
+
+  function closeUpdateModal() {
+    const modal = document.getElementById("updateDataModal");
+    if (!modal) return;
+    modal.classList.remove("open");
+    modal.setAttribute("aria-hidden", "true");
+  }
+
+  async function handleFilesSelected(files) {
+    if (!files || !files.length) return;
+    showUpdateFeedback(`Đang phân tích ${files.length} file và lọc bỏ thông tin cá nhân (Zero-PII)...`, "info");
+    document.getElementById("publishUpdateBtn").disabled = true;
+
+    try {
+      const res = await parseUploadedFiles(files);
+      state.pendingSources = res.sources;
+      if (res.directPayload) {
+        state.pendingRawRecords = null;
+        state.pendingPayload = res.directPayload;
+      } else {
+        state.pendingRawRecords = res.rawRecords;
+        state.pendingPayload = null;
+      }
+      rebuildPendingPayload();
+      if (state.pendingPayload && state.pendingPayload.rows.length > 0) {
+        showUpdateFeedback(
+          `Đã đọc thành công ${fmtInt(state.pendingPayload.rows.length)} giao dịch (Zero-PII). Kiểm tra số liệu bên dưới và bấm "Cập nhật lên Web".`,
+          "success"
+        );
+      }
+    } catch (err) {
+      state.pendingPayload = null;
+      state.pendingRawRecords = null;
+      document.getElementById("updatePreviewCard").classList.add("hidden");
+      showUpdateFeedback(`Lỗi đọc file: ${err.message}`, "error");
+    }
+  }
+
+  async function publishPendingUpdate() {
+    if (!state.pendingPayload) return;
+    const btn = document.getElementById("publishUpdateBtn");
+    const lbl = document.getElementById("publishBtnLabel");
+    const origText = lbl.textContent;
+    btn.disabled = true;
+    lbl.textContent = "Đang đồng bộ lên Web...";
+
+    try {
+      if (state.cloudAvailable) {
+        const headers = { "Content-Type": "application/json" };
+        const pass = (document.getElementById("updatePasscodeInput")?.value || "").trim();
+        if (pass) headers["x-update-key"] = pass;
+
+        const res = await fetch("/api/report-data", {
+          method: "POST",
+          headers,
+          body: JSON.stringify(state.pendingPayload),
+        });
+        const body = await res.json().catch(() => ({}));
+
+        if (!res.ok) {
+          if (res.status === 401) {
+            state.cloudAuthRequired = true;
+            document.getElementById("passcodeRow").classList.remove("hidden");
+            document.getElementById("updatePasscodeInput").focus();
+          }
+          throw new Error(body.error || `HTTP ${res.status}`);
+        }
+
+        // Update timestamp from server metadata and clear stale local cache
+        if (body.metadata?.updatedAt) {
+          state.pendingPayload.meta.updatedAt = body.metadata.updatedAt;
+          state.cloudUpdatedAt = body.metadata.updatedAt;
+        }
+        await idbClearLatest();
+        applyNewDataset(state.pendingPayload, "cloud");
+        closeUpdateModal();
+        showToast(`☁ Đã cập nhật ${fmtInt(state.pendingPayload.rows.length)} dòng lên Web Live! Mọi người mở link sẽ thấy số liệu mới ngay.`);
+      } else {
+        await idbSetLatest(state.pendingPayload);
+        applyNewDataset(state.pendingPayload, "local");
+        closeUpdateModal();
+        showToast(`💾 Đã cập nhật ${fmtInt(state.pendingPayload.rows.length)} dòng trên trình duyệt (Local Cache).`);
+      }
+    } catch (err) {
+      showUpdateFeedback(`Không thể cập nhật: ${err.message}`, "error");
+      showToast(`Lỗi cập nhật: ${err.message}`, true);
+    } finally {
+      btn.disabled = false;
+      lbl.textContent = origText;
+    }
+  }
+
+  async function revertToDefaultData() {
+    if (!confirm("Khôi phục về dữ liệu gốc trong GitHub? Dữ liệu đã upload lên Web sẽ bị xóa.")) return;
+    showUpdateFeedback("Đang khôi phục dữ liệu gốc...", "info");
+
+    try {
+      if (state.cloudAvailable) {
+        const headers = {};
+        const pass = (document.getElementById("updatePasscodeInput")?.value || "").trim();
+        if (pass) headers["x-update-key"] = pass;
+
+        const res = await fetch("/api/report-data", { method: "DELETE", headers });
+        if (!res.ok && res.status !== 404) {
+          const body = await res.json().catch(() => ({}));
+          if (res.status === 401) {
+            document.getElementById("passcodeRow").classList.remove("hidden");
+          }
+          throw new Error(body.error || `HTTP ${res.status}`);
+        }
+      }
+      await idbClearLatest();
+      const baseline = await loadBaselineData();
+      applyNewDataset(baseline, "default");
+      closeUpdateModal();
+      showToast("↺ Đã khôi phục về dữ liệu gốc thành công.");
+    } catch (err) {
+      showUpdateFeedback(`Không thể khôi phục: ${err.message}`, "error");
+    }
+  }
+
+  function bindUpdateModalEvents() {
+    const openBtn = document.getElementById("openUpdateModalBtn");
+    const railBtn = document.getElementById("updateDataRailBtn");
+    const closeBtn = document.getElementById("closeUpdateModalBtn");
+    const cancelBtn = document.getElementById("cancelUpdateModalBtn");
+    const modal = document.getElementById("updateDataModal");
+    const dropzone = document.getElementById("excelDropzone");
+    const fileInput = document.getElementById("excelFileInput");
+    const publishBtn = document.getElementById("publishUpdateBtn");
+    const revertBtn = document.getElementById("revertDefaultDataBtn");
+    const downloadJsonBtn = document.getElementById("downloadParsedJsonBtn");
+    const modeGroup = document.getElementById("updateModeGroup");
+
+    if (openBtn) openBtn.addEventListener("click", openUpdateModal);
+    if (railBtn) railBtn.addEventListener("click", openUpdateModal);
+    if (closeBtn) closeBtn.addEventListener("click", closeUpdateModal);
+    if (cancelBtn) cancelBtn.addEventListener("click", closeUpdateModal);
+
+    if (modal) {
+      modal.addEventListener("click", (e) => {
+        if (e.target === modal) closeUpdateModal();
+      });
+    }
+
+    document.addEventListener("keydown", (e) => {
+      if (e.key === "Escape" && modal && modal.classList.contains("open")) {
+        closeUpdateModal();
+      }
+    });
+
+    if (modeGroup) {
+      modeGroup.addEventListener("click", (e) => {
+        const btn = e.target.closest(".seg-btn");
+        if (!btn) return;
+        modeGroup.querySelectorAll(".seg-btn").forEach((b) => b.classList.remove("active"));
+        btn.classList.add("active");
+        state.updateMode = btn.dataset.val || "replace";
+        if (state.pendingRawRecords) rebuildPendingPayload();
+      });
+    }
+
+    if (dropzone && fileInput) {
+      dropzone.addEventListener("click", () => fileInput.click());
+      dropzone.addEventListener("keydown", (e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          fileInput.click();
+        }
+      });
+      dropzone.addEventListener("dragover", (e) => {
+        e.preventDefault();
+        dropzone.classList.add("dragover");
+      });
+      dropzone.addEventListener("dragleave", () => dropzone.classList.remove("dragover"));
+      dropzone.addEventListener("drop", (e) => {
+        e.preventDefault();
+        dropzone.classList.remove("dragover");
+        if (e.dataTransfer?.files?.length) handleFilesSelected(e.dataTransfer.files);
+      });
+      fileInput.addEventListener("change", (e) => {
+        if (e.target.files?.length) handleFilesSelected(e.target.files);
+      });
+    }
+
+    if (publishBtn) publishBtn.addEventListener("click", publishPendingUpdate);
+    if (revertBtn) revertBtn.addEventListener("click", revertToDefaultData);
+
+    if (downloadJsonBtn) {
+      downloadJsonBtn.addEventListener("click", () => {
+        if (!state.pendingPayload) return;
+        const blob = new Blob([JSON.stringify(state.pendingPayload)], { type: "application/json;charset=utf-8" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = "report_data.json";
+        a.click();
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+      });
+    }
   }
 
   document.addEventListener("DOMContentLoaded", init);

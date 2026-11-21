@@ -10,6 +10,7 @@
   <link href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600;700&family=Chakra+Petch:wght@600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="./styles.css" />
   <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.1/dist/echarts.min.js" defer></script>
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js" defer></script>
   <script src="./data/report_data.js" defer></script>
   <script src="./app.js" defer></script>
 </head>
@@ -54,6 +55,10 @@
       </nav>
 
       <div class="rail-bottom">
+        <button class="rail-item rail-update-btn" id="updateDataRailBtn" title="Tải file Excel mới để cập nhật dữ liệu lên Web">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M12 16V4m0 0l-4 4m4-4l4 4"/><path d="M20 16.5A4.5 4.5 0 0 0 17.5 8h-.7A6 6 0 1 0 5 14.5"/><path d="M4 19h16"/></svg>
+          <span>Update<br/>Data</span>
+        </button>
         <button class="rail-item" id="exportCsvRailBtn" title="Xuất dữ liệu đang lọc ra file CSV">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 3v12m0 0l-4-4m4 4l4-4"/><path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/></svg>
           <span>Export<br/>CSV</span>
@@ -183,9 +188,9 @@
             <option value="don_nhap_hoan_ban">Chỉ Hoàn bán</option>
           </select>
 
-          <label class="pill-toggle" title="Ẩn 6 đơn hàng sỉ >=100 Qty tại tháng 08/2026 để soi xu hướng bán lẻ">
+          <label class="pill-toggle" title="Ẩn các đơn hàng sỉ ≥100 Qty để soi xu hướng bán lẻ">
             <input type="checkbox" id="excludeBulkToggle" />
-            <span>Ẩn đơn sỉ T8 (≥100 Qty)</span>
+            <span>Ẩn đơn sỉ (≥100 Qty)</span>
           </label>
           <label class="pill-toggle" title="Chỉ lọc 5 Region cửa hàng (HCM 1, HCM 2, SOUTHERN, 264, CENTRAL)">
             <input type="checkbox" id="storeRegionsOnlyToggle" />
@@ -193,11 +198,17 @@
           </label>
         </div>
 
-        <div class="date-picker-box">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" class="cal-icon"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>
-          <select id="filterMonthFrom" class="date-select" aria-label="Từ tháng"></select>
-          <span class="date-sep">—</span>
-          <select id="filterMonthTo" class="date-select" aria-label="Đến tháng"></select>
+        <div class="topbar-right">
+          <div class="date-picker-box">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" class="cal-icon"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>
+            <select id="filterMonthFrom" class="date-select" aria-label="Từ tháng"></select>
+            <span class="date-sep">—</span>
+            <select id="filterMonthTo" class="date-select" aria-label="Đến tháng"></select>
+          </div>
+          <button type="button" class="btn-update-data" id="openUpdateModalBtn" title="Tải file Excel (.xlsx) mới để cập nhật báo cáo lên Web ngay lập tức">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 16V4m0 0l-4 4m4-4l4 4"/><path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/></svg>
+            <span>Update Data</span>
+          </button>
         </div>
       </header>
 
@@ -248,7 +259,7 @@
                 <div class="seg-tabs" id="rankLimitGroup">
                   <button class="seg-btn active" data-val="5">Top 5</button>
                   <button class="seg-btn" data-val="10">Top 10</button>
-                  <button class="seg-btn" data-val="31">All 31</button>
+                  <button class="seg-btn" id="rankAllBtn" data-val="9999">All 31</button>
                 </div>
                 <div class="seg-tabs" id="rankSortGroup">
                   <button class="seg-btn active" data-val="sales">Sales</button>
@@ -338,7 +349,7 @@
         <div class="panel-block">
           <div class="panel-header">
             <div>
-              <h2 class="panel-title">Xếp hạng toàn bộ 31 Sales Site Codes</h2>
+              <h2 class="panel-title">Xếp hạng toàn bộ <span id="siteTotalCountLabel">31</span> Sales Site Codes</h2>
               <span class="panel-hint">Chuyển đổi biểu đồ Bar / Treemap / Scatter (Sales × Qty) — Click để lọc chéo</span>
             </div>
             <div class="panel-controls">
@@ -420,7 +431,7 @@
               <div class="seg-tabs" id="tableTabGroup">
                 <button class="seg-btn active" data-val="sites">Tổng hợp Site Code</button>
                 <button class="seg-btn" data-val="matrix">Ma trận Region × Month</button>
-                <button class="seg-btn" data-val="raw">Chi tiết 5,443 giao dịch</button>
+                <button class="seg-btn" id="rawTabBtn" data-val="raw">Chi tiết 5,443 giao dịch</button>
               </div>
               <input type="search" id="tableSearchInput" class="dark-search" placeholder="Tìm Site, Store, Region, SKU..." />
               <button class="btn-primary-blue" id="exportTableCsvBtn">⬇ Export CSV</button>
@@ -438,10 +449,120 @@
 
       <!-- VERSION / FOOTER LINE (MATCHING BOTTOM-RIGHT "Version 10.4.3") -->
       <footer class="canvas-footer">
-        <span id="footerSource">Source: Sale_Revenue_Detail.xlsx • Zero-PII ETL</span>
-        <span class="mono" id="footerVersion">CYBERPULSE BI v2.0 • Live Telemetry</span>
+        <div class="footer-left">
+          <span class="source-pill" id="dataSourcePill">REPO BASELINE</span>
+          <span id="footerSource">Source: Sale_Revenue_Detail.xlsx • Zero-PII ETL</span>
+        </div>
+        <span class="mono" id="footerVersion">CYBERPULSE BI v2.1 • Live Cloud Update</span>
       </footer>
     </main>
   </div>
+
+  <!-- ======================================================================
+       UPDATE DATA MODAL (UPLOAD EXCEL -> ZERO-PII ETL -> LIVE NETLIFY BLOBS)
+       ====================================================================== -->
+  <div class="modal-backdrop" id="updateDataModal" aria-hidden="true" role="dialog" aria-modal="true" aria-labelledby="updateModalTitle">
+    <div class="modal-dialog">
+      <div class="modal-header">
+        <div>
+          <h2 class="modal-title" id="updateModalTitle">Cập nhật dữ liệu mới lên Web</h2>
+          <p class="modal-subtitle">Tải file Excel (.xlsx) mới — hệ thống tự động lọc bỏ thông tin cá nhân (Zero-PII) ngay trên trình duyệt và cập nhật trực tiếp lên Web.</p>
+        </div>
+        <button type="button" class="modal-close-btn" id="closeUpdateModalBtn" aria-label="Đóng">×</button>
+      </div>
+
+      <div class="modal-body">
+        <!-- Cloud & Storage status banner -->
+        <div class="cloud-status-bar" id="cloudStatusBar">
+          <span class="status-dot" id="cloudStatusDot"></span>
+          <span id="cloudStatusText">Đang kiểm tra kết nối lưu trữ Web...</span>
+        </div>
+
+        <!-- Import Mode Switcher -->
+        <div class="update-mode-row">
+          <span class="update-mode-label">Chế độ cập nhật:</span>
+          <div class="seg-tabs" id="updateModeGroup">
+            <button type="button" class="seg-btn active" data-val="replace" title="Thay thế toàn bộ báo cáo bằng file Excel mới tải lên">Thay thế toàn bộ (Replace)</button>
+            <button type="button" class="seg-btn" data-val="merge" title="Gộp thêm các dòng mới vào dữ liệu hiện đang có trên Web">Gộp thêm (Merge)</button>
+          </div>
+        </div>
+
+        <!-- Drag & Drop Upload Zone -->
+        <div class="dropzone" id="excelDropzone" tabindex="0" role="button" aria-label="Chọn hoặc kéo thả file Excel">
+          <input type="file" id="excelFileInput" accept=".xlsx,.xls,.csv,.json" multiple hidden />
+          <div class="dropzone-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M12 16V4m0 0l-4 4m4-4l4 4"/><path d="M20 16.5A4.5 4.5 0 0 0 17.5 8h-.7A6 6 0 1 0 5 14.5"/><path d="M4 19h16"/></svg>
+          </div>
+          <div class="dropzone-title">Kéo thả file Excel vào đây hoặc <span class="link-accent">chọn từ máy tính</span></div>
+          <div class="dropzone-hint">Hỗ trợ chọn nhiều file cùng lúc (`.xlsx`, `.xls`, `.json`) — Tự động đọc cột `Report Date`, `Sales`, `Sales QTY`, `Sales Site Code`, `Region name`</div>
+        </div>
+
+        <!-- Validation / Progress message -->
+        <div class="update-feedback hidden" id="updateFeedback"></div>
+
+        <!-- Parsed Preview & Reconciliation Summary -->
+        <div class="preview-card hidden" id="updatePreviewCard">
+          <div class="preview-head">
+            <span class="preview-title">Kết quả đối soát dữ liệu mới</span>
+            <span class="mono preview-files" id="previewFileNames">--</span>
+          </div>
+          <div class="preview-grid">
+            <div class="preview-stat">
+              <span class="preview-lbl">Tổng giao dịch</span>
+              <strong class="mono" id="pvRows">--</strong>
+              <span class="mono preview-delta" id="pvRowsDelta"></span>
+            </div>
+            <div class="preview-stat">
+              <span class="preview-lbl">Khoảng ngày</span>
+              <strong class="mono" id="pvDateRange">--</strong>
+              <span class="mono preview-delta" id="pvMonthsCount"></span>
+            </div>
+            <div class="preview-stat">
+              <span class="preview-lbl">Total Sales</span>
+              <strong class="mono" id="pvSales">--</strong>
+              <span class="mono preview-delta" id="pvSalesDelta"></span>
+            </div>
+            <div class="preview-stat">
+              <span class="preview-lbl">Total Sales QTY</span>
+              <strong class="mono" id="pvQty">--</strong>
+              <span class="mono preview-delta" id="pvQtyDelta"></span>
+            </div>
+            <div class="preview-stat">
+              <span class="preview-lbl">Lợi nhuận (GP / GM%)</span>
+              <strong class="mono" id="pvGp">--</strong>
+              <span class="mono preview-delta" id="pvGm">--</span>
+            </div>
+            <div class="preview-stat">
+              <span class="preview-lbl">Site Code / Region</span>
+              <strong class="mono" id="pvCoverage">--</strong>
+              <span class="mono preview-delta">Zero-PII Verified ✓</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Optional Passcode Row (auto-shown if UPDATE_DATA_KEY is configured in Netlify) -->
+        <div class="passcode-row hidden" id="passcodeRow">
+          <label for="updatePasscodeInput" class="passcode-label">🔒 Mã bảo vệ cập nhật (UPDATE_DATA_KEY):</label>
+          <input type="password" id="updatePasscodeInput" class="dark-search passcode-input" placeholder="Nhập mã bảo vệ Netlify..." autocomplete="off" />
+        </div>
+      </div>
+
+      <div class="modal-footer">
+        <div class="modal-footer-left">
+          <button type="button" class="btn-ghost-danger" id="revertDefaultDataBtn" title="Xóa dữ liệu đã upload và quay về dữ liệu gốc trong GitHub">↺ Khôi phục dữ liệu gốc</button>
+          <button type="button" class="btn-mini hidden" id="downloadParsedJsonBtn" title="Tải file report_data.json đã xử lý để sao lưu">⬇ Tải JSON</button>
+        </div>
+        <div class="modal-footer-right">
+          <button type="button" class="btn-mini" id="cancelUpdateModalBtn">Hủy</button>
+          <button type="button" class="btn-publish-live" id="publishUpdateBtn" disabled>
+            <span id="publishBtnLabel">☁ Cập nhật lên Web</span>
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- TOAST NOTIFICATION -->
+  <div class="toast-notice" id="toastNotice" role="status" aria-live="polite"></div>
 </body>
 </html>

@@ -39,7 +39,7 @@
     "#1D7AFC", "#38BDF8", "#F59E0B", "#F97316",
   ];
 
-  // Compact row column indexes
+  // Compact row column indexes (Sales)
   const C = {
     DATE: 0,
     MONTH: 1,
@@ -58,6 +58,47 @@
     GP: 14,
   };
 
+  // Compact row column indexes (Inventory)
+  const INV_C = {
+    SKU: 0,
+    SITE: 1,
+    SITE_NAME: 2,
+    SUBCAT: 3,
+    BRAND: 4,
+    BIN_CODE: 5,
+    BIN_TYPE: 6,
+    BIN_ZONE: 7,
+    STATUS: 8,
+    LAST_RECV: 9,
+    FIRST_RECV: 10,
+    AGING: 11,
+    QTY: 12,
+    VALUE: 13,
+    NET_VALUE: 14,
+    UNIT_COST: 15,
+    LISTED_PRICE: 16,
+    MIN_STOCK: 17,
+  };
+
+  const BIN_TYPE_COLORS = {
+    "Hàng bán mới tại kho": "#12D37A",
+    "Hàng hư hỏng": "#E53E51",
+    "Hàng bảo hành": "#1D7AFC",
+    "Đang vận hành trong kho": "#F59E0B",
+    "Hàng nhập": "#38BDF8",
+    "Hàng khác": "#7C3AED",
+    "Hàng chờ xử lý": "#F97316",
+  };
+
+  const AGING_BUCKETS = [
+    { key: "0-30", label: "≤ 30 ngày", color: "#12D37A", test: (d) => d >= 0 && d <= 30 },
+    { key: "31-90", label: "31–90 ngày", color: "#14B8A6", test: (d) => d >= 31 && d <= 90 },
+    { key: "91-180", label: "91–180 ngày", color: "#38BDF8", test: (d) => d >= 91 && d <= 180 },
+    { key: "181-365", label: "181–365 ngày", color: "#F59E0B", test: (d) => d >= 181 && d <= 365 },
+    { key: "365+", label: "> 365 ngày", color: "#E53E51", test: (d) => d > 365 },
+    { key: "unknown", label: "Chưa rõ ngày", color: "#64748B", test: (d) => d < 0 },
+  ];
+
   const state = {
     raw: null,
     dataSourceMode: "default",    // cloud | local | default
@@ -66,10 +107,39 @@
     cloudUpdatedAt: "",
     updateMode: "replace",        // replace | merge
     pendingPayload: null,
-    pendingRawRecords: null,
-    pendingSources: [],
+    pendingSalesRecords: null,
+    pendingInvRecords: null,
+    pendingSalesSources: [],
+    pendingInvSources: [],
+    pendingKinds: [],
     monthsAll: [],
     activeView: "dashboard",
+    // Inventory sub-state
+    inv: {
+      site: "",
+      binType: "",
+      binZone: "",
+      subcat: "",
+      brand: "",
+      status: "",
+      agingBucket: "",
+      sellableOnly: false,
+      damagedOnly: false,
+      siteMode: "stacked",        // stacked | total
+      siteMetric: "value",        // value | qty
+      binDim: "binType",          // binType | binZone
+      binMetric: "value",         // value | qty
+      agingMetric: "both",        // both | value | qty
+      catDim: "subcat",           // subcat | brand
+      catMetric: "value",         // value | qty
+      tableTab: "raw",            // raw | sites | skus
+      tableSearch: "",
+      tableSortCol: "value",
+      tableSortDir: "desc",
+      tablePage: 1,
+      tablePageSize: 50,
+      lastExport: { headers: [], rows: [], filename: "inventory_report.csv" },
+    },
     // Filters
     region: "",
     site: "",
@@ -114,6 +184,10 @@
     deepRegionStack: null,
     deepChannel: null,
     deepDriver: null,
+    invSite: null,
+    invBin: null,
+    invAging: null,
+    invCat: null,
   };
 
   // --- FORMATTERS ---
@@ -303,8 +377,10 @@
 
     initMeta();
     populateFilters();
+    populateInventoryFilters();
     initCharts();
     bindEvents();
+    bindInventoryEvents();
     bindUpdateModalEvents();
     renderAll();
   }
@@ -320,11 +396,15 @@
   }
 
   function initMeta() {
-    const { meta, lookups } = state.raw;
-    const files = (meta.sources || []).map((s) => s.file).join(", ");
+    const { meta, lookups, inventory } = state.raw;
+    const files = [
+      ...(meta.sources || []).map((s) => s.file),
+      ...(inventory?.meta?.sources || []).map((s) => s.file),
+    ].filter(Boolean).join(", ");
+    const invSummary = inventory?.meta ? ` • Inv: ${fmtInt(inventory.meta.rowCount)} BIN (${fmtInt(inventory.meta.totals?.qty || 0)} QTY)` : "";
     const updatedTag = meta.updatedAt ? ` • Cập nhật: ${formatIsoVn(meta.updatedAt)}` : "";
     document.getElementById("footerSource").textContent =
-      `Source: ${files || "Sale_Revenue_Detail.xlsx"} • ${fmtInt(meta.rowCount)} rows (${meta.dateMin} → ${meta.dateMax})${updatedTag}`;
+      `Source: ${files || "Sale_Revenue_Detail.xlsx"} • Sales: ${fmtInt(meta.rowCount)} rows (${meta.dateMin} → ${meta.dateMax})${invSummary}${updatedTag}`;
 
     const pill = document.getElementById("dataSourcePill");
     if (pill) {
@@ -348,6 +428,21 @@
     if (siteTotalLbl) siteTotalLbl.textContent = String(siteCount);
     const rawTabBtn = document.getElementById("rawTabBtn");
     if (rawTabBtn) rawTabBtn.textContent = `Chi tiết ${fmtInt(meta.rowCount)} giao dịch`;
+
+    const snapBadge = document.getElementById("invSnapshotBadge");
+    if (snapBadge) {
+      snapBadge.textContent = inventory?.meta?.snapshotDate
+        ? `Snapshot: ${inventory.meta.snapshotDate} • ${fmtInt(inventory.meta.rowCount)} dòng`
+        : "Chưa có dữ liệu tồn kho";
+    }
+    const invRawTab = document.getElementById("invRawTabBtn");
+    if (invRawTab && inventory?.meta) {
+      invRawTab.textContent = `Chi tiết SKU & BIN (${fmtInt(inventory.meta.rowCount)})`;
+    }
+    const invSiteTag = document.getElementById("invSiteCountTag");
+    if (invSiteTag && inventory?.lookups) {
+      invSiteTag.textContent = `${inventory.lookups.sites.length} KHO`;
+    }
   }
 
   function applyNewDataset(payload, sourceMode) {
@@ -364,6 +459,8 @@
 
     initMeta();
     populateFilters();
+    populateInventoryFilters();
+    resetInvFilters(false);
 
     document.getElementById("filterRegion").value = "";
     document.getElementById("filterSite").value = "";
@@ -431,6 +528,10 @@
     charts.deepRegionStack = make("chartDeepRegionStack");
     charts.deepChannel = make("chartDeepChannel");
     charts.deepDriver = make("chartDeepDriver");
+    charts.invSite = make("chartInvSite");
+    charts.invBin = make("chartInvBin");
+    charts.invAging = make("chartInvAging");
+    charts.invCat = make("chartInvCat");
 
     // Cross-filter click listeners
     charts.hero.on("click", (params) => {
@@ -483,6 +584,50 @@
       renderAll();
     });
 
+    // Inventory cross-filter clicks
+    charts.invSite.on("click", (params) => {
+      const code = params.name;
+      if (!code) return;
+      state.inv.site = state.inv.site === code ? "" : code;
+      document.getElementById("invFilterSite").value = state.inv.site;
+      state.inv.tablePage = 1;
+      renderInventoryView();
+    });
+
+    charts.invBin.on("click", (params) => {
+      if (!params.name) return;
+      if (state.inv.binDim === "binType") {
+        state.inv.binType = state.inv.binType === params.name ? "" : params.name;
+        document.getElementById("invFilterBinType").value = state.inv.binType;
+      } else {
+        state.inv.binZone = state.inv.binZone === params.name ? "" : params.name;
+        document.getElementById("invFilterBinZone").value = state.inv.binZone;
+      }
+      state.inv.tablePage = 1;
+      renderInventoryView();
+    });
+
+    charts.invAging.on("click", (params) => {
+      const b = AGING_BUCKETS.find((x) => x.label === params.name);
+      if (!b) return;
+      state.inv.agingBucket = state.inv.agingBucket === b.key ? "" : b.key;
+      state.inv.tablePage = 1;
+      renderInventoryView();
+    });
+
+    charts.invCat.on("click", (params) => {
+      if (!params.name) return;
+      if (state.inv.catDim === "subcat") {
+        state.inv.subcat = state.inv.subcat === params.name ? "" : params.name;
+        document.getElementById("invFilterSubcat").value = state.inv.subcat;
+      } else {
+        state.inv.brand = state.inv.brand === params.name ? "" : params.name;
+        document.getElementById("invFilterBrand").value = state.inv.brand;
+      }
+      state.inv.tablePage = 1;
+      renderInventoryView();
+    });
+
     window.addEventListener("resize", () => {
       Object.values(charts).forEach((ch) => ch && ch.resize());
     });
@@ -516,6 +661,12 @@
       document.querySelectorAll(".view-pane").forEach((p) => p.classList.remove("active"));
       const pane = document.getElementById(`view-${view}`);
       if (pane) pane.classList.add("active");
+
+      const isInv = view === "inventory";
+      document.getElementById("salesTopFilters")?.classList.toggle("hidden", isInv);
+      document.getElementById("salesDatePickerBox")?.classList.toggle("hidden", isInv);
+      document.getElementById("activeChipsBar")?.classList.toggle("hidden", isInv);
+      document.getElementById("invTopBanner")?.classList.toggle("hidden", !isInv);
 
       renderActiveView(getFilteredRows(false), state.clickedMonth ? getFilteredRows(true) : getFilteredRows(false));
       setTimeout(() => {
@@ -742,6 +893,8 @@
       renderDeepChannelAndDriver(filtered);
     } else if (state.activeView === "ledger") {
       renderLedgerTable(filtered);
+    } else if (state.activeView === "inventory") {
+      renderInventoryView();
     }
   }
 
@@ -2010,6 +2163,948 @@
   }
 
   // =========================================================================
+  // 8. INVENTORY (TỒN KHO) FULL ANALYTICS ENGINE
+  // =========================================================================
+  function populateInventoryFilters() {
+    const inv = state.raw?.inventory;
+    const fill = (id, allLabel, items, labelFn = (x) => x) => {
+      const el = document.getElementById(id);
+      if (!el) return;
+      el.innerHTML = `<option value="">${allLabel}</option>`;
+      items.forEach((v) => el.add(new Option(labelFn(v), v)));
+    };
+
+    if (!inv || !inv.lookups) {
+      fill("invFilterSite", "Chưa có dữ liệu Kho", []);
+      fill("invFilterBinType", "Tất cả BIN Type", []);
+      fill("invFilterBinZone", "Tất cả BIN Zone", []);
+      fill("invFilterSubcat", "Tất cả Subcat 2", []);
+      fill("invFilterBrand", "Tất cả Brand", []);
+      return;
+    }
+
+    const { lookups, siteDirectory = {} } = inv;
+    fill(
+      "invFilterSite",
+      `Tất cả Site Kho (${lookups.sites.length})`,
+      [...lookups.sites].sort(),
+      (code) => {
+        const info = siteDirectory[code];
+        return info && info.siteName && info.siteName !== code ? `${code} — ${info.siteName}` : code;
+      }
+    );
+    fill("invFilterBinType", `Tất cả BIN Type (${lookups.binTypes.length})`, [...lookups.binTypes].sort());
+    fill("invFilterBinZone", `Tất cả BIN Zone (${lookups.binZones.length})`, [...lookups.binZones].sort());
+    fill("invFilterSubcat", `Tất cả Subcat 2 (${lookups.subcats.length})`, [...lookups.subcats].sort());
+    fill("invFilterBrand", `Tất cả Brand (${lookups.brands.length})`, [...lookups.brands].sort());
+  }
+
+  function resetInvFilters(shouldRender = true) {
+    const iv = state.inv;
+    iv.site = "";
+    iv.binType = "";
+    iv.binZone = "";
+    iv.subcat = "";
+    iv.brand = "";
+    iv.status = "";
+    iv.agingBucket = "";
+    iv.sellableOnly = false;
+    iv.damagedOnly = false;
+    iv.tableSearch = "";
+    iv.tablePage = 1;
+
+    const setVal = (id, v) => { const el = document.getElementById(id); if (el) el.value = v; };
+    const setChk = (id, v) => { const el = document.getElementById(id); if (el) el.checked = v; };
+    setVal("invFilterSite", "");
+    setVal("invFilterBinType", "");
+    setVal("invFilterBinZone", "");
+    setVal("invFilterSubcat", "");
+    setVal("invFilterBrand", "");
+    setVal("invFilterStatus", "");
+    setVal("invTableSearchInput", "");
+    setChk("invSellableOnlyToggle", false);
+    setChk("invDamagedOnlyToggle", false);
+
+    if (shouldRender && state.activeView === "inventory") renderInventoryView();
+  }
+
+  function bindInventoryEvents() {
+    const onSelect = (id, prop) => {
+      const el = document.getElementById(id);
+      if (!el) return;
+      el.addEventListener("change", (e) => {
+        state.inv[prop] = e.target.value;
+        state.inv.tablePage = 1;
+        renderInventoryView();
+      });
+    };
+
+    onSelect("invFilterSite", "site");
+    onSelect("invFilterBinType", "binType");
+    onSelect("invFilterBinZone", "binZone");
+    onSelect("invFilterSubcat", "subcat");
+    onSelect("invFilterBrand", "brand");
+    onSelect("invFilterStatus", "status");
+
+    document.getElementById("invSellableOnlyToggle")?.addEventListener("change", (e) => {
+      state.inv.sellableOnly = e.target.checked;
+      if (e.target.checked) {
+        state.inv.damagedOnly = false;
+        const dm = document.getElementById("invDamagedOnlyToggle");
+        if (dm) dm.checked = false;
+      }
+      state.inv.tablePage = 1;
+      renderInventoryView();
+    });
+
+    document.getElementById("invDamagedOnlyToggle")?.addEventListener("change", (e) => {
+      state.inv.damagedOnly = e.target.checked;
+      if (e.target.checked) {
+        state.inv.sellableOnly = false;
+        const sl = document.getElementById("invSellableOnlyToggle");
+        if (sl) sl.checked = false;
+      }
+      state.inv.tablePage = 1;
+      renderInventoryView();
+    });
+
+    document.getElementById("invResetBtn")?.addEventListener("click", () => resetInvFilters(true));
+
+    const bindInvSeg = (id, cb) => {
+      const el = document.getElementById(id);
+      if (!el) return;
+      el.addEventListener("click", (e) => {
+        const btn = e.target.closest(".seg-btn");
+        if (!btn) return;
+        el.querySelectorAll(".seg-btn").forEach((b) => b.classList.remove("active"));
+        btn.classList.add("active");
+        cb(btn.dataset.val);
+      });
+    };
+
+    bindInvSeg("invSiteModeGroup", (v) => { state.inv.siteMode = v; renderInvSiteChart(getFilteredInvRows()); });
+    bindInvSeg("invSiteMetricGroup", (v) => { state.inv.siteMetric = v; renderInvSiteChart(getFilteredInvRows()); });
+    bindInvSeg("invBinDimGroup", (v) => { state.inv.binDim = v; renderInvBinChart(getFilteredInvRows()); });
+    bindInvSeg("invBinMetricGroup", (v) => { state.inv.binMetric = v; renderInvBinChart(getFilteredInvRows()); });
+    bindInvSeg("invAgingMetricGroup", (v) => { state.inv.agingMetric = v; renderInvAgingChart(getFilteredInvRows()); });
+    bindInvSeg("invCatDimGroup", (v) => { state.inv.catDim = v; renderInvCatChart(getFilteredInvRows()); });
+    bindInvSeg("invCatMetricGroup", (v) => { state.inv.catMetric = v; renderInvCatChart(getFilteredInvRows()); });
+
+    bindInvSeg("invTableTabGroup", (v) => {
+      state.inv.tableTab = v;
+      state.inv.tablePage = 1;
+      state.inv.tableSortCol = "value";
+      state.inv.tableSortDir = "desc";
+      renderInvTable(getFilteredInvRows());
+    });
+
+    document.getElementById("invTableSearchInput")?.addEventListener("input", (e) => {
+      state.inv.tableSearch = e.target.value.trim().toLowerCase();
+      state.inv.tablePage = 1;
+      renderInvTable(getFilteredInvRows());
+    });
+
+    document.getElementById("exportInvCsvBtn")?.addEventListener("click", () => {
+      const { headers, rows, filename } = state.inv.lastExport;
+      downloadCsv(headers, rows, filename);
+    });
+  }
+
+  function getFilteredInvRows() {
+    const inv = state.raw?.inventory;
+    if (!inv || !Array.isArray(inv.rows)) return [];
+    const { rows, lookups } = inv;
+    const iv = state.inv;
+
+    const siteIdx = iv.site ? lookups.sites.indexOf(iv.site) : -1;
+    const btIdx = iv.binType ? lookups.binTypes.indexOf(iv.binType) : -1;
+    const bzIdx = iv.binZone ? lookups.binZones.indexOf(iv.binZone) : -1;
+    const scIdx = iv.subcat ? lookups.subcats.indexOf(iv.subcat) : -1;
+    const brIdx = iv.brand ? lookups.brands.indexOf(iv.brand) : -1;
+    const stIdx = iv.status ? lookups.purchaseStatuses.indexOf(iv.status) : -1;
+    const agingObj = iv.agingBucket ? AGING_BUCKETS.find((b) => b.key === iv.agingBucket) : null;
+
+    const sellableIdxSet = new Set();
+    const damagedIdxSet = new Set();
+    lookups.binTypes.forEach((n, idx) => {
+      const low = n.toLowerCase();
+      if (low.includes("bán mới")) sellableIdxSet.add(idx);
+      if (low.includes("hư hỏng")) damagedIdxSet.add(idx);
+    });
+
+    const out = [];
+    for (let i = 0; i < rows.length; i++) {
+      const r = rows[i];
+      if (siteIdx !== -1 && r[INV_C.SITE] !== siteIdx) continue;
+      if (btIdx !== -1 && r[INV_C.BIN_TYPE] !== btIdx) continue;
+      if (bzIdx !== -1 && r[INV_C.BIN_ZONE] !== bzIdx) continue;
+      if (scIdx !== -1 && r[INV_C.SUBCAT] !== scIdx) continue;
+      if (brIdx !== -1 && r[INV_C.BRAND] !== brIdx) continue;
+      if (stIdx !== -1 && r[INV_C.STATUS] !== stIdx) continue;
+      if (iv.sellableOnly && !sellableIdxSet.has(r[INV_C.BIN_TYPE])) continue;
+      if (iv.damagedOnly && !damagedIdxSet.has(r[INV_C.BIN_TYPE])) continue;
+      if (agingObj && !agingObj.test(r[INV_C.AGING])) continue;
+      out.push(r);
+    }
+    return out;
+  }
+
+  function renderInventoryView() {
+    const inv = state.raw?.inventory;
+    if (!inv || !Array.isArray(inv.rows) || inv.rows.length === 0) {
+      document.getElementById("invInsightText").textContent =
+        "Chưa có dữ liệu tồn kho — hãy bấm nút Update Data ở góc trên bên phải và tải lên file Inventory_Details.xlsx.";
+      [charts.invSite, charts.invBin, charts.invAging, charts.invCat].forEach((ch) => {
+        if (ch) { ch.clear(); ch.setOption(emptyOption("Chưa có dữ liệu Inventory")); }
+      });
+      return;
+    }
+
+    const rows = getFilteredInvRows();
+    renderInvKpis(rows);
+    renderInvChipsAndInsight(rows);
+    renderInvSiteChart(rows);
+    renderInvBinChart(rows);
+    renderInvAgingChart(rows);
+    renderInvCatChart(rows);
+    renderInvTable(rows);
+  }
+
+  function renderInvKpis(rows) {
+    const { lookups } = state.raw.inventory;
+    let totalVal = 0, totalNet = 0, totalQty = 0;
+    let sellVal = 0, sellQty = 0;
+    let dmgVal = 0, dmgQty = 0;
+    let discVal = 0, discQty = 0;
+    let aging180Val = 0, aging180Qty = 0;
+    const skuSet = new Set(), siteSet = new Set();
+
+    for (let i = 0; i < rows.length; i++) {
+      const r = rows[i];
+      const val = r[INV_C.VALUE];
+      const qty = r[INV_C.QTY];
+      totalVal += val;
+      totalNet += r[INV_C.NET_VALUE];
+      totalQty += qty;
+      skuSet.add(r[INV_C.SKU]);
+      siteSet.add(r[INV_C.SITE]);
+
+      const bt = (lookups.binTypes[r[INV_C.BIN_TYPE]] || "").toLowerCase();
+      if (bt.includes("bán mới")) { sellVal += val; sellQty += qty; }
+      if (bt.includes("hư hỏng")) { dmgVal += val; dmgQty += qty; }
+      if ((lookups.purchaseStatuses[r[INV_C.STATUS]] || "").toLowerCase() === "discontinued") {
+        discVal += val; discQty += qty;
+      }
+      if (r[INV_C.AGING] > 180) { aging180Val += val; aging180Qty += qty; }
+    }
+
+    const pct = (part) => (totalVal > 0 ? fmtPct((part / totalVal) * 100) : "0.0%");
+    const avgCost = totalQty > 0 ? totalVal / totalQty : 0;
+
+    document.getElementById("invKpiValue").textContent = fmtCompactVnd(totalVal);
+    document.getElementById("invKpiValueSub").textContent = `Net PP: ${fmtCompactVnd(totalNet)} • TB ${fmtCompactVnd(avgCost)}`;
+    document.getElementById("invKpiQty").textContent = `${fmtInt(totalQty)} units`;
+    document.getElementById("invKpiQtySub").textContent = `${fmtInt(skuSet.size)} SKUs • ${fmtInt(siteSet.size)} kho • ${fmtInt(rows.length)} BIN`;
+    document.getElementById("invKpiSellable").textContent = fmtCompactVnd(sellVal);
+    document.getElementById("invKpiSellableSub").textContent = `${pct(sellVal)} • ${fmtInt(sellQty)} units`;
+    document.getElementById("invKpiDamaged").textContent = fmtCompactVnd(dmgVal);
+    document.getElementById("invKpiDamagedSub").textContent = `${pct(dmgVal)} • ${fmtInt(dmgQty)} units`;
+    document.getElementById("invKpiDiscontinued").textContent = fmtCompactVnd(discVal);
+    document.getElementById("invKpiDiscontinuedSub").textContent = `${pct(discVal)} • ${fmtInt(discQty)} units`;
+    document.getElementById("invKpiAging180").textContent = fmtCompactVnd(aging180Val);
+    document.getElementById("invKpiAging180Sub").textContent = `${pct(aging180Val)} • ${fmtInt(aging180Qty)} units`;
+  }
+
+  function renderInvChipsAndInsight(rows) {
+    const wrap = document.getElementById("invActiveChips");
+    const iv = state.inv;
+    const chips = [];
+    const add = (label, cls, fn) => chips.push({ label, cls, fn });
+
+    if (iv.site) add(`Kho: ${iv.site}`, "", () => { iv.site = ""; document.getElementById("invFilterSite").value = ""; renderInventoryView(); });
+    if (iv.binType) add(`BIN Type: ${iv.binType}`, "", () => { iv.binType = ""; document.getElementById("invFilterBinType").value = ""; renderInventoryView(); });
+    if (iv.binZone) add(`BIN Zone: ${iv.binZone}`, "", () => { iv.binZone = ""; document.getElementById("invFilterBinZone").value = ""; renderInventoryView(); });
+    if (iv.subcat) add(`Subcat: ${iv.subcat}`, "", () => { iv.subcat = ""; document.getElementById("invFilterSubcat").value = ""; renderInventoryView(); });
+    if (iv.brand) add(`Brand: ${iv.brand}`, "", () => { iv.brand = ""; document.getElementById("invFilterBrand").value = ""; renderInventoryView(); });
+    if (iv.status) add(`Status: ${iv.status}`, "amber", () => { iv.status = ""; document.getElementById("invFilterStatus").value = ""; renderInventoryView(); });
+    if (iv.agingBucket) {
+      const b = AGING_BUCKETS.find((x) => x.key === iv.agingBucket);
+      add(`Aging: ${b ? b.label : iv.agingBucket}`, "amber", () => { iv.agingBucket = ""; renderInventoryView(); });
+    }
+    if (iv.sellableOnly) add("Chỉ hàng bán mới", "", () => { iv.sellableOnly = false; document.getElementById("invSellableOnlyToggle").checked = false; renderInventoryView(); });
+    if (iv.damagedOnly) add("Chỉ hàng hư hỏng", "amber", () => { iv.damagedOnly = false; document.getElementById("invDamagedOnlyToggle").checked = false; renderInventoryView(); });
+
+    wrap.innerHTML = "";
+    if (!chips.length) {
+      wrap.innerHTML = `<span class="chip muted-chip">Toàn bộ tồn kho • ${fmtInt(rows.length)} dòng BIN</span>`;
+    } else {
+      chips.forEach((c) => {
+        const el = document.createElement("span");
+        el.className = `chip ${c.cls}`;
+        el.innerHTML = `<span>${esc(c.label)}</span><button type="button" aria-label="Xóa">×</button>`;
+        el.querySelector("button").addEventListener("click", c.fn);
+        wrap.appendChild(el);
+      });
+    }
+
+    const insightEl = document.getElementById("invInsightText");
+    if (!rows.length) {
+      insightEl.textContent = "Không có dòng tồn kho khớp bộ lọc — bấm Reset Kho.";
+      return;
+    }
+    const { lookups } = state.raw.inventory;
+    const bySite = new Map();
+    let dmgVal = 0, totVal = 0;
+    rows.forEach((r) => {
+      const s = lookups.sites[r[INV_C.SITE]];
+      bySite.set(s, (bySite.get(s) || 0) + r[INV_C.VALUE]);
+      totVal += r[INV_C.VALUE];
+      if ((lookups.binTypes[r[INV_C.BIN_TYPE]] || "").toLowerCase().includes("hư hỏng")) dmgVal += r[INV_C.VALUE];
+    });
+    let topSite = "", topVal = -1;
+    bySite.forEach((v, k) => { if (v > topVal) { topVal = v; topSite = k; } });
+    const dmgPct = totVal > 0 ? (dmgVal / totVal) * 100 : 0;
+    const topShare = totVal > 0 ? (topVal / totVal) * 100 : 0;
+    insightEl.textContent =
+      `Kho lớn nhất: ${topSite} (${fmtCompactVnd(topVal)} • ${fmtPct(topShare)}) | Hàng hư hỏng: ${fmtPct(dmgPct)} tổng giá trị`;
+  }
+
+  function renderInvSiteChart(rows) {
+    if (!charts.invSite) return;
+    if (!rows.length) { charts.invSite.clear(); charts.invSite.setOption(emptyOption("Không có dữ liệu kho")); return; }
+    const { lookups, siteDirectory = {} } = state.raw.inventory;
+    const isQty = state.inv.siteMetric === "qty";
+    const metricCol = isQty ? INV_C.QTY : INV_C.VALUE;
+
+    const siteTotals = new Map();
+    const binTypeSet = new Set();
+    const mat = new Map();
+
+    for (let i = 0; i < rows.length; i++) {
+      const r = rows[i];
+      const site = lookups.sites[r[INV_C.SITE]];
+      const bt = lookups.binTypes[r[INV_C.BIN_TYPE]];
+      const val = r[metricCol];
+      siteTotals.set(site, (siteTotals.get(site) || 0) + val);
+      binTypeSet.add(bt);
+      if (!mat.has(bt)) mat.set(bt, new Map());
+      mat.get(bt).set(site, (mat.get(bt).get(site) || 0) + val);
+    }
+
+    const sites = Array.from(siteTotals.entries())
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 15)
+      .map((x) => x[0]);
+
+    const binTypes = Array.from(binTypeSet).sort((a, b) => {
+      const sum = (t) => Array.from(mat.get(t)?.values() || []).reduce((acc, v) => acc + v, 0);
+      return sum(b) - sum(a);
+    });
+
+    const series = state.inv.siteMode === "stacked"
+      ? binTypes.map((bt, idx) => ({
+          name: bt,
+          type: "bar",
+          stack: "inv",
+          barMaxWidth: 28,
+          itemStyle: { color: BIN_TYPE_COLORS[bt] || FALLBACK_COLORS[idx % FALLBACK_COLORS.length] },
+          data: sites.map((s) => Math.round((mat.get(bt)?.get(s) || 0) * 100) / 100),
+        }))
+      : [{
+          name: isQty ? "Inventory QTY" : "Inventory Value",
+          type: "bar",
+          barMaxWidth: 28,
+          itemStyle: {
+            borderRadius: [4, 4, 0, 0],
+            color: (p) => (p.name === state.inv.site ? "#00E5FF" : "#1D7AFC"),
+          },
+          data: sites.map((s) => Math.round((siteTotals.get(s) || 0) * 100) / 100),
+        }];
+
+    charts.invSite.clear();
+    charts.invSite.setOption({
+      tooltip: {
+        trigger: "axis",
+        axisPointer: { type: "shadow" },
+        backgroundColor: COLORS.tooltipBg,
+        borderColor: COLORS.tooltipBorder,
+        textStyle: { color: "#F1F5F9", fontSize: 12 },
+        formatter: (params) => {
+          const code = params[0]?.axisValue || "";
+          const sName = siteDirectory[code]?.siteName || code;
+          const total = siteTotals.get(code) || 0;
+          let html = `<strong>${esc(code)} — ${esc(sName)}</strong><br/>`;
+          params.forEach((p) => {
+            if (!p.value) return;
+            html += `${p.marker} ${esc(p.seriesName)}: <b style="font-family:JetBrains Mono">${isQty ? fmtInt(p.value) + " units" : fmtVndFull(p.value)}</b><br/>`;
+          });
+          if (state.inv.siteMode === "stacked") {
+            html += `<div style="margin-top:4px;border-top:1px solid rgba(255,255,255,0.12);padding-top:4px">Tổng: <b>${isQty ? fmtInt(total) + " units" : fmtVndFull(total)}</b></div>`;
+          }
+          return html;
+        },
+      },
+      legend: state.inv.siteMode === "stacked" ? {
+        bottom: 0,
+        type: "scroll",
+        icon: "circle",
+        itemWidth: 8,
+        itemHeight: 8,
+        textStyle: { color: "#94A3B8", fontSize: 10.5 },
+      } : { show: false },
+      grid: { top: 18, left: 56, right: 16, bottom: state.inv.siteMode === "stacked" ? 42 : 28 },
+      xAxis: {
+        type: "category",
+        data: sites,
+        axisLine: { lineStyle: { color: COLORS.axisLine } },
+        axisLabel: { color: COLORS.axisLabel, fontSize: 10.5, fontFamily: "JetBrains Mono" },
+      },
+      yAxis: {
+        type: "value",
+        splitLine: { lineStyle: { color: COLORS.gridLine } },
+        axisLabel: {
+          color: COLORS.axisLabel,
+          fontSize: 10,
+          fontFamily: "JetBrains Mono",
+          formatter: (v) => (isQty ? fmtInt(v) : fmtAxisVnd(v)),
+        },
+      },
+      series,
+    });
+  }
+
+  function renderInvBinChart(rows) {
+    if (!charts.invBin) return;
+    if (!rows.length) { charts.invBin.clear(); charts.invBin.setOption(emptyOption("Không có dữ liệu BIN")); return; }
+    const { lookups } = state.raw.inventory;
+    const isZone = state.inv.binDim === "binZone";
+    const isQty = state.inv.binMetric === "qty";
+    const dimCol = isZone ? INV_C.BIN_ZONE : INV_C.BIN_TYPE;
+    const dimLookup = isZone ? lookups.binZones : lookups.binTypes;
+    const metricCol = isQty ? INV_C.QTY : INV_C.VALUE;
+
+    const map = new Map();
+    rows.forEach((r) => {
+      const k = dimLookup[r[dimCol]];
+      const cur = map.get(k) || { val: 0, qty: 0, count: 0 };
+      cur.val += r[INV_C.VALUE];
+      cur.qty += r[INV_C.QTY];
+      cur.count += 1;
+      map.set(k, cur);
+    });
+
+    const items = Array.from(map.entries())
+      .map(([name, d], idx) => ({
+        name,
+        value: Math.round((isQty ? d.qty : d.val) * 100) / 100,
+        rawVal: d.val,
+        rawQty: d.qty,
+        count: d.count,
+        itemStyle: { color: BIN_TYPE_COLORS[name] || FALLBACK_COLORS[idx % FALLBACK_COLORS.length] },
+      }))
+      .sort((a, b) => b.value - a.value);
+
+    charts.invBin.clear();
+    charts.invBin.setOption({
+      tooltip: {
+        trigger: "item",
+        backgroundColor: COLORS.tooltipBg,
+        borderColor: COLORS.tooltipBorder,
+        textStyle: { color: "#F1F5F9", fontSize: 12 },
+        formatter: (p) => {
+          const d = p.data;
+          return `<strong>${esc(d.name)}</strong><br/>` +
+            `Giá trị: <b>${fmtVndFull(d.rawVal)}</b> (${p.percent}%)<br/>` +
+            `Số lượng: <b>${fmtInt(d.rawQty)} units</b> (${fmtInt(d.count)} BIN)`;
+        },
+      },
+      legend: {
+        bottom: 0,
+        type: "scroll",
+        icon: "circle",
+        itemWidth: 8,
+        itemHeight: 8,
+        textStyle: { color: "#94A3B8", fontSize: 10.5 },
+      },
+      series: [{
+        type: "pie",
+        radius: ["48%", "74%"],
+        center: ["50%", "44%"],
+        avoidLabelOverlap: true,
+        itemStyle: { borderRadius: 4, borderColor: "#15181D", borderWidth: 2 },
+        label: {
+          show: true,
+          color: "#CBD5E1",
+          fontSize: 10.5,
+          formatter: (p) => (p.percent >= 4 ? `${p.percent}%` : ""),
+        },
+        data: items,
+      }],
+    });
+  }
+
+  function renderInvAgingChart(rows) {
+    if (!charts.invAging) return;
+    if (!rows.length) { charts.invAging.clear(); charts.invAging.setOption(emptyOption("Không có dữ liệu tuổi tồn")); return; }
+
+    const agg = AGING_BUCKETS.map((b) => ({ ...b, val: 0, qty: 0, count: 0 }));
+    for (let i = 0; i < rows.length; i++) {
+      const r = rows[i];
+      const d = r[INV_C.AGING];
+      for (let j = 0; j < agg.length; j++) {
+        if (agg[j].test(d)) {
+          agg[j].val += r[INV_C.VALUE];
+          agg[j].qty += r[INV_C.QTY];
+          agg[j].count += 1;
+          break;
+        }
+      }
+    }
+
+    const mode = state.inv.agingMetric;
+    const series = [];
+    if (mode === "both" || mode === "value") {
+      series.push({
+        name: "Giá trị tồn (VND)",
+        type: "bar",
+        yAxisIndex: 0,
+        barMaxWidth: 34,
+        data: agg.map((b) => ({
+          value: Math.round(b.val),
+          itemStyle: {
+            color: b.color,
+            borderRadius: [4, 4, 0, 0],
+            opacity: state.inv.agingBucket && state.inv.agingBucket !== b.key ? 0.35 : 0.92,
+          },
+        })),
+      });
+    }
+    if (mode === "both" || mode === "qty") {
+      series.push({
+        name: "Số lượng (QTY)",
+        type: mode === "qty" ? "bar" : "line",
+        yAxisIndex: mode === "both" ? 1 : 0,
+        smooth: true,
+        symbolSize: 8,
+        barMaxWidth: 34,
+        itemStyle: { color: "#00E5FF", borderRadius: [4, 4, 0, 0] },
+        lineStyle: { color: "#00E5FF", width: 2.5 },
+        data: agg.map((b) => b.qty),
+      });
+    }
+
+    charts.invAging.clear();
+    charts.invAging.setOption({
+      tooltip: {
+        trigger: "axis",
+        axisPointer: { type: "shadow" },
+        backgroundColor: COLORS.tooltipBg,
+        borderColor: COLORS.tooltipBorder,
+        textStyle: { color: "#F1F5F9", fontSize: 12 },
+        formatter: (params) => {
+          const idx = params[0]?.dataIndex ?? 0;
+          const b = agg[idx];
+          return `<strong>Nhóm tuổi: ${esc(b.label)}</strong><br/>` +
+            `Giá trị tồn: <b>${fmtVndFull(b.val)}</b><br/>` +
+            `Số lượng: <b>${fmtInt(b.qty)} units</b> (${fmtInt(b.count)} dòng BIN)`;
+        },
+      },
+      legend: { bottom: 0, textStyle: { color: "#94A3B8", fontSize: 10.5 } },
+      grid: { top: 20, left: 56, right: mode === "both" ? 48 : 16, bottom: 38 },
+      xAxis: {
+        type: "category",
+        data: agg.map((b) => b.label),
+        axisLine: { lineStyle: { color: COLORS.axisLine } },
+        axisLabel: { color: COLORS.axisLabel, fontSize: 10.5 },
+      },
+      yAxis: mode === "both"
+        ? [
+            {
+              type: "value",
+              splitLine: { lineStyle: { color: COLORS.gridLine } },
+              axisLabel: { color: COLORS.axisLabel, fontSize: 10, fontFamily: "JetBrains Mono", formatter: fmtAxisVnd },
+            },
+            {
+              type: "value",
+              splitLine: { show: false },
+              axisLabel: { color: "#00E5FF", fontSize: 10, fontFamily: "JetBrains Mono" },
+            },
+          ]
+        : {
+            type: "value",
+            splitLine: { lineStyle: { color: COLORS.gridLine } },
+            axisLabel: {
+              color: COLORS.axisLabel,
+              fontSize: 10,
+              fontFamily: "JetBrains Mono",
+              formatter: (v) => (mode === "qty" ? fmtInt(v) : fmtAxisVnd(v)),
+            },
+          },
+      series,
+    });
+  }
+
+  function renderInvCatChart(rows) {
+    if (!charts.invCat) return;
+    if (!rows.length) { charts.invCat.clear(); charts.invCat.setOption(emptyOption("Không có dữ liệu")); return; }
+    const { lookups } = state.raw.inventory;
+    const isBrand = state.inv.catDim === "brand";
+    const isQty = state.inv.catMetric === "qty";
+    const dimCol = isBrand ? INV_C.BRAND : INV_C.SUBCAT;
+    const dimLookup = isBrand ? lookups.brands : lookups.subcats;
+
+    const map = new Map();
+    rows.forEach((r) => {
+      const k = dimLookup[r[dimCol]];
+      const cur = map.get(k) || { val: 0, qty: 0 };
+      cur.val += r[INV_C.VALUE];
+      cur.qty += r[INV_C.QTY];
+      map.set(k, cur);
+    });
+
+    const top = Array.from(map.entries())
+      .map(([name, d]) => ({ name, val: d.val, qty: d.qty, metric: isQty ? d.qty : d.val }))
+      .sort((a, b) => b.metric - a.metric)
+      .slice(0, 10)
+      .reverse();
+
+    charts.invCat.clear();
+    charts.invCat.setOption({
+      tooltip: {
+        trigger: "axis",
+        axisPointer: { type: "shadow" },
+        backgroundColor: COLORS.tooltipBg,
+        borderColor: COLORS.tooltipBorder,
+        textStyle: { color: "#F1F5F9", fontSize: 12 },
+        formatter: (params) => {
+          const item = top[params[0]?.dataIndex ?? 0];
+          return `<strong>${esc(item.name)}</strong><br/>Giá trị: <b>${fmtVndFull(item.val)}</b><br/>Số lượng: <b>${fmtInt(item.qty)} units</b>`;
+        },
+      },
+      grid: { top: 10, left: 150, right: 64, bottom: 24 },
+      xAxis: {
+        type: "value",
+        splitLine: { lineStyle: { color: COLORS.gridLine } },
+        axisLabel: {
+          color: COLORS.axisLabel,
+          fontSize: 10,
+          fontFamily: "JetBrains Mono",
+          formatter: (v) => (isQty ? fmtInt(v) : fmtAxisVnd(v)),
+        },
+      },
+      yAxis: {
+        type: "category",
+        data: top.map((x) => x.name),
+        axisLine: { lineStyle: { color: COLORS.axisLine } },
+        axisLabel: {
+          color: "#CBD5E1",
+          fontSize: 10.5,
+          width: 140,
+          overflow: "truncate",
+        },
+      },
+      series: [{
+        type: "bar",
+        barMaxWidth: 18,
+        itemStyle: {
+          borderRadius: [0, 4, 4, 0],
+          color: new echarts.graphic.LinearGradient(0, 0, 1, 0, [
+            { offset: 0, color: "#1068DF" },
+            { offset: 1, color: "#12D37A" },
+          ]),
+        },
+        label: {
+          show: true,
+          position: "right",
+          color: "#94A3B8",
+          fontSize: 10,
+          fontFamily: "JetBrains Mono",
+          formatter: (p) => (isQty ? fmtInt(p.value) : fmtCompactVnd(p.value)),
+        },
+        data: top.map((x) => Math.round(x.metric)),
+      }],
+    });
+  }
+
+  function renderInvTableHead(cols) {
+    const thead = document.getElementById("invTableHead");
+    const iv = state.inv;
+    thead.innerHTML = `<tr>${cols.map((c) => {
+      const sorted = !c.nosort && iv.tableSortCol === c.key;
+      const arrow = sorted ? (iv.tableSortDir === "asc" ? " ▲" : " ▼") : "";
+      return `<th class="${c.num ? "num" : ""}" data-sort="${!c.nosort ? c.key : ""}">${esc(c.label)}${arrow}</th>`;
+    }).join("")}</tr>`;
+    thead.querySelectorAll("th[data-sort]").forEach((th) => {
+      if (!th.dataset.sort) return;
+      th.addEventListener("click", () => {
+        if (iv.tableSortCol === th.dataset.sort) iv.tableSortDir = iv.tableSortDir === "asc" ? "desc" : "asc";
+        else { iv.tableSortCol = th.dataset.sort; iv.tableSortDir = "desc"; }
+        renderInvTable(getFilteredInvRows());
+      });
+    });
+  }
+
+  function binBadgeClass(binType) {
+    const l = (binType || "").toLowerCase();
+    if (l.includes("bán mới")) return "sellable";
+    if (l.includes("hư hỏng")) return "damaged";
+    if (l.includes("bảo hành")) return "warranty";
+    return "other";
+  }
+
+  function renderInvTable(rows) {
+    const inv = state.raw?.inventory;
+    if (!inv) return;
+    const { lookups, siteDirectory = {} } = inv;
+    const iv = state.inv;
+    const q = iv.tableSearch;
+    const dir = iv.tableSortDir === "asc" ? 1 : -1;
+
+    if (iv.tableTab === "sites") {
+      const map = new Map();
+      rows.forEach((r) => {
+        const code = lookups.sites[r[INV_C.SITE]];
+        if (!map.has(code)) {
+          map.set(code, {
+            site: code,
+            siteName: siteDirectory[code]?.siteName || lookups.siteNames[r[INV_C.SITE_NAME]],
+            qty: 0, value: 0, sellVal: 0, dmgVal: 0, skus: new Set(), bins: 0,
+          });
+        }
+        const m = map.get(code);
+        m.qty += r[INV_C.QTY];
+        m.value += r[INV_C.VALUE];
+        m.skus.add(r[INV_C.SKU]);
+        m.bins++;
+        const bt = (lookups.binTypes[r[INV_C.BIN_TYPE]] || "").toLowerCase();
+        if (bt.includes("bán mới")) m.sellVal += r[INV_C.VALUE];
+        if (bt.includes("hư hỏng")) m.dmgVal += r[INV_C.VALUE];
+      });
+
+      let list = Array.from(map.values()).map((m) => ({
+        ...m,
+        skuCount: m.skus.size,
+        dmgPct: m.value > 0 ? (m.dmgVal / m.value) * 100 : 0,
+      }));
+      if (q) list = list.filter((x) => x.site.toLowerCase().includes(q) || x.siteName.toLowerCase().includes(q));
+      list.sort((a, b) => {
+        const k = iv.tableSortCol;
+        if (typeof a[k] === "string") return a[k].localeCompare(b[k]) * dir;
+        return ((a[k] || 0) - (b[k] || 0)) * dir;
+      });
+
+      renderInvTableHead([
+        { key: "site", label: "Site Code" },
+        { key: "siteName", label: "Tên Kho / Cửa hàng" },
+        { key: "skuCount", label: "Số SKU", num: true },
+        { key: "qty", label: "Tổng QTY", num: true },
+        { key: "value", label: "Tổng Giá trị (VND)", num: true },
+        { key: "sellVal", label: "Bán mới (VND)", num: true },
+        { key: "dmgVal", label: "Hư hỏng (VND)", num: true },
+        { key: "dmgPct", label: "% Hư hỏng", num: true },
+      ]);
+
+      document.getElementById("invTableBody").innerHTML = list.map((m) => `
+        <tr class="clickable" data-inv-site="${esc(m.site)}">
+          <td class="mono"><strong>${esc(m.site)}</strong></td>
+          <td>${esc(m.siteName)}</td>
+          <td class="num">${fmtInt(m.skuCount)}</td>
+          <td class="num" style="color:#00E5FF">${fmtInt(m.qty)}</td>
+          <td class="num"><strong>${fmtInt(m.value)}</strong></td>
+          <td class="num" style="color:#12D37A">${fmtInt(m.sellVal)}</td>
+          <td class="num" style="color:#E53E51">${fmtInt(m.dmgVal)}</td>
+          <td class="num">${fmtPct(m.dmgPct)}</td>
+        </tr>`).join("");
+
+      document.querySelectorAll("#invTableBody tr[data-inv-site]").forEach((tr) => {
+        tr.addEventListener("click", () => {
+          iv.site = iv.site === tr.dataset.invSite ? "" : tr.dataset.invSite;
+          document.getElementById("invFilterSite").value = iv.site;
+          renderInventoryView();
+        });
+      });
+
+      document.getElementById("invTableCountInfo").textContent = `Tổng hợp ${fmtInt(list.length)} kho / Site Code`;
+      document.getElementById("invTablePagination").innerHTML = "";
+      iv.lastExport = {
+        headers: ["Site Code", "Site Name", "Unique SKUs", "Total QTY", "Total Value", "Sellable Value", "Damaged Value", "Damaged %"],
+        rows: list.map((m) => [m.site, m.siteName, m.skuCount, m.qty, Math.round(m.value), Math.round(m.sellVal), Math.round(m.dmgVal), m.dmgPct.toFixed(1)]),
+        filename: `inventory_by_site_${new Date().toISOString().slice(0, 10)}.csv`,
+      };
+      return;
+    }
+
+    if (iv.tableTab === "skus") {
+      const map = new Map();
+      rows.forEach((r) => {
+        const sku = lookups.skus[r[INV_C.SKU]];
+        if (!map.has(sku)) {
+          map.set(sku, {
+            sku,
+            brand: lookups.brands[r[INV_C.BRAND]],
+            subcat: lookups.subcats[r[INV_C.SUBCAT]],
+            status: lookups.purchaseStatuses[r[INV_C.STATUS]],
+            qty: 0, value: 0, listed: r[INV_C.LISTED_PRICE], sites: new Set(),
+          });
+        }
+        const m = map.get(sku);
+        m.qty += r[INV_C.QTY];
+        m.value += r[INV_C.VALUE];
+        m.sites.add(r[INV_C.SITE]);
+        if (r[INV_C.LISTED_PRICE] > m.listed) m.listed = r[INV_C.LISTED_PRICE];
+      });
+
+      let list = Array.from(map.values()).map((m) => ({
+        ...m,
+        siteCount: m.sites.size,
+        unitCost: m.qty > 0 ? m.value / m.qty : 0,
+      }));
+      if (q) {
+        list = list.filter((x) =>
+          x.sku.toLowerCase().includes(q) || x.brand.toLowerCase().includes(q) || x.subcat.toLowerCase().includes(q)
+        );
+      }
+      list.sort((a, b) => {
+        const k = iv.tableSortCol;
+        if (typeof a[k] === "string") return a[k].localeCompare(b[k]) * dir;
+        return ((a[k] || 0) - (b[k] || 0)) * dir;
+      });
+
+      const totalPages = Math.max(1, Math.ceil(list.length / iv.tablePageSize));
+      iv.tablePage = Math.min(iv.tablePage, totalPages);
+      const start = (iv.tablePage - 1) * iv.tablePageSize;
+      const pageItems = list.slice(start, start + iv.tablePageSize);
+
+      renderInvTableHead([
+        { key: "sku", label: "SKU — Tên sản phẩm" },
+        { key: "brand", label: "Brand" },
+        { key: "subcat", label: "Subcat 2" },
+        { key: "status", label: "Status" },
+        { key: "siteCount", label: "Số kho", num: true },
+        { key: "qty", label: "Tổng QTY", num: true },
+        { key: "unitCost", label: "Unit Cost", num: true },
+        { key: "value", label: "Tổng Giá trị (VND)", num: true },
+      ]);
+
+      document.getElementById("invTableBody").innerHTML = pageItems.map((m) => `
+        <tr>
+          <td class="sku-cell" title="${esc(m.sku)}">${esc(m.sku)}</td>
+          <td>${esc(m.brand)}</td>
+          <td>${esc(m.subcat)}</td>
+          <td><span class="inv-badge ${m.status === "Discontinued" ? "disc" : "normal"}">${esc(m.status)}</span></td>
+          <td class="num">${fmtInt(m.siteCount)}</td>
+          <td class="num" style="color:#00E5FF">${fmtInt(m.qty)}</td>
+          <td class="num">${fmtInt(m.unitCost)}</td>
+          <td class="num"><strong>${fmtInt(m.value)}</strong></td>
+        </tr>`).join("");
+
+      document.getElementById("invTableCountInfo").textContent =
+        `Hiển thị ${fmtInt(start + 1)}–${fmtInt(Math.min(start + pageItems.length, list.length))} / ${fmtInt(list.length)} mã SKU`;
+      renderInvPagination(totalPages);
+
+      iv.lastExport = {
+        headers: ["SKU", "Brand", "Subcat 2", "Purchase Status", "Sites Count", "Total QTY", "Avg Unit Cost", "Total Value"],
+        rows: list.map((m) => [m.sku, m.brand, m.subcat, m.status, m.siteCount, m.qty, Math.round(m.unitCost), Math.round(m.value)]),
+        filename: `inventory_by_sku_${new Date().toISOString().slice(0, 10)}.csv`,
+      };
+      return;
+    }
+
+    // RAW SKU x BIN LEDGER
+    let filtered = rows;
+    if (q) {
+      filtered = rows.filter((r) =>
+        lookups.skus[r[INV_C.SKU]].toLowerCase().includes(q) ||
+        lookups.sites[r[INV_C.SITE]].toLowerCase().includes(q) ||
+        lookups.siteNames[r[INV_C.SITE_NAME]].toLowerCase().includes(q) ||
+        lookups.binCodes[r[INV_C.BIN_CODE]].toLowerCase().includes(q) ||
+        lookups.binTypes[r[INV_C.BIN_TYPE]].toLowerCase().includes(q) ||
+        lookups.brands[r[INV_C.BRAND]].toLowerCase().includes(q)
+      );
+    }
+
+    const colMap = {
+      site: (r) => lookups.sites[r[INV_C.SITE]],
+      sku: (r) => lookups.skus[r[INV_C.SKU]],
+      binType: (r) => lookups.binTypes[r[INV_C.BIN_TYPE]],
+      status: (r) => lookups.purchaseStatuses[r[INV_C.STATUS]],
+      aging: (r) => r[INV_C.AGING],
+      qty: (r) => r[INV_C.QTY],
+      unitCost: (r) => r[INV_C.UNIT_COST],
+      value: (r) => r[INV_C.VALUE],
+    };
+    const getter = colMap[iv.tableSortCol] || colMap.value;
+    const sorted = [...filtered].sort((a, b) => {
+      const va = getter(a), vb = getter(b);
+      return typeof va === "string" ? va.localeCompare(vb) * dir : (va - vb) * dir;
+    });
+
+    const totalPages = Math.max(1, Math.ceil(sorted.length / iv.tablePageSize));
+    iv.tablePage = Math.min(iv.tablePage, totalPages);
+    const start = (iv.tablePage - 1) * iv.tablePageSize;
+    const pageRows = sorted.slice(start, start + iv.tablePageSize);
+
+    renderInvTableHead([
+      { key: "site", label: "Site" },
+      { key: "sku", label: "SKU — Linh kiện" },
+      { key: "binCode", label: "BIN Code", nosort: true },
+      { key: "binType", label: "BIN Type" },
+      { key: "status", label: "Status" },
+      { key: "aging", label: "Tuổi tồn", num: true },
+      { key: "qty", label: "QTY", num: true },
+      { key: "unitCost", label: "Unit Cost", num: true },
+      { key: "value", label: "Giá trị tồn (VND)", num: true },
+    ]);
+
+    document.getElementById("invTableBody").innerHTML = pageRows.map((r) => {
+      const bt = lookups.binTypes[r[INV_C.BIN_TYPE]];
+      const st = lookups.purchaseStatuses[r[INV_C.STATUS]];
+      const age = r[INV_C.AGING];
+      const ageCls = age < 0 ? "" : age <= 90 ? "fresh" : age <= 180 ? "mid" : "old";
+      const ageTxt = age < 0 ? "—" : `${fmtInt(age)} ngày`;
+      return `
+        <tr>
+          <td class="mono" title="${esc(lookups.siteNames[r[INV_C.SITE_NAME]])}"><strong>${esc(lookups.sites[r[INV_C.SITE]])}</strong></td>
+          <td class="sku-cell" title="${esc(lookups.skus[r[INV_C.SKU]])}">${esc(lookups.skus[r[INV_C.SKU]])}</td>
+          <td class="mono">${esc(lookups.binCodes[r[INV_C.BIN_CODE]])}</td>
+          <td><span class="inv-badge ${binBadgeClass(bt)}">${esc(bt)}</span></td>
+          <td><span class="inv-badge ${st === "Discontinued" ? "disc" : "normal"}">${esc(st)}</span></td>
+          <td class="num"><span class="aging-tag ${ageCls}">${ageTxt}</span></td>
+          <td class="num" style="color:#00E5FF">${fmtInt(r[INV_C.QTY])}</td>
+          <td class="num">${fmtInt(r[INV_C.UNIT_COST])}</td>
+          <td class="num"><strong>${fmtInt(r[INV_C.VALUE])}</strong></td>
+        </tr>`;
+    }).join("");
+
+    document.getElementById("invTableCountInfo").textContent =
+      `Hiển thị ${fmtInt(start + 1)}–${fmtInt(Math.min(start + pageRows.length, sorted.length))} / ${fmtInt(sorted.length)} dòng BIN tồn kho`;
+    renderInvPagination(totalPages);
+
+    iv.lastExport = {
+      headers: ["Site Code", "Site Name", "SKU", "Subcat 2", "Brand", "BIN Code", "BIN Type", "BIN Zone", "Purchase Status", "Last Received Date", "Aging Days", "Inventory QTY", "Unit Cost", "Inventory Value", "Net Value (Inc PP)"],
+      rows: sorted.map((r) => [
+        lookups.sites[r[INV_C.SITE]], lookups.siteNames[r[INV_C.SITE_NAME]], lookups.skus[r[INV_C.SKU]],
+        lookups.subcats[r[INV_C.SUBCAT]], lookups.brands[r[INV_C.BRAND]], lookups.binCodes[r[INV_C.BIN_CODE]],
+        lookups.binTypes[r[INV_C.BIN_TYPE]], lookups.binZones[r[INV_C.BIN_ZONE]], lookups.purchaseStatuses[r[INV_C.STATUS]],
+        r[INV_C.LAST_RECV], r[INV_C.AGING] >= 0 ? r[INV_C.AGING] : "", r[INV_C.QTY],
+        r[INV_C.UNIT_COST], r[INV_C.VALUE], r[INV_C.NET_VALUE],
+      ]),
+      filename: `inventory_detail_filtered_${new Date().toISOString().slice(0, 10)}.csv`,
+    };
+  }
+
+  function renderInvPagination(totalPages) {
+    const pag = document.getElementById("invTablePagination");
+    const iv = state.inv;
+    pag.innerHTML = `
+      <button class="page-btn" id="invPrevP" ${iv.tablePage <= 1 ? "disabled" : ""}>◀</button>
+      <span class="mono" style="font-size:11px;color:#94A3B8">Trang ${iv.tablePage}/${totalPages}</span>
+      <button class="page-btn" id="invNextP" ${iv.tablePage >= totalPages ? "disabled" : ""}>▶</button>`;
+    pag.querySelector("#invPrevP").addEventListener("click", () => { if (iv.tablePage > 1) { iv.tablePage--; renderInvTable(getFilteredInvRows()); } });
+    pag.querySelector("#invNextP").addEventListener("click", () => { if (iv.tablePage < totalPages) { iv.tablePage++; renderInvTable(getFilteredInvRows()); } });
+  }
+
+  // =========================================================================
   // UPDATE DATA ENGINE: CLIENT-SIDE ZERO-PII EXCEL ETL + NETLIFY BLOBS SYNC
   // =========================================================================
   let toastTimer = null;
@@ -2263,32 +3358,222 @@
     };
   }
 
+  function extractExistingInvRecords(invSection) {
+    if (!invSection || !Array.isArray(invSection.rows) || !invSection.lookups) return [];
+    const { rows, lookups } = invSection;
+    return rows.map((r) => {
+      const skuLabel = lookups.skus[r[INV_C.SKU]] || "";
+      const dashIdx = skuLabel.indexOf(" — ");
+      const skuCode = dashIdx >= 0 ? skuLabel.slice(0, dashIdx) : skuLabel;
+      const skuName = dashIdx >= 0 ? skuLabel.slice(dashIdx + 3) : "";
+      return {
+        "sku": skuCode,
+        "sku name": skuName,
+        "site code": lookups.sites[r[INV_C.SITE]] || "UNKNOWN",
+        "site name": lookups.siteNames[r[INV_C.SITE_NAME]] || "",
+        "subcat 2 (code - name)": lookups.subcats[r[INV_C.SUBCAT]] || "Khác",
+        "brand name": lookups.brands[r[INV_C.BRAND]] || "Khác",
+        "bin code": lookups.binCodes[r[INV_C.BIN_CODE]] || "N/A",
+        "bin type": lookups.binTypes[r[INV_C.BIN_TYPE]] || "Khác",
+        "bin zone": lookups.binZones[r[INV_C.BIN_ZONE]] || "Khác",
+        "purchase status": lookups.purchaseStatuses[r[INV_C.STATUS]] || "Normal",
+        "last received date": r[INV_C.LAST_RECV] || null,
+        "first received date": r[INV_C.FIRST_RECV] || null,
+        "inventory qty": r[INV_C.QTY],
+        "inventory": r[INV_C.VALUE],
+        "included price protection & so si no condition": r[INV_C.NET_VALUE],
+        "unit cost": r[INV_C.UNIT_COST],
+        "listed price": r[INV_C.LISTED_PRICE],
+        "min stock": r[INV_C.MIN_STOCK],
+      };
+    });
+  }
+
+  function buildInventoryPayloadFromRecords(rawRecords, sourceMeta) {
+    const lookups = {
+      sites: [],
+      siteNames: [],
+      subcats: [],
+      brands: [],
+      binCodes: [],
+      binTypes: [],
+      binZones: [],
+      purchaseStatuses: [],
+      skus: [],
+    };
+    const lookupMaps = {};
+    Object.keys(lookups).forEach((k) => { lookupMaps[k] = new Map(); });
+    const getIdx = (key, val) => {
+      const m = lookupMaps[key];
+      if (!m.has(val)) {
+        m.set(val, lookups[key].length);
+        lookups[key].push(val);
+      }
+      return m.get(val);
+    };
+
+    // Determine snapshot date from max Last Received Date
+    let maxIso = "";
+    for (let i = 0; i < rawRecords.length; i++) {
+      const dp = parseExcelDateJs(findHeaderValue(rawRecords[i], ["last received date"]));
+      if (dp) {
+        const iso = formatDateParts(dp).iso;
+        if (!maxIso || iso > maxIso) maxIso = iso;
+      }
+    }
+    const snapshotIso = maxIso || new Date().toISOString().slice(0, 10);
+    const [sy, sm, sd] = snapshotIso.split("-").map(Number);
+    const snapshotUtcMs = Date.UTC(sy, sm - 1, sd);
+
+    const compactRows = [];
+    const siteDirectory = {};
+    const uniqueSkus = new Set();
+    let totQty = 0, totVal = 0, totNet = 0, totPpDone = 0, totPpProc = 0;
+    let sellQty = 0, sellVal = 0, dmgQty = 0, dmgVal = 0, discQty = 0, discVal = 0;
+
+    for (let i = 0; i < rawRecords.length; i++) {
+      const rec = rawRecords[i];
+      const skuCode = String(findHeaderValue(rec, ["sku", "sku code"]) || "").trim();
+      if (!skuCode) continue;
+      uniqueSkus.add(skuCode);
+      const skuName = String(findHeaderValue(rec, ["sku name", "product name"]) || "").trim();
+      const skuLabel = skuName ? `${skuCode} — ${skuName}` : skuCode;
+
+      const site = String(findHeaderValue(rec, ["site code", "sales site code", "site"]) || "UNKNOWN").trim();
+      const siteName = String(findHeaderValue(rec, ["site name", "store name"]) || "").trim() || site;
+      const subcat = cleanSubcatJs(findHeaderValue(rec, ["subcat 2 (code - name)", "subcat 2", "subcat"]) || "");
+      const brand = String(findHeaderValue(rec, ["brand name", "brand"]) || "Khác").trim();
+      const binCode = String(findHeaderValue(rec, ["bin code"]) || "N/A").trim();
+      const binType = String(findHeaderValue(rec, ["bin type"]) || "Khác").trim();
+      const binZone = String(findHeaderValue(rec, ["bin zone"]) || "Khác").trim();
+      const status = String(findHeaderValue(rec, ["purchase status"]) || "Normal").trim();
+
+      const lastDp = parseExcelDateJs(findHeaderValue(rec, ["last received date"]));
+      const firstDp = parseExcelDateJs(findHeaderValue(rec, ["first received date"]));
+      const lastIso = lastDp ? formatDateParts(lastDp).iso : "";
+      const firstIso = firstDp ? formatDateParts(firstDp).iso : "";
+      let agingDays = -1;
+      if (lastDp) {
+        const ms = Date.UTC(lastDp.y, lastDp.m - 1, lastDp.d);
+        agingDays = Math.max(0, Math.round((snapshotUtcMs - ms) / 86400000));
+      }
+
+      const qty = Math.round(parseNumericVal(findHeaderValue(rec, ["inventory qty", "qty", "quantity"])));
+      const invVal = Math.round(parseNumericVal(findHeaderValue(rec, ["inventory", "inventory value"])) * 100) / 100;
+      let netVal = Math.round(parseNumericVal(findHeaderValue(rec, ["included price protection & so si no condition"])) * 100) / 100;
+      if (netVal === 0 && invVal !== 0) netVal = invVal;
+      let unitCost = Math.round(parseNumericVal(findHeaderValue(rec, ["unit cost", "weighted cogs novat"])) * 100) / 100;
+      if (unitCost === 0 && qty > 0 && invVal > 0) unitCost = Math.round((invVal / qty) * 100) / 100;
+      const listedPrice = Math.round(parseNumericVal(findHeaderValue(rec, ["listed price"])) * 100) / 100;
+      const minStock = Math.round(parseNumericVal(findHeaderValue(rec, ["min stock"])));
+      const ppDone = Math.round(parseNumericVal(findHeaderValue(rec, ["price protection & so si no condition completed"])) * 100) / 100;
+      const ppProc = Math.round(parseNumericVal(findHeaderValue(rec, ["price protection & so si no condition in process"])) * 100) / 100;
+
+      totQty += qty;
+      totVal += invVal;
+      totNet += netVal;
+      totPpDone += ppDone;
+      totPpProc += ppProc;
+
+      const btLow = binType.toLowerCase();
+      if (btLow.includes("bán mới")) { sellQty += qty; sellVal += invVal; }
+      if (btLow.includes("hư hỏng")) { dmgQty += qty; dmgVal += invVal; }
+      if (status.toLowerCase() === "discontinued") { discQty += qty; discVal += invVal; }
+
+      if (!siteDirectory[site]) siteDirectory[site] = { siteCode: site, siteName };
+
+      compactRows.push([
+        getIdx("skus", skuLabel),
+        getIdx("sites", site),
+        getIdx("siteNames", siteName),
+        getIdx("subcats", subcat),
+        getIdx("brands", brand),
+        getIdx("binCodes", binCode),
+        getIdx("binTypes", binType),
+        getIdx("binZones", binZone),
+        getIdx("purchaseStatuses", status),
+        lastIso,
+        firstIso,
+        agingDays,
+        qty,
+        invVal,
+        netVal,
+        unitCost,
+        listedPrice,
+        minStock,
+      ]);
+    }
+
+    compactRows.sort((a, b) => b[INV_C.VALUE] - a[INV_C.VALUE]);
+
+    return {
+      meta: {
+        generatedAt: new Date().toISOString(),
+        snapshotDate: snapshotIso,
+        sources: sourceMeta,
+        rowCount: compactRows.length,
+        uniqueSkuCount: uniqueSkus.size,
+        totals: {
+          qty: totQty,
+          value: Math.round(totVal * 100) / 100,
+          netValue: Math.round(totNet * 100) / 100,
+          avgUnitCost: totQty ? Math.round((totVal / totQty) * 100) / 100 : 0,
+          priceProtectionCompleted: Math.round(totPpDone * 100) / 100,
+          priceProtectionInProcess: Math.round(totPpProc * 100) / 100,
+          sellableQty: sellQty,
+          sellableValue: Math.round(sellVal * 100) / 100,
+          damagedQty: dmgQty,
+          damagedValue: Math.round(dmgVal * 100) / 100,
+          discontinuedQty: discQty,
+          discontinuedValue: Math.round(discVal * 100) / 100,
+        },
+        columns: [
+          "skuIdx", "siteIdx", "siteNameIdx", "subcatIdx", "brandIdx",
+          "binCodeIdx", "binTypeIdx", "binZoneIdx", "purchaseStatusIdx",
+          "lastReceivedDate", "firstReceivedDate", "agingDays",
+          "qty", "value", "netValue", "unitCost", "listedPrice", "minStock",
+        ],
+      },
+      lookups,
+      siteDirectory,
+      rows: compactRows,
+    };
+  }
+
   async function parseUploadedFiles(fileList) {
     const files = Array.from(fileList || []);
     if (!files.length) throw new Error("Chưa chọn file nào.");
 
-    // Direct JSON upload shortcut (single report_data.json)
     if (files.length === 1 && files[0].name.toLowerCase().endsWith(".json")) {
       const text = await files[0].text();
       const parsed = JSON.parse(text);
       if (!parsed || !Array.isArray(parsed.rows) || !parsed.lookups || !parsed.meta) {
         throw new Error("File JSON không đúng định dạng report_data.json chuẩn.");
       }
-      return { directPayload: parsed, rawRecords: null, sources: [{ file: files[0].name, sizeBytes: files[0].size, rows: parsed.rows.length }] };
+      return {
+        directPayload: parsed,
+        salesRecords: [],
+        invRecords: [],
+        salesSources: [{ file: files[0].name, sizeBytes: files[0].size, rows: parsed.rows.length }],
+        invSources: [],
+      };
     }
 
     if (typeof XLSX === "undefined") {
       throw new Error("Thư viện đọc Excel (SheetJS) chưa tải xong. Kiểm tra kết nối mạng và thử lại.");
     }
 
-    const allRecords = [];
-    const sources = [];
+    const salesRecords = [];
+    const invRecords = [];
+    const salesSources = [];
+    const invSources = [];
 
     for (let fIdx = 0; fIdx < files.length; fIdx++) {
       const file = files[fIdx];
       const buf = await file.arrayBuffer();
       const wb = XLSX.read(buf, { type: "array", raw: true });
-      let fileRowCount = 0;
+      let fileSalesRows = 0;
+      let fileInvRows = 0;
 
       wb.SheetNames.forEach((sheetName) => {
         const sheet = wb.Sheets[sheetName];
@@ -2296,17 +3581,28 @@
         const rows2d = XLSX.utils.sheet_to_json(sheet, { header: 1, raw: true, defval: null });
         if (!rows2d || rows2d.length < 2) return;
 
-        // Locate header row (first row containing "report date" or non-empty headers)
         let headerRowIdx = 0;
         for (let r = 0; r < Math.min(10, rows2d.length); r++) {
           const joined = (rows2d[r] || []).map((v) => String(v || "").trim().toLowerCase());
-          if (joined.includes("report date") || joined.includes("sales site code")) {
+          if (
+            joined.includes("report date") ||
+            joined.includes("sales site code") ||
+            joined.includes("inventory qty") ||
+            joined.includes("bin type")
+          ) {
             headerRowIdx = r;
             break;
           }
         }
 
         const headers = (rows2d[headerRowIdx] || []).map((h) => String(h || "").trim().toLowerCase());
+        const headerSet = new Set(headers.filter(Boolean));
+        const isInventory =
+          headerSet.has("inventory qty") ||
+          headerSet.has("bin type") ||
+          headerSet.has("bin code") ||
+          (!headerSet.has("report date") && file.name.toLowerCase().includes("inv"));
+
         for (let r = headerRowIdx + 1; r < rows2d.length; r++) {
           const row = rows2d[r];
           if (!row || !row.length) continue;
@@ -2320,43 +3616,74 @@
             const h = headers[c];
             if (h) rec[h] = c < row.length ? row[c] : null;
           }
-          allRecords.push(rec);
-          fileRowCount++;
+          if (isInventory) {
+            invRecords.push(rec);
+            fileInvRows++;
+          } else {
+            salesRecords.push(rec);
+            fileSalesRows++;
+          }
         }
       });
 
-      sources.push({ file: file.name, sizeBytes: file.size, rows: fileRowCount });
+      if (fileSalesRows > 0) salesSources.push({ file: file.name, sizeBytes: file.size, rows: fileSalesRows, kind: "sales" });
+      if (fileInvRows > 0) invSources.push({ file: file.name, sizeBytes: file.size, rows: fileInvRows, kind: "inventory" });
     }
 
-    if (allRecords.length === 0) {
-      throw new Error("Không tìm thấy dòng dữ liệu hợp lệ nào. Kiểm tra cột Report Date, Sales, Sales QTY.");
+    if (salesRecords.length === 0 && invRecords.length === 0) {
+      throw new Error("Không tìm thấy dòng dữ liệu hợp lệ nào (cần cột Report Date/Sales hoặc Inventory QTY/BIN Type).");
     }
 
-    return { directPayload: null, rawRecords: allRecords, sources };
+    return { directPayload: null, salesRecords, invRecords, salesSources, invSources };
   }
 
   function rebuildPendingPayload() {
-    if (!state.pendingRawRecords && !state.pendingPayload) return;
+    const hasSalesNew = state.pendingSalesRecords && state.pendingSalesRecords.length > 0;
+    const hasInvNew = state.pendingInvRecords && state.pendingInvRecords.length > 0;
+    if (!hasSalesNew && !hasInvNew && !state.pendingPayload) return;
 
-    if (state.pendingRawRecords) {
-      let recordsToBuild = state.pendingRawRecords;
-      let sourcesToBuild = [...state.pendingSources];
+    if (hasSalesNew || hasInvNew) {
+      let nextPayload = null;
 
-      if (state.updateMode === "merge" && state.raw) {
-        const existingRecs = extractExistingRecords(state.raw);
-        recordsToBuild = existingRecs.concat(state.pendingRawRecords);
-        const existingSources = (state.raw.meta?.sources || []).map((s) => ({ ...s }));
-        sourcesToBuild = existingSources.concat(state.pendingSources);
+      if (hasSalesNew) {
+        let recs = state.pendingSalesRecords;
+        let srcs = [...state.pendingSalesSources];
+        if (state.updateMode === "merge" && state.raw) {
+          recs = extractExistingRecords(state.raw).concat(recs);
+          srcs = (state.raw.meta?.sources || []).map((s) => ({ ...s })).concat(srcs);
+        }
+        nextPayload = buildPayloadFromRecords(recs, srcs);
+      } else if (state.raw) {
+        // Keep existing Sales untouched when user uploads only Inventory
+        nextPayload = {
+          meta: { ...state.raw.meta, updatedAt: new Date().toISOString() },
+          lookups: state.raw.lookups,
+          siteDirectory: state.raw.siteDirectory,
+          rows: state.raw.rows,
+        };
       }
 
-      state.pendingPayload = buildPayloadFromRecords(recordsToBuild, sourcesToBuild);
-    }
+      if (!nextPayload || !Array.isArray(nextPayload.rows) || nextPayload.rows.length === 0) {
+        showUpdateFeedback("Thiếu dữ liệu Sales nền tảng — hãy tải kèm file Sale_Revenue_Detail.xlsx.", "error");
+        document.getElementById("updatePreviewCard").classList.add("hidden");
+        document.getElementById("publishUpdateBtn").disabled = true;
+        return;
+      }
 
-    if (!state.pendingPayload || state.pendingPayload.rows.length === 0) {
-      showUpdateFeedback("Không đọc được dòng dữ liệu hợp lệ nào (kiểm tra định dạng cột Report Date).", "error");
-      document.getElementById("updatePreviewCard").classList.add("hidden");
-      document.getElementById("publishUpdateBtn").disabled = true;
-      return;
+      if (hasInvNew) {
+        let invRecs = state.pendingInvRecords;
+        let invSrcs = [...state.pendingInvSources];
+        if (state.updateMode === "merge" && state.raw?.inventory) {
+          invRecs = extractExistingInvRecords(state.raw.inventory).concat(invRecs);
+          invSrcs = (state.raw.inventory.meta?.sources || []).map((s) => ({ ...s })).concat(invSrcs);
+        }
+        nextPayload.inventory = buildInventoryPayloadFromRecords(invRecs, invSrcs);
+      } else if (state.raw?.inventory) {
+        // Keep existing Inventory untouched when user uploads only Sales
+        nextPayload.inventory = state.raw.inventory;
+      }
+
+      state.pendingPayload = nextPayload;
     }
 
     renderUpdatePreview(state.pendingPayload);
@@ -2377,33 +3704,68 @@
 
   function renderUpdatePreview(payload) {
     const card = document.getElementById("updatePreviewCard");
-    const cur = state.raw?.meta;
-    const next = payload.meta;
+    const hasSalesNew = state.pendingKinds.includes("sales");
+    const hasInvNew = state.pendingKinds.includes("inventory");
+    const invOnly = hasInvNew && !hasSalesNew && payload.inventory;
 
-    const filesStr = (next.sources || []).map((s) => s.file).join(" + ");
-    document.getElementById("previewFileNames").textContent = filesStr;
-    document.getElementById("pvRows").textContent = `${fmtInt(next.rowCount)} dòng`;
-    document.getElementById("pvDateRange").textContent = `${next.dateMin || "?"} → ${next.dateMax || "?"}`;
-    const monthsSet = new Set(payload.rows.map((r) => r[C.MONTH]));
-    document.getElementById("pvMonthsCount").textContent = `${monthsSet.size} tháng`;
-    document.getElementById("pvSales").textContent = fmtCompactVnd(next.totals.sales);
-    document.getElementById("pvQty").textContent = `${fmtInt(next.totals.qty)} units`;
-    document.getElementById("pvGp").textContent = fmtCompactVnd(next.totals.gp);
-    document.getElementById("pvGm").textContent = `GM ${fmtPct(next.totals.gmPct)}`;
-    document.getElementById("pvCoverage").textContent = `${payload.lookups.sites.length} Sites • ${payload.lookups.regions.length} Regions`;
+    if (invOnly) {
+      const inv = payload.inventory;
+      const curInv = state.raw?.inventory?.meta;
+      const next = inv.meta;
+      const filesStr = (next.sources || []).map((s) => s.file).join(" + ");
+      document.getElementById("previewFileNames").textContent = `[TỒN KHO] ${filesStr}`;
+      document.getElementById("pvRows").textContent = `${fmtInt(next.rowCount)} dòng BIN`;
+      document.getElementById("pvDateRange").textContent = `Snapshot ${next.snapshotDate || "--"}`;
+      document.getElementById("pvMonthsCount").textContent = `${fmtInt(next.uniqueSkuCount)} SKUs`;
+      document.getElementById("pvSales").textContent = fmtCompactVnd(next.totals.value);
+      document.getElementById("pvQty").textContent = `${fmtInt(next.totals.qty)} units`;
+      document.getElementById("pvGp").textContent = fmtCompactVnd(next.totals.sellableValue);
+      document.getElementById("pvGm").textContent = `Hư hỏng: ${fmtCompactVnd(next.totals.damagedValue)}`;
+      document.getElementById("pvCoverage").textContent = `${inv.lookups.sites.length} Kho • ${inv.lookups.binTypes.length} BIN Type`;
 
-    const setDelta = (id, diff, formatter) => {
-      const el = document.getElementById(id);
-      if (!el || !cur) return;
-      const sign = diff > 0 ? "+" : "";
-      el.textContent = diff === 0 ? "Không đổi so với hiện tại" : `${sign}${formatter(diff)} so với hiện tại`;
-      el.classList.toggle("neg", diff < 0);
-    };
+      const setInvDelta = (id, diff, formatter) => {
+        const el = document.getElementById(id);
+        if (!el) return;
+        if (!curInv) { el.textContent = "Dữ liệu tồn kho mới"; el.classList.remove("neg"); return; }
+        const sign = diff > 0 ? "+" : "";
+        el.textContent = diff === 0 ? "Không đổi so với hiện tại" : `${sign}${formatter(diff)} so với hiện tại`;
+        el.classList.toggle("neg", diff < 0);
+      };
+      setInvDelta("pvRowsDelta", next.rowCount - (curInv?.rowCount || 0), (v) => `${fmtInt(v)} BIN`);
+      setInvDelta("pvSalesDelta", next.totals.value - (curInv?.totals?.value || 0), (v) => fmtCompactVnd(v));
+      setInvDelta("pvQtyDelta", next.totals.qty - (curInv?.totals?.qty || 0), (v) => `${fmtInt(v)} units`);
+    } else {
+      const cur = state.raw?.meta;
+      const next = payload.meta;
+      const filesStr = [
+        ...(next.sources || []).map((s) => s.file),
+        ...(hasInvNew && payload.inventory?.meta?.sources ? payload.inventory.meta.sources.map((s) => s.file) : []),
+      ].join(" + ");
+      document.getElementById("previewFileNames").textContent = filesStr;
+      document.getElementById("pvRows").textContent = `${fmtInt(next.rowCount)} dòng`;
+      document.getElementById("pvDateRange").textContent = `${next.dateMin || "?"} → ${next.dateMax || "?"}`;
+      const monthsSet = new Set(payload.rows.map((r) => r[C.MONTH]));
+      document.getElementById("pvMonthsCount").textContent = hasInvNew && payload.inventory
+        ? `${monthsSet.size} tháng + ${fmtInt(payload.inventory.meta.rowCount)} BIN kho`
+        : `${monthsSet.size} tháng`;
+      document.getElementById("pvSales").textContent = fmtCompactVnd(next.totals.sales);
+      document.getElementById("pvQty").textContent = `${fmtInt(next.totals.qty)} units`;
+      document.getElementById("pvGp").textContent = fmtCompactVnd(next.totals.gp);
+      document.getElementById("pvGm").textContent = `GM ${fmtPct(next.totals.gmPct)}`;
+      document.getElementById("pvCoverage").textContent = `${payload.lookups.sites.length} Sites • ${payload.lookups.regions.length} Regions`;
 
-    if (cur) {
-      setDelta("pvRowsDelta", next.rowCount - cur.rowCount, (v) => `${fmtInt(v)} dòng`);
-      setDelta("pvSalesDelta", next.totals.sales - cur.totals.sales, (v) => fmtCompactVnd(v));
-      setDelta("pvQtyDelta", next.totals.qty - cur.totals.qty, (v) => `${fmtInt(v)} units`);
+      const setDelta = (id, diff, formatter) => {
+        const el = document.getElementById(id);
+        if (!el || !cur) return;
+        const sign = diff > 0 ? "+" : "";
+        el.textContent = diff === 0 ? "Không đổi so với hiện tại" : `${sign}${formatter(diff)} so với hiện tại`;
+        el.classList.toggle("neg", diff < 0);
+      };
+      if (cur) {
+        setDelta("pvRowsDelta", next.rowCount - cur.rowCount, (v) => `${fmtInt(v)} dòng`);
+        setDelta("pvSalesDelta", next.totals.sales - cur.totals.sales, (v) => fmtCompactVnd(v));
+        setDelta("pvQtyDelta", next.totals.qty - cur.totals.qty, (v) => `${fmtInt(v)} units`);
+      }
     }
 
     card.classList.remove("hidden");
@@ -2457,8 +3819,11 @@
     const modal = document.getElementById("updateDataModal");
     if (!modal) return;
     state.pendingPayload = null;
-    state.pendingRawRecords = null;
-    state.pendingSources = [];
+    state.pendingSalesRecords = null;
+    state.pendingInvRecords = null;
+    state.pendingSalesSources = [];
+    state.pendingInvSources = [];
+    state.pendingKinds = [];
     document.getElementById("excelFileInput").value = "";
     document.getElementById("updatePreviewCard").classList.add("hidden");
     document.getElementById("downloadParsedJsonBtn").classList.add("hidden");
@@ -2478,29 +3843,44 @@
 
   async function handleFilesSelected(files) {
     if (!files || !files.length) return;
-    showUpdateFeedback(`Đang phân tích ${files.length} file và lọc bỏ thông tin cá nhân (Zero-PII)...`, "info");
+    showUpdateFeedback(`Đang phân tích ${files.length} file và nhận diện Sales / Inventory (Zero-PII)...`, "info");
     document.getElementById("publishUpdateBtn").disabled = true;
 
     try {
       const res = await parseUploadedFiles(files);
-      state.pendingSources = res.sources;
+      state.pendingSalesSources = res.salesSources || [];
+      state.pendingInvSources = res.invSources || [];
       if (res.directPayload) {
-        state.pendingRawRecords = null;
+        state.pendingSalesRecords = null;
+        state.pendingInvRecords = null;
+        state.pendingKinds = ["sales", ...(res.directPayload.inventory ? ["inventory"] : [])];
         state.pendingPayload = res.directPayload;
       } else {
-        state.pendingRawRecords = res.rawRecords;
+        state.pendingSalesRecords = res.salesRecords;
+        state.pendingInvRecords = res.invRecords;
+        state.pendingKinds = [
+          ...(res.salesRecords.length ? ["sales"] : []),
+          ...(res.invRecords.length ? ["inventory"] : []),
+        ];
         state.pendingPayload = null;
       }
       rebuildPendingPayload();
-      if (state.pendingPayload && state.pendingPayload.rows.length > 0) {
+      if (state.pendingPayload) {
+        const parts = [];
+        if (state.pendingKinds.includes("sales")) parts.push(`Sales (${fmtInt(state.pendingPayload.meta.rowCount)} dòng)`);
+        if (state.pendingKinds.includes("inventory") && state.pendingPayload.inventory) {
+          parts.push(`Tồn Kho (${fmtInt(state.pendingPayload.inventory.meta.rowCount)} dòng BIN)`);
+        }
         showUpdateFeedback(
-          `Đã đọc thành công ${fmtInt(state.pendingPayload.rows.length)} giao dịch (Zero-PII). Kiểm tra số liệu bên dưới và bấm "Cập nhật lên Web".`,
+          `Đã nhận diện & đọc thành công: ${parts.join(" + ")}. Kiểm tra số liệu bên dưới và bấm "Cập nhật lên Web".`,
           "success"
         );
       }
     } catch (err) {
       state.pendingPayload = null;
-      state.pendingRawRecords = null;
+      state.pendingSalesRecords = null;
+      state.pendingInvRecords = null;
+      state.pendingKinds = [];
       document.getElementById("updatePreviewCard").classList.add("hidden");
       showUpdateFeedback(`Lỗi đọc file: ${err.message}`, "error");
     }
@@ -2626,7 +4006,7 @@
         modeGroup.querySelectorAll(".seg-btn").forEach((b) => b.classList.remove("active"));
         btn.classList.add("active");
         state.updateMode = btn.dataset.val || "replace";
-        if (state.pendingRawRecords) rebuildPendingPayload();
+        if (state.pendingSalesRecords?.length || state.pendingInvRecords?.length) rebuildPendingPayload();
       });
     }
 

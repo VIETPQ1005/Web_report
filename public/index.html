@@ -28,9 +28,13 @@
       </div>
 
       <nav class="rail-menu" id="railMenu">
-        <button class="rail-item active" data-view="dashboard" title="Tổng quan Dashboard">
+        <button class="rail-item active" data-view="dashboard" title="Tổng quan Dashboard Sales">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
           <span>Dashboard</span>
+        </button>
+        <button class="rail-item" data-view="inventory" title="Báo cáo Tồn Kho (Inventory Details)">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 2L3 7l9 5 9-5-9-5z"/><path d="M3 12l9 5 9-5"/><path d="M3 17l9 5 9-5"/></svg>
+          <span>Tồn Kho<br/>Inventory</span>
         </button>
         <button class="rail-item" data-view="monthly" title="Báo cáo Sales & Qty theo Report Date">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 3v18h18"/><rect x="7" y="10" width="3" height="7"/><rect x="12" y="6" width="3" height="11"/><rect x="17" y="12" width="3" height="5"/></svg>
@@ -172,7 +176,7 @@
     <main class="main-canvas">
       <!-- TOP SLIM HEADER & FILTER BAR (MATCHING TOP-RIGHT DATE PICKER) -->
       <header class="canvas-topbar">
-        <div class="topbar-filters">
+        <div class="topbar-filters" id="salesTopFilters">
           <select id="filterRegion" class="dark-select" title="Lọc theo Region Name">
             <option value="">Tất cả Region</option>
           </select>
@@ -198,14 +202,19 @@
           </label>
         </div>
 
+        <div class="inv-top-banner hidden" id="invTopBanner">
+          <span class="inv-banner-title">📦 BÁO CÁO TỒN KHO (INVENTORY TELEMETRY)</span>
+          <span class="badge-blue mono" id="invSnapshotBadge">Snapshot: --</span>
+        </div>
+
         <div class="topbar-right">
-          <div class="date-picker-box">
+          <div class="date-picker-box" id="salesDatePickerBox">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" class="cal-icon"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>
             <select id="filterMonthFrom" class="date-select" aria-label="Từ tháng"></select>
             <span class="date-sep">—</span>
             <select id="filterMonthTo" class="date-select" aria-label="Đến tháng"></select>
           </div>
-          <button type="button" class="btn-update-data" id="openUpdateModalBtn" title="Tải file Excel (.xlsx) mới để cập nhật báo cáo lên Web ngay lập tức">
+          <button type="button" class="btn-update-data" id="openUpdateModalBtn" title="Tải file Excel Sales hoặc Inventory mới để cập nhật báo cáo lên Web">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 16V4m0 0l-4 4m4-4l4 4"/><path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/></svg>
             <span>Update Data</span>
           </button>
@@ -447,6 +456,199 @@
         </div>
       </section>
 
+      <!-- ================================================================
+           VIEW 7: INVENTORY (TỒN KHO) FULL ANALYTICS DASHBOARD
+           ================================================================ -->
+      <section class="view-pane" id="view-inventory">
+        <!-- INVENTORY FILTER BAR -->
+        <div class="inv-filter-bar">
+          <div class="topbar-filters">
+            <select id="invFilterSite" class="dark-select" title="Lọc theo Mã Kho / Site Code">
+              <option value="">Tất cả Site Kho</option>
+            </select>
+            <select id="invFilterBinType" class="dark-select" title="Lọc theo Loại BIN">
+              <option value="">Tất cả BIN Type</option>
+            </select>
+            <select id="invFilterBinZone" class="dark-select" title="Lọc theo Khu vực BIN Zone">
+              <option value="">Tất cả BIN Zone</option>
+            </select>
+            <select id="invFilterSubcat" class="dark-select" title="Lọc theo Nhóm hàng Subcat 2">
+              <option value="">Tất cả Subcat 2</option>
+            </select>
+            <select id="invFilterBrand" class="dark-select" title="Lọc theo Thương hiệu">
+              <option value="">Tất cả Brand</option>
+            </select>
+            <select id="invFilterStatus" class="dark-select" title="Lọc theo Trạng thái mua hàng">
+              <option value="">Normal + Discontinued</option>
+              <option value="Normal">Chỉ Normal</option>
+              <option value="Discontinued">Chỉ Discontinued</option>
+            </select>
+            <label class="pill-toggle" title="Chỉ xem hàng bán mới tại kho">
+              <input type="checkbox" id="invSellableOnlyToggle" />
+              <span>Chỉ bán mới</span>
+            </label>
+            <label class="pill-toggle" title="Chỉ xem hàng hư hỏng chờ xử lý">
+              <input type="checkbox" id="invDamagedOnlyToggle" />
+              <span>Chỉ hư hỏng</span>
+            </label>
+            <button type="button" class="btn-reset-mini" id="invResetBtn">↺ Reset Kho</button>
+          </div>
+        </div>
+
+        <!-- INVENTORY CHIPS & HEALTH INSIGHT -->
+        <div class="chips-strip">
+          <div class="chips-list" id="invActiveChips"></div>
+          <div class="insight-inline" id="invInsightText">Đang tải dữ liệu tồn kho...</div>
+        </div>
+
+        <!-- 6 EXECUTIVE INVENTORY KPI CARDS -->
+        <div class="inv-kpi-grid">
+          <div class="inv-kpi-card accent-blue">
+            <div class="inv-kpi-lbl">Tổng Giá trị Tồn kho</div>
+            <div class="inv-kpi-val mono" id="invKpiValue">--</div>
+            <div class="inv-kpi-sub mono" id="invKpiValueSub">Net PP: --</div>
+          </div>
+          <div class="inv-kpi-card accent-cyan">
+            <div class="inv-kpi-lbl">Tổng Số lượng Tồn (QTY)</div>
+            <div class="inv-kpi-val mono" id="invKpiQty">--</div>
+            <div class="inv-kpi-sub mono" id="invKpiQtySub">-- SKUs • -- kho</div>
+          </div>
+          <div class="inv-kpi-card accent-emerald">
+            <div class="inv-kpi-lbl">Hàng Bán Mới (Sellable)</div>
+            <div class="inv-kpi-val mono" id="invKpiSellable">--</div>
+            <div class="inv-kpi-sub mono pos" id="invKpiSellableSub">--% • -- units</div>
+          </div>
+          <div class="inv-kpi-card accent-crimson">
+            <div class="inv-kpi-lbl">Hàng Hư Hỏng (Damaged)</div>
+            <div class="inv-kpi-val mono" id="invKpiDamaged">--</div>
+            <div class="inv-kpi-sub mono neg" id="invKpiDamagedSub">--% • -- units</div>
+          </div>
+          <div class="inv-kpi-card accent-amber">
+            <div class="inv-kpi-lbl">Ngừng nhập (Discontinued)</div>
+            <div class="inv-kpi-val mono" id="invKpiDiscontinued">--</div>
+            <div class="inv-kpi-sub mono warn" id="invKpiDiscontinuedSub">--% • -- units</div>
+          </div>
+          <div class="inv-kpi-card accent-violet">
+            <div class="inv-kpi-lbl">Tồn lâu &gt; 180 ngày</div>
+            <div class="inv-kpi-val mono" id="invKpiAging180">--</div>
+            <div class="inv-kpi-sub mono" id="invKpiAging180Sub">--% • -- units</div>
+          </div>
+        </div>
+
+        <!-- CHARTS ROW 1: SITE CODE + BIN TYPE/ZONE -->
+        <div class="inv-charts-row-top">
+          <div class="panel-block">
+            <div class="panel-header">
+              <div class="panel-title-group">
+                <h2 class="panel-title">Tồn kho theo Site Code <span class="badge-blue" id="invSiteCountTag">24 KHO</span></h2>
+                <span class="panel-hint">Click cột kho để lọc chéo toàn bộ báo cáo tồn kho</span>
+              </div>
+              <div class="panel-controls">
+                <div class="seg-tabs" id="invSiteModeGroup">
+                  <button class="seg-btn active" data-val="stacked">Theo BIN Type</button>
+                  <button class="seg-btn" data-val="total">Tổng theo Site</button>
+                </div>
+                <div class="seg-tabs" id="invSiteMetricGroup">
+                  <button class="seg-btn active" data-val="value">Giá trị</button>
+                  <button class="seg-btn" data-val="qty">QTY</button>
+                </div>
+                <button class="btn-mini" data-export-chart="invSite">PNG</button>
+              </div>
+            </div>
+            <div id="chartInvSite" class="chart-canvas inv-chart-tall"></div>
+          </div>
+
+          <div class="panel-block">
+            <div class="panel-header">
+              <div class="panel-title-group">
+                <h2 class="panel-title">Cơ cấu BIN Type &amp; BIN Zone</h2>
+                <span class="panel-hint">Click từng mảng để lọc trạng thái kho</span>
+              </div>
+              <div class="panel-controls">
+                <div class="seg-tabs" id="invBinDimGroup">
+                  <button class="seg-btn active" data-val="binType">BIN Type</button>
+                  <button class="seg-btn" data-val="binZone">BIN Zone</button>
+                </div>
+                <div class="seg-tabs" id="invBinMetricGroup">
+                  <button class="seg-btn active" data-val="value">Giá trị</button>
+                  <button class="seg-btn" data-val="qty">QTY</button>
+                </div>
+                <button class="btn-mini" data-export-chart="invBin">PNG</button>
+              </div>
+            </div>
+            <div id="chartInvBin" class="chart-canvas inv-chart-tall"></div>
+          </div>
+        </div>
+
+        <!-- CHARTS ROW 2: INVENTORY AGING + SUBCAT/BRAND -->
+        <div class="two-col-deep">
+          <div class="panel-block">
+            <div class="panel-header">
+              <div class="panel-title-group">
+                <h2 class="panel-title">Phân tích Tuổi Tồn Kho (Aging)</h2>
+                <span class="panel-hint">Tính từ Last Received Date — Click cột để lọc nhóm tuổi</span>
+              </div>
+              <div class="panel-controls">
+                <div class="seg-tabs" id="invAgingMetricGroup">
+                  <button class="seg-btn active" data-val="both">Giá trị + QTY</button>
+                  <button class="seg-btn" data-val="value">Giá trị</button>
+                  <button class="seg-btn" data-val="qty">QTY</button>
+                </div>
+                <button class="btn-mini" data-export-chart="invAging">PNG</button>
+              </div>
+            </div>
+            <div id="chartInvAging" class="chart-canvas inv-chart-mid"></div>
+          </div>
+
+          <div class="panel-block">
+            <div class="panel-header">
+              <div class="panel-title-group">
+                <h2 class="panel-title">Top Nhóm hàng &amp; Thương hiệu Tồn kho</h2>
+                <span class="panel-hint">Click cột ngang để lọc theo Subcat 2 hoặc Brand</span>
+              </div>
+              <div class="panel-controls">
+                <div class="seg-tabs" id="invCatDimGroup">
+                  <button class="seg-btn active" data-val="subcat">Subcat 2</button>
+                  <button class="seg-btn" data-val="brand">Brand</button>
+                </div>
+                <div class="seg-tabs" id="invCatMetricGroup">
+                  <button class="seg-btn active" data-val="value">Giá trị</button>
+                  <button class="seg-btn" data-val="qty">QTY</button>
+                </div>
+                <button class="btn-mini" data-export-chart="invCat">PNG</button>
+              </div>
+            </div>
+            <div id="chartInvCat" class="chart-canvas inv-chart-mid"></div>
+          </div>
+        </div>
+
+        <!-- INVENTORY DETAIL TABLE & CSV EXPORT -->
+        <div class="panel-block">
+          <div class="panel-header">
+            <div>
+              <h2 class="panel-title">Bảng đối soát Tồn kho chi tiết &amp; Xuất CSV</h2>
+              <span class="panel-hint" id="invTableCountInfo">Đang hiển thị -- dòng</span>
+            </div>
+            <div class="panel-controls">
+              <div class="seg-tabs" id="invTableTabGroup">
+                <button class="seg-btn active" id="invRawTabBtn" data-val="raw">Chi tiết SKU &amp; BIN</button>
+                <button class="seg-btn" data-val="sites">Tổng hợp theo Kho</button>
+                <button class="seg-btn" data-val="skus">Tổng hợp theo SKU</button>
+              </div>
+              <input type="search" id="invTableSearchInput" class="dark-search" placeholder="Tìm SKU, tên linh kiện, kho, BIN, hãng..." />
+              <button class="btn-primary-blue" id="exportInvCsvBtn">⬇ Export CSV Kho</button>
+            </div>
+          </div>
+          <div class="table-pagination-bar" id="invTablePagination"></div>
+          <div class="table-wrap">
+            <table class="dark-table">
+              <thead id="invTableHead"></thead>
+              <tbody id="invTableBody"></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
       <!-- VERSION / FOOTER LINE (MATCHING BOTTOM-RIGHT "Version 10.4.3") -->
       <footer class="canvas-footer">
         <div class="footer-left">
@@ -466,7 +668,7 @@
       <div class="modal-header">
         <div>
           <h2 class="modal-title" id="updateModalTitle">Cập nhật dữ liệu mới lên Web</h2>
-          <p class="modal-subtitle">Tải file Excel (.xlsx) mới — hệ thống tự động lọc bỏ thông tin cá nhân (Zero-PII) ngay trên trình duyệt và cập nhật trực tiếp lên Web.</p>
+          <p class="modal-subtitle">Tải file Excel Sales (`.xlsx`) và/hoặc Tồn Kho (`Inventory_Details.xlsx`) — hệ thống tự nhận diện loại báo cáo, lọc bỏ PII ngay trên trình duyệt và cập nhật trực tiếp lên Web.</p>
         </div>
         <button type="button" class="modal-close-btn" id="closeUpdateModalBtn" aria-label="Đóng">×</button>
       </div>
@@ -494,7 +696,7 @@
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M12 16V4m0 0l-4 4m4-4l4 4"/><path d="M20 16.5A4.5 4.5 0 0 0 17.5 8h-.7A6 6 0 1 0 5 14.5"/><path d="M4 19h16"/></svg>
           </div>
           <div class="dropzone-title">Kéo thả file Excel vào đây hoặc <span class="link-accent">chọn từ máy tính</span></div>
-          <div class="dropzone-hint">Hỗ trợ chọn nhiều file cùng lúc (`.xlsx`, `.xls`, `.json`) — Tự động đọc cột `Report Date`, `Sales`, `Sales QTY`, `Sales Site Code`, `Region name`</div>
+          <div class="dropzone-hint">Hỗ trợ chọn 1 hoặc nhiều file cùng lúc (`Sale_Revenue_Detail.xlsx`, `Inventory_Details.xlsx`, `.json`) — Tự động nhận diện báo cáo Doanh thu (Sales) &amp; Tồn Kho (Inventory)</div>
         </div>
 
         <!-- Validation / Progress message -->

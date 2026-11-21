@@ -1499,6 +1499,125 @@ html, body {
   .preview-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
+/* ==========================================================================
+   INVENTORY (TỒN KHO) REPORT STYLES
+   ========================================================================== */
+.inv-top-banner {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.inv-banner-title {
+  font-family: var(--font-display);
+  font-size: 1rem;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  color: #fff;
+}
+
+.inv-filter-bar {
+  background: var(--bg-panel);
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  padding: 10px 12px;
+}
+
+.inv-kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.inv-kpi-card {
+  background: var(--bg-panel);
+  border: 1px solid var(--border-subtle);
+  border-top: 2px solid var(--blue);
+  border-radius: 6px;
+  padding: 11px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.inv-kpi-card.accent-blue { border-top-color: var(--blue); }
+.inv-kpi-card.accent-cyan { border-top-color: var(--cyan); }
+.inv-kpi-card.accent-emerald { border-top-color: var(--emerald); }
+.inv-kpi-card.accent-crimson { border-top-color: var(--crimson); }
+.inv-kpi-card.accent-amber { border-top-color: var(--amber); }
+.inv-kpi-card.accent-violet { border-top-color: var(--violet); }
+
+.inv-kpi-lbl {
+  font-size: 10.5px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.inv-kpi-val {
+  font-size: 1.28rem;
+  font-weight: 700;
+  color: #fff;
+  line-height: 1.15;
+}
+
+.inv-kpi-sub {
+  font-size: 10px;
+  color: var(--text-muted);
+}
+
+.inv-kpi-sub.pos { color: var(--emerald); }
+.inv-kpi-sub.neg { color: var(--crimson); }
+.inv-kpi-sub.warn { color: #FCD34D; }
+
+.inv-charts-row-top {
+  display: grid;
+  grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr);
+  gap: 14px;
+}
+
+.inv-chart-tall { height: 315px; }
+.inv-chart-mid { height: 300px; }
+
+.inv-badge {
+  display: inline-block;
+  padding: 2px 7px;
+  border-radius: 3px;
+  font-size: 10.5px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.inv-badge.sellable { background: rgba(18, 211, 122, 0.16); color: #34D399; }
+.inv-badge.damaged { background: rgba(229, 62, 81, 0.18); color: #FB7185; }
+.inv-badge.warranty { background: rgba(29, 122, 252, 0.18); color: #60A5FA; }
+.inv-badge.other { background: rgba(148, 163, 184, 0.15); color: #CBD5E1; }
+.inv-badge.disc { background: rgba(245, 158, 11, 0.18); color: #FCD34D; }
+.inv-badge.normal { background: rgba(20, 184, 166, 0.15); color: #5EEAD4; }
+
+.aging-tag {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  font-weight: 600;
+}
+.aging-tag.fresh { color: var(--emerald); }
+.aging-tag.mid { color: #FCD34D; }
+.aging-tag.old { color: var(--crimson); }
+
+@media (max-width: 1380px) {
+  .inv-kpi-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+
+@media (max-width: 1260px) {
+  .inv-charts-row-top { grid-template-columns: 1fr; }
+}
+
+@media (max-width: 680px) {
+  .inv-kpi-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
 /* RESPONSIVE */
 @media (max-width: 1260px) {
   .app-shell { grid-template-columns: 64px 250px minmax(0, 1fr); }

@@ -39,6 +39,17 @@ interface ReportPayload {
   };
   siteDirectory: Record<string, unknown>;
   rows: unknown[][];
+  inventory?: {
+    meta?: {
+      rowCount?: number;
+      snapshotDate?: string;
+      sources?: Array<{ file: string; sizeBytes?: number; rows?: number }>;
+      totals?: { qty?: number; value?: number };
+    };
+    lookups?: Record<string, string[]>;
+    siteDirectory?: Record<string, unknown>;
+    rows?: unknown[][];
+  };
 }
 
 function getReportStore(context: Context) {
@@ -211,8 +222,10 @@ export default async (req: Request, context: Context) => {
       parsed.meta.updatedAt = updatedAt;
       parsed.meta.generatedAt = updatedAt;
 
-      const sourceNames = (parsed.meta.sources || [])
-        .map((s) => s.file)
+      const sourceNames = [
+        ...(parsed.meta.sources || []).map((s) => s.file),
+        ...(parsed.inventory?.meta?.sources || []).map((s) => s.file),
+      ]
         .filter(Boolean)
         .join(", ")
         .slice(0, 200);
@@ -220,6 +233,7 @@ export default async (req: Request, context: Context) => {
       const metadata = {
         updatedAt,
         rowCount: parsed.rows.length,
+        inventoryRows: Array.isArray(parsed.inventory?.rows) ? parsed.inventory.rows.length : 0,
         dateMin: String(parsed.meta.dateMin || ""),
         dateMax: String(parsed.meta.dateMax || ""),
         sources: sourceNames || "Uploaded Excel",

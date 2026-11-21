@@ -1,0 +1,447 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>CYBERPULSE // Sales & Qty Command Dashboard</title>
+  <meta name="description" content="Báo cáo Sales và Sales QTY theo Report Date (Month), Sales Site Code và Region Name — Giao diện Command Dashboard tối giản hiện đại." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600;700&family=Chakra+Petch:wght@600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="./styles.css" />
+  <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.1/dist/echarts.min.js" defer></script>
+  <script src="./data/report_data.js" defer></script>
+  <script src="./app.js" defer></script>
+</head>
+<body>
+  <div class="app-shell">
+    <!-- 1. FAR-LEFT ELECTRIC BLUE NAVIGATION RAIL (MATCHING REFERENCE) -->
+    <aside class="nav-rail" aria-label="Menu điều hướng">
+      <div class="rail-logo" title="CYBERPULSE Sales Telemetry">
+        <svg viewBox="0 0 36 36" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <rect x="2" y="2" width="13" height="20" rx="2" fill="#F59E0B"/>
+          <rect x="17" y="2" width="17" height="17" rx="2" fill="#14D9C5"/>
+          <rect x="2" y="24" width="32" height="10" rx="2" fill="#F97316"/>
+          <rect x="17" y="20" width="17" height="3" fill="#0B4DBB"/>
+        </svg>
+      </div>
+
+      <nav class="rail-menu" id="railMenu">
+        <button class="rail-item active" data-view="dashboard" title="Tổng quan Dashboard">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
+          <span>Dashboard</span>
+        </button>
+        <button class="rail-item" data-view="monthly" title="Báo cáo Sales & Qty theo Report Date">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 3v18h18"/><rect x="7" y="10" width="3" height="7"/><rect x="12" y="6" width="3" height="11"/><rect x="17" y="12" width="3" height="5"/></svg>
+          <span>Monthly<br/>Report</span>
+        </button>
+        <button class="rail-item" data-view="site" title="Phân tích 31 Sales Site Codes">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 9l9-6 9 6v11a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V9z"/><path d="M9 21V12h6v9"/></svg>
+          <span>Site Code<br/>Report</span>
+        </button>
+        <button class="rail-item" data-view="region" title="Báo cáo theo Region Name">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M12 3v9l6.5 3.5"/></svg>
+          <span>Region<br/>Report</span>
+        </button>
+        <button class="rail-item" data-view="channel" title="Sales Channel & Nhóm hàng">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="5" r="2.5"/><circle cx="5" cy="18" r="2.5"/><circle cx="19" cy="18" r="2.5"/><path d="M10.8 7.2L6.2 15.8M13.2 7.2l4.6 8.6M7.5 18h9"/></svg>
+          <span>Channel<br/>&amp; Brand</span>
+        </button>
+        <button class="rail-item" data-view="ledger" title="Bảng dữ liệu chi tiết & Export CSV">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 10h18M9 4v16"/></svg>
+          <span>Data<br/>Ledger</span>
+        </button>
+      </nav>
+
+      <div class="rail-bottom">
+        <button class="rail-item" id="exportCsvRailBtn" title="Xuất dữ liệu đang lọc ra file CSV">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 3v12m0 0l-4-4m4 4l4-4"/><path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/></svg>
+          <span>Export<br/>CSV</span>
+        </button>
+      </div>
+    </aside>
+
+    <!-- 2. LEFT KPI & GAUGE TELEMETRY PANEL (MATCHING REFERENCE) -->
+    <aside class="kpi-sidebar" aria-label="Chỉ số tổng quan">
+      <div class="sidebar-top">
+        <h1 class="sidebar-title">Dashboard</h1>
+        <button class="btn-reset-mini" id="resetFiltersBtn" title="Đặt lại toàn bộ bộ lọc">↺ Reset</button>
+      </div>
+
+      <!-- GAUGE 1: CIRCULAR TICK RING (GROSS MARGIN & SALES VS COGS) -->
+      <div class="sidebar-block">
+        <div class="block-label">
+          <span>Gross Margin &amp; Revenue</span>
+          <span class="mini-tag" id="sidebarSalesShareTag">100% tổng</span>
+        </div>
+        <div class="gauge-wrap">
+          <div id="gaugeRing" class="gauge-ring-box"></div>
+          <div class="gauge-center-overlay">
+            <div class="gauge-big-num mono" id="gaugeGmValue">--%</div>
+            <div class="delta-pill positive mono" id="gaugeGpPill">GP --</div>
+          </div>
+        </div>
+
+        <div class="bar-stat">
+          <div class="bar-stat-head">
+            <span class="muted">Total Sales</span>
+            <strong class="mono" id="statSalesVal">--</strong>
+          </div>
+          <div class="bar-track"><div class="bar-fill emerald" id="barSalesFill" style="width:100%"></div></div>
+        </div>
+
+        <div class="bar-stat">
+          <div class="bar-stat-head">
+            <span class="muted">COGS (Giá vốn)</span>
+            <strong class="mono" id="statCogsVal">--</strong>
+          </div>
+          <div class="bar-track"><div class="bar-fill crimson" id="barCogsFill" style="width:72%"></div></div>
+        </div>
+      </div>
+
+      <!-- GAUGE 2: SEMI-CIRCLE HANDLE/FULFILLMENT RATE -->
+      <div class="sidebar-block">
+        <div class="block-label">
+          <span>Net Export Rate</span>
+          <span class="muted mono" id="statQtyHeader">-- QTY</span>
+        </div>
+        <div class="semi-gauge-wrap">
+          <div id="gaugeSemi" class="gauge-semi-box"></div>
+          <div class="semi-center-overlay">
+            <div class="semi-big-num mono" id="gaugeFulfillVal">--%</div>
+            <div class="delta-pill positive mono" id="gaugeQtyPill">-- units</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 2x2 METRIC LIST (MATCHING AVG QUEUE / TALKTIME BLOCK) -->
+      <div class="sidebar-block metric-grid-2">
+        <div class="metric-item">
+          <div class="metric-name">TB Sales / Tháng</div>
+          <div class="metric-val mono" id="mAvgMonthSales">--</div>
+          <div class="metric-delta pos mono" id="mAvgMonthSalesSub">11 tháng</div>
+        </div>
+        <div class="metric-item">
+          <div class="metric-name">TB Qty / Tháng</div>
+          <div class="metric-val mono" id="mAvgMonthQty">--</div>
+          <div class="metric-delta pos mono" id="mAvgMonthQtySub">sp / tháng</div>
+        </div>
+        <div class="metric-item">
+          <div class="metric-name">Giá bán TB (ASP)</div>
+          <div class="metric-val mono" id="mAsp">--</div>
+          <div class="metric-delta neutral mono">VND / unit</div>
+        </div>
+        <div class="metric-item">
+          <div class="metric-name">Tổng Lợi nhuận</div>
+          <div class="metric-val mono" id="mTotalGp">--</div>
+          <div class="metric-delta pos mono" id="mTotalGpPct">GM --%</div>
+        </div>
+      </div>
+
+      <!-- 2x2 INSET DARK CARDS (MATCHING DECLINE / ANSWER BLOCK) -->
+      <div class="inset-grid-2">
+        <div class="inset-card">
+          <div class="metric-name">Active Sites</div>
+          <div class="inset-val mono" id="mActiveSites">--</div>
+          <div class="metric-delta pos mono" id="mActiveSitesSub">/ 31 sites</div>
+        </div>
+        <div class="inset-card">
+          <div class="metric-name">Active Regions</div>
+          <div class="inset-val mono" id="mActiveRegions">--</div>
+          <div class="metric-delta pos mono">vùng lọc</div>
+        </div>
+        <div class="inset-card">
+          <div class="metric-name">Đơn Xuất bán</div>
+          <div class="inset-val mono" id="mExportRows">--</div>
+          <div class="metric-delta pos mono" id="mExportPct">--%</div>
+        </div>
+        <div class="inset-card">
+          <div class="metric-name">Đơn Hoàn bán</div>
+          <div class="inset-val mono" id="mReturnRows">--</div>
+          <div class="metric-delta neg mono" id="mReturnPct">--%</div>
+        </div>
+      </div>
+    </aside>
+
+    <!-- 3. MAIN DARK WORKSPACE CANVAS -->
+    <main class="main-canvas">
+      <!-- TOP SLIM HEADER & FILTER BAR (MATCHING TOP-RIGHT DATE PICKER) -->
+      <header class="canvas-topbar">
+        <div class="topbar-filters">
+          <select id="filterRegion" class="dark-select" title="Lọc theo Region Name">
+            <option value="">Tất cả Region</option>
+          </select>
+          <select id="filterSite" class="dark-select" title="Lọc theo Sales Site Code">
+            <option value="">Tất cả Site Code (31)</option>
+          </select>
+          <select id="filterChannel" class="dark-select" title="Lọc theo Sales Channel">
+            <option value="">Tất cả Channel</option>
+          </select>
+          <select id="filterOrderType" class="dark-select" title="Lọc loại đơn hàng">
+            <option value="">Xuất + Hoàn</option>
+            <option value="don_xuat_ban">Chỉ Xuất bán</option>
+            <option value="don_nhap_hoan_ban">Chỉ Hoàn bán</option>
+          </select>
+
+          <label class="pill-toggle" title="Ẩn 6 đơn hàng sỉ >=100 Qty tại tháng 08/2026 để soi xu hướng bán lẻ">
+            <input type="checkbox" id="excludeBulkToggle" />
+            <span>Ẩn đơn sỉ T8 (≥100 Qty)</span>
+          </label>
+          <label class="pill-toggle" title="Chỉ lọc 5 Region cửa hàng (HCM 1, HCM 2, SOUTHERN, 264, CENTRAL)">
+            <input type="checkbox" id="storeRegionsOnlyToggle" />
+            <span>Chỉ 5 Region CH</span>
+          </label>
+        </div>
+
+        <div class="date-picker-box">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" class="cal-icon"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>
+          <select id="filterMonthFrom" class="date-select" aria-label="Từ tháng"></select>
+          <span class="date-sep">—</span>
+          <select id="filterMonthTo" class="date-select" aria-label="Đến tháng"></select>
+        </div>
+      </header>
+
+      <!-- ACTIVE CROSS-FILTER CHIPS STRIP -->
+      <div class="chips-strip" id="activeChipsBar">
+        <div class="chips-list" id="activeChips"></div>
+        <div class="insight-inline" id="insightText">Đang tải dữ liệu...</div>
+      </div>
+
+      <!-- ================================================================
+           VIEW 1: DASHBOARD OVERVIEW (EXACT REFERENCE LAYOUT)
+           ================================================================ -->
+      <section class="view-pane active" id="view-dashboard">
+        <!-- TOP ROW: HERO MULTI-COLOR CHART (DIALOGUE VOLUME SLOT) -->
+        <div class="panel-block hero-chart-block">
+          <div class="panel-header">
+            <div class="panel-title-group">
+              <h2 class="panel-title">Sales &amp; Qty theo Report Date <span class="badge-blue" id="heroGranularityTag">THEO THÁNG</span></h2>
+              <span class="panel-hint">Click cột tháng hoặc vùng để lọc chéo toàn bộ Dashboard</span>
+            </div>
+            <div class="panel-controls">
+              <div class="seg-tabs" id="heroModeGroup">
+                <button class="seg-btn active" data-val="sales_qty">Sales + Qty</button>
+                <button class="seg-btn" data-val="region_grouped">Region × Month</button>
+                <button class="seg-btn" data-val="sales_gp">Sales + GP</button>
+              </div>
+              <div class="seg-tabs" id="heroGranularityGroup">
+                <button class="seg-btn active" data-val="month">Month</button>
+                <button class="seg-btn" data-val="week">Week</button>
+                <button class="seg-btn" data-val="day">Day</button>
+              </div>
+              <button class="btn-mini" data-export-chart="hero" title="Tải ảnh biểu đồ PNG">PNG</button>
+            </div>
+          </div>
+          <div id="chartHero" class="chart-canvas hero-canvas"></div>
+        </div>
+
+        <!-- BOTTOM 2-COLUMN SPLIT (MATCHING REFERENCE 55% / 45%) -->
+        <div class="dashboard-bottom-grid">
+          <!-- BOTTOM-LEFT: TOP 5 SALES SITE CODES (THE 5 MOST USED SKILLS SLOT) -->
+          <div class="panel-block sites-rank-block">
+            <div class="panel-header">
+              <div class="panel-title-group">
+                <h2 class="panel-title">Top Sales Site Codes</h2>
+                <span class="panel-hint">Click từng dòng để lọc riêng mã điểm bán</span>
+              </div>
+              <div class="panel-controls">
+                <div class="seg-tabs" id="rankLimitGroup">
+                  <button class="seg-btn active" data-val="5">Top 5</button>
+                  <button class="seg-btn" data-val="10">Top 10</button>
+                  <button class="seg-btn" data-val="31">All 31</button>
+                </div>
+                <div class="seg-tabs" id="rankSortGroup">
+                  <button class="seg-btn active" data-val="sales">Sales</button>
+                  <button class="seg-btn" data-val="qty">Qty</button>
+                  <button class="seg-btn" data-val="gm">GM%</button>
+                </div>
+              </div>
+            </div>
+            <div class="rank-list" id="siteRankList"></div>
+          </div>
+
+          <!-- BOTTOM-RIGHT STACKED COLUMN -->
+          <div class="right-stack">
+            <!-- UPPER: REGION NAME BREAKDOWN (DIALOGUE VOLUME BY MODALITY SLOT) -->
+            <div class="panel-block modality-block">
+              <div class="panel-header">
+                <h2 class="panel-title">Phân bổ theo Region Name</h2>
+                <div class="seg-tabs" id="regionModalityMetric">
+                  <button class="seg-btn active" data-val="sales">Sales</button>
+                  <button class="seg-btn" data-val="qty">Qty</button>
+                  <button class="seg-btn" data-val="gp">GP</button>
+                </div>
+              </div>
+
+              <div class="modality-total-row">
+                <span class="modality-total-label">Total</span>
+                <span class="modality-total-value mono" id="regionTotalHeadline">--</span>
+              </div>
+
+              <!-- FULL-WIDTH MULTI-COLOR STACKED BAR -->
+              <div class="stacked-segment-bar" id="regionStackedBar"></div>
+
+              <!-- 2-ROW REGION ICON GRID -->
+              <div class="region-modality-grid" id="regionModalityGrid"></div>
+            </div>
+
+            <!-- LOWER: MONTHLY AREA TREND (SLA BY DATE SLOT) -->
+            <div class="panel-block trend-block">
+              <div class="panel-header">
+                <h2 class="panel-title" id="trendCardTitle">Xu hướng Sales QTY theo Tháng</h2>
+                <div class="panel-controls">
+                  <div class="seg-tabs" id="trendMetricGroup">
+                    <button class="seg-btn active" data-val="qty">Qty</button>
+                    <button class="seg-btn" data-val="gm">GM (%)</button>
+                    <button class="seg-btn" data-val="sales">Sales</button>
+                  </div>
+                  <button class="btn-mini" data-export-chart="trend">PNG</button>
+                </div>
+              </div>
+              <div id="chartTrend" class="chart-canvas trend-canvas"></div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ================================================================
+           VIEW 2: MONTHLY REPORT DEEP-DIVE
+           ================================================================ -->
+      <section class="view-pane" id="view-monthly">
+        <div class="panel-block">
+          <div class="panel-header">
+            <div>
+              <h2 class="panel-title">Phân tích chuyên sâu Sales &amp; Qty theo Report Date</h2>
+              <span class="panel-hint">Hỗ trợ DataZoom kéo thả, so sánh tăng trưởng MoM% và tải ảnh PNG</span>
+            </div>
+            <div class="panel-controls">
+              <div class="seg-tabs" id="deepGranularityGroup">
+                <button class="seg-btn active" data-val="month">Month</button>
+                <button class="seg-btn" data-val="week">Week</button>
+                <button class="seg-btn" data-val="day">Day</button>
+              </div>
+              <div class="seg-tabs" id="deepModeGroup">
+                <button class="seg-btn active" data-val="sales_qty">Sales + Qty</button>
+                <button class="seg-btn" data-val="mom">Tăng trưởng MoM %</button>
+              </div>
+              <button class="btn-mini" data-export-chart="deepMonthly">PNG</button>
+            </div>
+          </div>
+          <div id="chartDeepMonthly" class="chart-canvas deep-canvas"></div>
+        </div>
+      </section>
+
+      <!-- ================================================================
+           VIEW 3: SALES SITE CODE FULL ANALYTICS (ALL 31 SITES)
+           ================================================================ -->
+      <section class="view-pane" id="view-site">
+        <div class="panel-block">
+          <div class="panel-header">
+            <div>
+              <h2 class="panel-title">Xếp hạng toàn bộ 31 Sales Site Codes</h2>
+              <span class="panel-hint">Chuyển đổi biểu đồ Bar / Treemap / Scatter (Sales × Qty) — Click để lọc chéo</span>
+            </div>
+            <div class="panel-controls">
+              <div class="seg-tabs" id="siteChartViewGroup">
+                <button class="seg-btn active" data-val="bar">Ranked Bar</button>
+                <button class="seg-btn" data-val="treemap">Treemap</button>
+                <button class="seg-btn" data-val="scatter">Sales × Qty</button>
+              </div>
+              <div class="seg-tabs" id="siteChartSortGroup">
+                <button class="seg-btn active" data-val="sales">Sales</button>
+                <button class="seg-btn" data-val="qty">Qty</button>
+                <button class="seg-btn" data-val="gm">GM%</button>
+              </div>
+              <button class="btn-mini" data-export-chart="deepSite">PNG</button>
+            </div>
+          </div>
+          <div id="chartDeepSite" class="chart-canvas deep-canvas"></div>
+        </div>
+      </section>
+
+      <!-- ================================================================
+           VIEW 4: REGION REPORT & REGION x MONTH MATRIX
+           ================================================================ -->
+      <section class="view-pane" id="view-region">
+        <div class="two-col-deep">
+          <div class="panel-block">
+            <div class="panel-header">
+              <h2 class="panel-title">Tỷ trọng theo Region Name</h2>
+              <button class="btn-mini" data-export-chart="deepRegionPie">PNG</button>
+            </div>
+            <div id="chartDeepRegionPie" class="chart-canvas medium-canvas"></div>
+          </div>
+          <div class="panel-block">
+            <div class="panel-header">
+              <h2 class="panel-title">Xu hướng Region theo từng Tháng</h2>
+              <button class="btn-mini" data-export-chart="deepRegionStack">PNG</button>
+            </div>
+            <div id="chartDeepRegionStack" class="chart-canvas medium-canvas"></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ================================================================
+           VIEW 5: CHANNEL & PRODUCT DRIVERS
+           ================================================================ -->
+      <section class="view-pane" id="view-channel">
+        <div class="two-col-deep">
+          <div class="panel-block">
+            <div class="panel-header">
+              <h2 class="panel-title">Cơ cấu Sales Channel</h2>
+              <button class="btn-mini" data-export-chart="deepChannel">PNG</button>
+            </div>
+            <div id="chartDeepChannel" class="chart-canvas medium-canvas"></div>
+          </div>
+          <div class="panel-block">
+            <div class="panel-header">
+              <h2 class="panel-title">Top Subcat 2 &amp; Brand</h2>
+              <div class="seg-tabs" id="driverDimGroup">
+                <button class="seg-btn active" data-val="subcat">Subcat 2</button>
+                <button class="seg-btn" data-val="brand">Brand</button>
+              </div>
+            </div>
+            <div id="chartDeepDriver" class="chart-canvas medium-canvas"></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ================================================================
+           VIEW 6: INTERACTIVE DATA LEDGER & MATRIX TABLE
+           ================================================================ -->
+      <section class="view-pane" id="view-ledger">
+        <div class="panel-block">
+          <div class="panel-header">
+            <div>
+              <h2 class="panel-title">Bảng đối soát chi tiết &amp; Xuất CSV</h2>
+              <span class="panel-hint" id="tableCountInfo">Đang hiển thị -- dòng</span>
+            </div>
+            <div class="panel-controls">
+              <div class="seg-tabs" id="tableTabGroup">
+                <button class="seg-btn active" data-val="sites">Tổng hợp Site Code</button>
+                <button class="seg-btn" data-val="matrix">Ma trận Region × Month</button>
+                <button class="seg-btn" data-val="raw">Chi tiết 5,443 giao dịch</button>
+              </div>
+              <input type="search" id="tableSearchInput" class="dark-search" placeholder="Tìm Site, Store, Region, SKU..." />
+              <button class="btn-primary-blue" id="exportTableCsvBtn">⬇ Export CSV</button>
+            </div>
+          </div>
+          <div class="table-pagination-bar" id="tablePagination"></div>
+          <div class="table-wrap">
+            <table class="dark-table">
+              <thead id="tableHead"></thead>
+              <tbody id="tableBody"></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- VERSION / FOOTER LINE (MATCHING BOTTOM-RIGHT "Version 10.4.3") -->
+      <footer class="canvas-footer">
+        <span id="footerSource">Source: Sale_Revenue_Detail.xlsx • Zero-PII ETL</span>
+        <span class="mono" id="footerVersion">CYBERPULSE BI v2.0 • Cloudflare Pages Ready</span>
+      </footer>
+    </main>
+  </div>
+</body>
+</html>

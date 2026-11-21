@@ -1,0 +1,9 @@
+# Raw Excel data (keep private if pushing to a public repo)
+data/*.xlsx
+~$*.xlsx
+
+# OS & Editor files
+.DS_Store
+Thumbs.db
+.vscode/
+*.log

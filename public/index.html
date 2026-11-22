@@ -278,6 +278,76 @@
           <div id="chartHero" class="chart-canvas hero-canvas"></div>
         </div>
 
+        <!-- ================================================================
+             TARGET & PROPORTION BENCHMARK REPORT BLOCK (NGÀNH HÀNG)
+             ================================================================ -->
+        <div class="panel-block target-report-block" id="dashboardTargetBlock">
+          <div class="panel-header">
+            <div class="panel-title-group">
+              <h2 class="panel-title">
+                🎯 Báo cáo Doanh số Vs Target &amp; Tỷ trọng (Proport) theo Ngành Hàng
+                <span class="badge-blue mono" id="targetModeBadge">BENCHMARK YTD</span>
+              </h2>
+              <span class="panel-hint">So sánh Doanh số Thực đạt với Kế hoạch Target và Tăng trưởng cùng kỳ (Vs LY). Bấm từng dòng để lọc nhanh Ngành Hàng.</span>
+            </div>
+            <div class="panel-controls">
+              <div class="seg-tabs" id="targetDataSourceGroup">
+                <button class="seg-btn active" data-val="benchmark" title="Xem bảng Kế hoạch & Thực đạt YTD chuẩn từ báo cáo quản trị">Chuẩn Kế hoạch (Benchmark)</button>
+                <button class="seg-btn" data-val="filtered" title="Tính toán doanh số thực tế theo bộ lọc đang chọn trên Dashboard">Thực tế theo Bộ lọc</button>
+              </div>
+              <button class="btn-mini" id="exportTargetCsvBtn" title="Tải bảng Target định dạng CSV">CSV</button>
+              <button class="btn-mini" data-export-chart="targetProgress" title="Tải ảnh biểu đồ PNG">PNG</button>
+            </div>
+          </div>
+
+          <div class="target-report-content">
+            <!-- LEFT: EXACT TABLE REPLICA OF USER SCREENSHOT -->
+            <div class="target-table-wrap">
+              <table class="target-benchmark-table" id="targetBenchmarkTable">
+                <thead>
+                  <tr>
+                    <th style="width: 29%">Category</th>
+                    <th class="num" style="width: 14%">YTD Sales</th>
+                    <th class="num" style="width: 13%">Vs LY (%) ▲</th>
+                    <th class="num" style="width: 12%">Proport (%)</th>
+                    <th class="num" style="width: 16%">YTD Sales Target</th>
+                    <th class="num" style="width: 16%">Vs Target (%)</th>
+                  </tr>
+                </thead>
+                <tbody id="targetTableBody">
+                  <!-- Rendered dynamically -->
+                </tbody>
+              </table>
+              <div class="target-table-legend">
+                <span class="legend-note">* Đơn vị: <strong>Triệu VND</strong>. Bấm vào dòng để lọc nhanh Ngành Hàng.</span>
+              </div>
+            </div>
+
+            <!-- RIGHT: VISUAL CHART & INSIGHT CARDS -->
+            <div class="target-visual-wrap">
+              <div class="target-kpi-cards">
+                <div class="target-kpi-card highlight">
+                  <div class="target-kpi-title">Tiến độ Hoàn thành Target Toàn bộ (3 NH)</div>
+                  <div class="target-kpi-val mono" id="targetKpiTotalPct">67%</div>
+                  <div class="target-kpi-sub mono" id="targetKpiTotalSub">111,927 / 165,866 Tr VND • Còn thiếu 53,939 Tr</div>
+                  <div class="target-mini-track">
+                    <div class="target-mini-fill" id="targetKpiTotalBar" style="width: 67%"></div>
+                  </div>
+                </div>
+                <div class="target-kpi-card">
+                  <div class="target-kpi-title">Ngành Hàng Trụ Cột (Chiếm 86% Doanh số)</div>
+                  <div class="target-kpi-val mono" style="color: #1D7AFC" id="targetKpiDominantVal">NH11 - Phụ kiện</div>
+                  <div class="target-kpi-sub mono" id="targetKpiDominantSub">95,845 Tr VND • Đạt 72% Target (132,421 Tr)</div>
+                  <div class="target-mini-track">
+                    <div class="target-mini-fill" style="width: 72%; background: #1D7AFC"></div>
+                  </div>
+                </div>
+              </div>
+              <div id="chartTargetProgress" class="chart-canvas target-canvas"></div>
+            </div>
+          </div>
+        </div>
+
         <!-- BOTTOM 2-COLUMN SPLIT (MATCHING REFERENCE 55% / 45%) -->
         <div class="dashboard-bottom-grid">
           <!-- BOTTOM-LEFT: TOP 5 SALES SITE CODES (THE 5 MOST USED SKILLS SLOT) -->

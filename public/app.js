@@ -39,6 +39,53 @@
     "#1D7AFC", "#38BDF8", "#F59E0B", "#F97316",
   ];
 
+  // Official Management Target & Benchmark Data (Category Level)
+  const TARGET_BENCHMARK = {
+    unit: "Triệu VND",
+    categories: {
+      "NH06": {
+        code: "NH06",
+        label: "NH06-Thiết bị ngoại vi",
+        ytdSales: 5593,
+        vsLyPct: -18.0,
+        proportPct: 5,
+        target: 15777,
+        vsTargetPct: 35,
+        lySales: 6820.73,
+      },
+      "NH11": {
+        code: "NH11",
+        label: "NH11-Phụ kiện",
+        ytdSales: 95845,
+        vsLyPct: 27.1,
+        proportPct: 86,
+        target: 132421,
+        vsTargetPct: 72,
+        lySales: 75409.13,
+      },
+      "NH93": {
+        code: "NH93",
+        label: "NH93-Linh kiện sửa chữa",
+        ytdSales: 10490,
+        vsLyPct: 39.1,
+        proportPct: 9,
+        target: 17668,
+        vsTargetPct: 59,
+        lySales: 7541.34,
+      },
+    },
+    total: {
+      code: "TOTAL",
+      label: "Total",
+      ytdSales: 111927,
+      vsLyPct: 24.7,
+      proportPct: 100,
+      target: 165866,
+      vsTargetPct: 67,
+      lySales: 89771.20,
+    },
+  };
+
   // Compact row column indexes (Sales)
   const C = {
     DATE: 0,
@@ -179,6 +226,7 @@
     // Tier 1 Global Master Filter (applies to ALL Tabs & Left Sidebar)
     globalCat: "",
     globalSubcat: "",
+    targetDataSource: "benchmark", // benchmark | filtered
     shardsLoaded: false,
     shardsLoading: false,
     // Inventory sub-state
@@ -987,6 +1035,8 @@
     charts.invAging = make("chartInvAging");
     charts.invCat = make("chartInvCat");
     charts.lookupVelocity = make("chartLookupVelocity");
+    const elTarget = document.getElementById("chartTargetProgress");
+    if (elTarget) charts.targetProgress = make("chartTargetProgress");
 
     // Cross-filter click listeners
     charts.hero.on("click", (params) => {
@@ -1283,6 +1333,12 @@
       renderTrendChart(state.clickedMonth ? getFilteredRows(true) : getFilteredRows(false));
     });
 
+    bindSeg("targetDataSourceGroup", (v) => {
+      state.targetDataSource = v;
+      renderTargetReport(getFilteredRows(false));
+    });
+    document.getElementById("exportTargetCsvBtn")?.addEventListener("click", () => exportTargetCsv());
+
     bindSeg("deepGranularityGroup", (v) => {
       state.deepGranularity = v;
       renderDeepMonthly(state.clickedMonth ? getFilteredRows(true) : getFilteredRows(false));
@@ -1539,6 +1595,7 @@
   function renderActiveView(filtered, filteredTime) {
     if (state.activeView === "dashboard") {
       renderHeroChart(filteredTime);
+      renderTargetReport(filtered);
       renderSiteRankList(filtered);
       renderRegionModality(filtered);
       renderTrendChart(filteredTime);
@@ -2086,24 +2143,40 @@
     const gm = sales !== 0 ? (gp / sales) * 100 : 0;
     const fulfillRate = totalRows > 0 ? (exportRows / totalRows) * 100 : 0;
     const salesShare = meta.totals.sales ? (sales / meta.totals.sales) * 100 : 0;
-    const cogsRatio = sales > 0 ? Math.min(100, (cogs / sales) * 100) : 0;
     const avgMonthSales = months.size > 0 ? sales / months.size : 0;
     const avgMonthQty = months.size > 0 ? qty / months.size : 0;
     const asp = qty !== 0 ? sales / qty : 0;
 
+    // Active Target Benchmark integration (Doanh số / Target là chỉ số chính, Margin là chỉ số phụ)
+    let activeTargetTr = TARGET_BENCHMARK.total.target; // 165,866 Tr VND
+    let activeTargetLabel = "Kế hoạch 165.9 Tỷ";
+    let activeCatTitle = "Toàn bộ 3 NH";
+
+    if (state.globalCat && TARGET_BENCHMARK.categories[state.globalCat]) {
+      const catMeta = TARGET_BENCHMARK.categories[state.globalCat];
+      activeTargetTr = catMeta.target;
+      activeCatTitle = catMeta.code;
+      activeTargetLabel = `Kế hoạch ${fmtCompactVnd(activeTargetTr * 1e6)}`;
+    }
+
+    const targetVnd = activeTargetTr * 1e6;
+    const vsTargetPct = targetVnd > 0 ? (sales / targetVnd) * 100 : 0;
+    const targetGap = targetVnd - sales;
+    const targetGapLabel = targetGap > 0 ? `Thiếu -${fmtCompactVnd(targetGap)}` : `Vượt +${fmtCompactVnd(-targetGap)}`;
+
     applySidebarSpec({
       title: "Dashboard",
-      g1Label: "Gross Margin & Revenue",
-      g1Tag: `${fmtPct(salesShare)} tổng`,
-      g1Big: fmtPct(gm),
-      g1Pill: `GP ${fmtCompactVnd(gp)}`,
-      g1Pct: (gm / 35) * 100,
-      bar1Label: "Total Sales",
+      g1Label: "Doanh số / Target",
+      g1Tag: activeTargetLabel,
+      g1Big: `${vsTargetPct.toFixed(1)}%`,
+      g1Pill: targetGapLabel,
+      g1Pct: Math.min(100, Math.max(0, vsTargetPct)),
+      bar1Label: "Doanh số Thực đạt",
       bar1Val: fmtCompactVnd(sales),
-      bar1Pct: salesShare,
-      bar2Label: "COGS (Giá vốn)",
-      bar2Val: fmtCompactVnd(cogs),
-      bar2Pct: cogsRatio,
+      bar1Pct: Math.min(100, Math.max(0, vsTargetPct)),
+      bar2Label: `Kế hoạch Target (${activeCatTitle})`,
+      bar2Val: fmtCompactVnd(targetVnd),
+      bar2Pct: 100,
       g2Label: "Net Export Rate",
       g2Tag: `${fmtInt(qty)} QTY`,
       g2Big: fmtPct(fulfillRate),
@@ -2113,7 +2186,7 @@
         { l: "TB Sales / Tháng", v: fmtCompactVnd(avgMonthSales), s: `${months.size} tháng`, cls: "pos" },
         { l: "TB Qty / Tháng", v: fmtInt(avgMonthQty), s: "sp / tháng", cls: "pos" },
         { l: "Giá bán TB (ASP)", v: fmtCompactVnd(asp), s: "VND / unit", cls: "neutral" },
-        { l: "Tổng Lợi nhuận", v: fmtCompactVnd(gp), s: `GM ${fmtPct(gm)}`, cls: "pos" },
+        { l: "Lợi nhuận GP (Phụ)", v: fmtCompactVnd(gp), s: `GM ${fmtPct(gm)} (chỉ số phụ)`, cls: "pos" },
       ],
       insets: [
         { l: "Active Sites", v: fmtInt(sites.size), s: `/ ${lookups.sites.length} sites`, cls: "pos" },
@@ -2403,6 +2476,317 @@
   }
 
   // =========================================================================
+  // 3B. TARGET & PROPORTION BENCHMARK REPORT (NGÀNH HÀNG)
+  // =========================================================================
+  function renderTargetReport(rows) {
+    const tbody = document.getElementById("targetTableBody");
+    if (!tbody) return;
+
+    const isFiltered = state.targetDataSource === "filtered";
+    const modeBadge = document.getElementById("targetModeBadge");
+    if (modeBadge) {
+      modeBadge.textContent = isFiltered ? "THỰC TẾ THEO BỘ LỌC" : "BENCHMARK YTD";
+    }
+
+    let reportRows = [];
+    let totalRow = null;
+
+    if (!isFiltered) {
+      // 1. Official Management Benchmark (matching reference image)
+      reportRows = [
+        { ...TARGET_BENCHMARK.categories["NH06"] },
+        { ...TARGET_BENCHMARK.categories["NH11"] },
+        { ...TARGET_BENCHMARK.categories["NH93"] },
+      ];
+      totalRow = { ...TARGET_BENCHMARK.total };
+    } else {
+      // 2. Dynamic Filtered Calculation
+      const { lookups } = state.raw || { lookups: { subcats: [] } };
+      const catSales = { NH06: 0, NH11: 0, NH93: 0 };
+
+      for (let i = 0; i < rows.length; i++) {
+        const r = rows[i];
+        const sc = lookups.subcats[r[C.SUBCAT]] || "";
+        const m = sc.match(/^(NH\d{2})/i);
+        const code = m ? m[1].toUpperCase() : "";
+        if (catSales[code] !== undefined) {
+          catSales[code] += r[C.SALES];
+        }
+      }
+
+      const totalSales = catSales.NH06 + catSales.NH11 + catSales.NH93;
+      const totalSalesTr = totalSales / 1e6;
+
+      const codes = ["NH06", "NH11", "NH93"];
+      reportRows = codes.map((code) => {
+        const bm = TARGET_BENCHMARK.categories[code];
+        const salesTr = catSales[code] / 1e6;
+        const targetTr = bm.target;
+        const vsTargetPct = targetTr > 0 ? (salesTr / targetTr) * 100 : 0;
+        const proportPct = totalSalesTr > 0 ? (salesTr / totalSalesTr) * 100 : 0;
+        const lySales = bm.lySales;
+        const vsLyPct = lySales > 0 ? ((salesTr - lySales) / lySales) * 100 : bm.vsLyPct;
+
+        return {
+          code: bm.code,
+          label: bm.label,
+          ytdSales: salesTr,
+          vsLyPct: vsLyPct,
+          proportPct: proportPct,
+          target: targetTr,
+          vsTargetPct: vsTargetPct,
+          lySales: lySales,
+        };
+      });
+
+      const totalTargetTr = TARGET_BENCHMARK.total.target;
+      const totalVsTargetPct = totalTargetTr > 0 ? (totalSalesTr / totalTargetTr) * 100 : 0;
+      const totalLySales = TARGET_BENCHMARK.total.lySales;
+      const totalVsLyPct = totalLySales > 0 ? ((totalSalesTr - totalLySales) / totalLySales) * 100 : TARGET_BENCHMARK.total.vsLyPct;
+
+      totalRow = {
+        code: "TOTAL",
+        label: "Total",
+        ytdSales: totalSalesTr,
+        vsLyPct: totalVsLyPct,
+        proportPct: 100,
+        target: totalTargetTr,
+        vsTargetPct: totalVsTargetPct,
+        lySales: totalLySales,
+      };
+    }
+
+    // Build Table Body HTML matching user's image exactly
+    const rowsHtml = reportRows
+      .map((r) => {
+        const isNh11 = r.code === "NH11";
+        const isSelected = state.globalCat === r.code;
+        const trCls = [
+          isNh11 ? "row-nh11" : "",
+          isSelected ? "active-cat-row" : "",
+        ].filter(Boolean).join(" ");
+
+        const vsLyCls = r.vsLyPct < 0 ? "target-delta-neg" : "target-delta-pos";
+        const vsLyText = `${r.vsLyPct.toFixed(1)}%`;
+        const vsTargetClamp = Math.min(100, Math.max(0, r.vsTargetPct));
+
+        return `
+        <tr class="${trCls}" data-cat="${r.code}" title="Bấm để lọc theo ${esc(r.label)}">
+          <td><strong>${esc(r.label)}</strong></td>
+          <td class="num">${fmtInt(Math.round(r.ytdSales))}</td>
+          <td class="num ${vsLyCls}">${vsLyText}</td>
+          <td class="num">${Math.round(r.proportPct)}%</td>
+          <td class="num">${fmtInt(Math.round(r.target))}</td>
+          <td class="num">
+            <div class="target-progress-cell">
+              <span class="target-cell-pct">${Math.round(r.vsTargetPct)}%</span>
+              <div class="target-cell-track">
+                <div class="target-cell-bar" style="width: ${vsTargetClamp}%"></div>
+              </div>
+            </div>
+          </td>
+        </tr>`;
+      })
+      .join("");
+
+    const totalVsLyCls = totalRow.vsLyPct < 0 ? "target-delta-neg" : "target-delta-pos";
+    const totalVsTargetClamp = Math.min(100, Math.max(0, totalRow.vsTargetPct));
+    const totalRowHtml = `
+      <tr class="row-total" data-cat="" title="Bấm để xem tất cả Ngành Hàng">
+        <td><strong>${esc(totalRow.label)}</strong></td>
+        <td class="num"><strong>${fmtInt(Math.round(totalRow.ytdSales))}</strong></td>
+        <td class="num ${totalVsLyCls}"><strong>${totalRow.vsLyPct.toFixed(1)}%</strong></td>
+        <td class="num"><strong>100%</strong></td>
+        <td class="num"><strong>${fmtInt(Math.round(totalRow.target))}</strong></td>
+        <td class="num">
+          <div class="target-progress-cell">
+            <span class="target-cell-pct"><strong>${Math.round(totalRow.vsTargetPct)}%</strong></span>
+            <div class="target-cell-track">
+              <div class="target-cell-bar" style="width: ${totalVsTargetClamp}%"></div>
+            </div>
+          </div>
+        </td>
+      </tr>`;
+
+    tbody.innerHTML = rowsHtml + totalRowHtml;
+
+    // Attach click listener on table rows
+    tbody.querySelectorAll("tr[data-cat]").forEach((tr) => {
+      tr.addEventListener("click", () => {
+        const cat = tr.dataset.cat;
+        setGlobalCategory(cat);
+      });
+    });
+
+    // Update KPI Cards
+    const kpiTotalPct = document.getElementById("targetKpiTotalPct");
+    const kpiTotalSub = document.getElementById("targetKpiTotalSub");
+    const kpiTotalBar = document.getElementById("targetKpiTotalBar");
+    if (kpiTotalPct) kpiTotalPct.textContent = `${Math.round(totalRow.vsTargetPct)}%`;
+    if (kpiTotalSub) {
+      const remaining = Math.max(0, totalRow.target - totalRow.ytdSales);
+      kpiTotalSub.textContent = `${fmtInt(Math.round(totalRow.ytdSales))} / ${fmtInt(Math.round(totalRow.target))} Tr VND • Thiếu ${fmtInt(Math.round(remaining))} Tr`;
+    }
+    if (kpiTotalBar) kpiTotalBar.style.width = `${totalVsTargetClamp}%`;
+
+    const nh11Data = reportRows.find((r) => r.code === "NH11") || reportRows[1];
+    const kpiDominantVal = document.getElementById("targetKpiDominantVal");
+    const kpiDominantSub = document.getElementById("targetKpiDominantSub");
+    if (kpiDominantVal && nh11Data) {
+      kpiDominantVal.textContent = `NH11 • ${Math.round(nh11Data.proportPct)}%`;
+    }
+    if (kpiDominantSub && nh11Data) {
+      kpiDominantSub.textContent = `${fmtInt(Math.round(nh11Data.ytdSales))} Tr VND • Đạt ${Math.round(nh11Data.vsTargetPct)}% Target`;
+    }
+
+    // Render Target Chart
+    renderTargetChart(reportRows);
+  }
+
+  function renderTargetChart(reportRows) {
+    if (!charts.targetProgress) return;
+
+    const reversed = [...reportRows].reverse();
+    const catLabels = reversed.map((r) => `${r.code} (${Math.round(r.proportPct)}%)`);
+    const salesData = reversed.map((r) => Math.round(r.ytdSales));
+    const targetData = reversed.map((r) => Math.round(r.target));
+    const completionPct = reversed.map((r) => Math.round(r.vsTargetPct));
+
+    charts.targetProgress.setOption({
+      backgroundColor: "transparent",
+      tooltip: {
+        trigger: "axis",
+        axisPointer: { type: "shadow" },
+        backgroundColor: "#1A1F29",
+        borderColor: "#28303F",
+        textStyle: { color: "#F1F5F9", fontSize: 11 },
+        formatter: (params) => {
+          if (!params || !params.length) return "";
+          const idx = params[0].dataIndex;
+          const r = reversed[idx];
+          return `
+            <div style="font-weight:700;margin-bottom:4px;color:#38BDF8">${esc(r.label)}</div>
+            <div>Doanh số Thực đạt: <strong>${fmtInt(Math.round(r.ytdSales))} Tr VND</strong></div>
+            <div>Kế hoạch Target: <strong>${fmtInt(Math.round(r.target))} Tr VND</strong></div>
+            <div>Tiến độ hoàn thành: <strong style="color:#12D37A">${Math.round(r.vsTargetPct)}%</strong></div>
+            <div>Tăng trưởng Vs LY: <strong style="${r.vsLyPct < 0 ? 'color:#FF4D6D' : 'color:#38BDF8'}">${r.vsLyPct.toFixed(1)}%</strong></div>
+            <div>Tỷ trọng Proport: <strong>${Math.round(r.proportPct)}%</strong></div>
+          `;
+        },
+      },
+      legend: {
+        data: ["Doanh số (Sales)", "Kế hoạch (Target)"],
+        textStyle: { color: "#8492A6", fontSize: 11 },
+        top: 2,
+        right: 8,
+      },
+      grid: {
+        top: 28,
+        left: 8,
+        right: 48,
+        bottom: 4,
+        containLabel: true,
+      },
+      xAxis: {
+        type: "value",
+        axisLabel: {
+          color: "#8492A6",
+          fontSize: 10,
+          formatter: (v) => v >= 1000 ? `${(v / 1000).toFixed(0)}k Tr` : `${v} Tr`,
+        },
+        splitLine: { lineStyle: { color: "rgba(255, 255, 255, 0.06)" } },
+      },
+      yAxis: {
+        type: "category",
+        data: catLabels,
+        axisLabel: { color: "#F1F5F9", fontSize: 11, fontWeight: 600 },
+        axisLine: { lineStyle: { color: "#28303F" } },
+      },
+      series: [
+        {
+          name: "Doanh số (Sales)",
+          type: "bar",
+          barWidth: 14,
+          itemStyle: {
+            color: new echarts.graphic.LinearGradient(0, 0, 1, 0, [
+              { offset: 0, color: "#1D7AFC" },
+              { offset: 1, color: "#12D37A" },
+            ]),
+            borderRadius: [0, 4, 4, 0],
+          },
+          label: {
+            show: true,
+            position: "right",
+            color: "#12D37A",
+            fontSize: 10,
+            fontFamily: "JetBrains Mono",
+            formatter: (p) => `${completionPct[p.dataIndex]}%`,
+          },
+          data: salesData,
+        },
+        {
+          name: "Kế hoạch (Target)",
+          type: "bar",
+          barWidth: 14,
+          itemStyle: {
+            color: "rgba(255, 255, 255, 0.12)",
+            borderColor: "rgba(255, 255, 255, 0.35)",
+            borderWidth: 1,
+            borderRadius: [0, 4, 4, 0],
+          },
+          data: targetData,
+        },
+      ],
+    });
+  }
+
+  function exportTargetCsv() {
+    const isFiltered = state.targetDataSource === "filtered";
+    const headers = [
+      "Ngành Hàng (Category)",
+      "Doanh số YTD (Tr VND)",
+      "Vs Cùng kỳ LY (%)",
+      "Tỷ trọng Proport (%)",
+      "Kế hoạch Target (Tr VND)",
+      "Tiến độ Vs Target (%)",
+    ];
+
+    let rowsData = [];
+    if (!isFiltered) {
+      rowsData = [
+        [TARGET_BENCHMARK.categories["NH06"].label, TARGET_BENCHMARK.categories["NH06"].ytdSales, `${TARGET_BENCHMARK.categories["NH06"].vsLyPct}%`, `${TARGET_BENCHMARK.categories["NH06"].proportPct}%`, TARGET_BENCHMARK.categories["NH06"].target, `${TARGET_BENCHMARK.categories["NH06"].vsTargetPct}%`],
+        [TARGET_BENCHMARK.categories["NH11"].label, TARGET_BENCHMARK.categories["NH11"].ytdSales, `${TARGET_BENCHMARK.categories["NH11"].vsLyPct}%`, `${TARGET_BENCHMARK.categories["NH11"].proportPct}%`, TARGET_BENCHMARK.categories["NH11"].target, `${TARGET_BENCHMARK.categories["NH11"].vsTargetPct}%`],
+        [TARGET_BENCHMARK.categories["NH93"].label, TARGET_BENCHMARK.categories["NH93"].ytdSales, `${TARGET_BENCHMARK.categories["NH93"].vsLyPct}%`, `${TARGET_BENCHMARK.categories["NH93"].proportPct}%`, TARGET_BENCHMARK.categories["NH93"].target, `${TARGET_BENCHMARK.categories["NH93"].vsTargetPct}%`],
+        [TARGET_BENCHMARK.total.label, TARGET_BENCHMARK.total.ytdSales, `${TARGET_BENCHMARK.total.vsLyPct}%`, `${TARGET_BENCHMARK.total.proportPct}%`, TARGET_BENCHMARK.total.target, `${TARGET_BENCHMARK.total.vsTargetPct}%`],
+      ];
+    } else {
+      const rows = getFilteredRows(false);
+      const { lookups } = state.raw || { lookups: { subcats: [] } };
+      const catSales = { NH06: 0, NH11: 0, NH93: 0 };
+      for (let i = 0; i < rows.length; i++) {
+        const r = rows[i];
+        const sc = lookups.subcats[r[C.SUBCAT]] || "";
+        const m = sc.match(/^(NH\d{2})/i);
+        const code = m ? m[1].toUpperCase() : "";
+        if (catSales[code] !== undefined) catSales[code] += r[C.SALES];
+      }
+      const totalSalesTr = (catSales.NH06 + catSales.NH11 + catSales.NH93) / 1e6;
+      ["NH06", "NH11", "NH93"].forEach((code) => {
+        const bm = TARGET_BENCHMARK.categories[code];
+        const sTr = catSales[code] / 1e6;
+        const pPct = totalSalesTr > 0 ? (sTr / totalSalesTr) * 100 : 0;
+        const vtPct = bm.target > 0 ? (sTr / bm.target) * 100 : 0;
+        rowsData.push([bm.label, Math.round(sTr), `${bm.vsLyPct}%`, `${pPct.toFixed(1)}%`, bm.target, `${vtPct.toFixed(1)}%`]);
+      });
+      const totTarget = TARGET_BENCHMARK.total.target;
+      const totVtPct = totTarget > 0 ? (totalSalesTr / totTarget) * 100 : 0;
+      rowsData.push(["Total", Math.round(totalSalesTr), `${TARGET_BENCHMARK.total.vsLyPct}%`, "100%", totTarget, `${totVtPct.toFixed(1)}%`]);
+    }
+
+    downloadCsv(headers, rowsData, `Bao_cao_Doanh_so_Vs_Target_Proport_${new Date().toISOString().slice(0, 10)}.csv`);
+  }
+
+  // =========================================================================
   // 4. TOP SALES SITE CODES ("THE 5 MOST USED SKILLS" STYLE)
   // =========================================================================
   function renderSiteRankList(rows) {
@@ -2445,20 +2829,28 @@
     const maxSales = Math.max(...top.map((d) => Math.abs(d.sales)), 1);
     const maxQty = Math.max(...top.map((d) => Math.abs(d.qty)), 1);
 
+    // Compute total across all sites to calculate % trên tổng số
+    const totalRankSales = list.reduce((acc, d) => acc + (d.sales > 0 ? d.sales : 0), 0);
+    const totalRankQty = list.reduce((acc, d) => acc + (d.qty > 0 ? d.qty : 0), 0);
+    const totalRankMetric = state.rankSort === "qty" ? totalRankQty : totalRankSales;
+    const metricName = state.rankSort === "qty" ? "QTY" : "Doanh số";
+
     container.innerHTML = top
       .map((d, idx) => {
-        const gmClamp = Math.max(0, Math.min(100, d.gm));
-        const ringDeg = Math.round((Math.min(50, gmClamp) / 50) * 360);
+        const itemVal = state.rankSort === "qty" ? d.qty : d.sales;
+        const sharePct = totalRankMetric > 0 ? Math.max(0, (itemVal / totalRankMetric) * 100) : 0;
+        const ringDeg = Math.round(Math.min(100, sharePct) * 3.6);
         const sPct = Math.max(3, Math.min(100, (Math.abs(d.sales) / maxSales) * 100));
         const qPct = Math.max(3, Math.min(100, (Math.abs(d.qty) / maxQty) * 100));
         const title = d.storeName !== d.siteCode ? `${d.siteCode} — ${d.storeName}` : d.siteCode;
         const selectedCls = state.site === d.siteCode ? "selected" : "";
+        const shareLabel = `${sharePct.toFixed(1)}%`;
 
         return `
-        <div class="rank-row ${selectedCls}" data-site="${esc(d.siteCode)}">
+        <div class="rank-row ${selectedCls}" data-site="${esc(d.siteCode)}" title="Click để lọc Site Code: ${esc(d.siteCode)}">
           <div class="rank-idx">${idx + 1}</div>
-          <div class="rank-ring" style="background: conic-gradient(#1D7AFC 0deg ${ringDeg}deg, #2A313D ${ringDeg}deg 360deg)">
-            <div class="rank-ring-inner">${Math.round(gmClamp)}%</div>
+          <div class="rank-ring" style="background: conic-gradient(#1D7AFC 0deg ${ringDeg}deg, #2A313D ${ringDeg}deg 360deg)" title="Tỷ trọng: ${sharePct.toFixed(1)}% trên tổng ${metricName}">
+            <div class="rank-ring-inner">${shareLabel}</div>
           </div>
           <div class="rank-mid">
             <div class="rank-mid-head">

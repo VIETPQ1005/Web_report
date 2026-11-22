@@ -1,0 +1,47 @@
+{
+  "updatedAt": "2026-11-22T20:25:00+07:00",
+  "unit": "Triệu VND",
+  "description": "Báo cáo Kế hoạch Doanh số (Target) và Tỷ trọng (Proport) YTD theo Ngành Hàng",
+  "categories": [
+    {
+      "code": "NH06",
+      "label": "NH06-Thiết bị ngoại vi",
+      "ytdSales": 5593,
+      "vsLyPct": -18.0,
+      "proportPct": 5,
+      "target": 15777,
+      "vsTargetPct": 35,
+      "lySales": 6820.73
+    },
+    {
+      "code": "NH11",
+      "label": "NH11-Phụ kiện",
+      "ytdSales": 95845,
+      "vsLyPct": 27.1,
+      "proportPct": 86,
+      "target": 132421,
+      "vsTargetPct": 72,
+      "lySales": 75409.13
+    },
+    {
+      "code": "NH93",
+      "label": "NH93-Linh kiện sửa chữa",
+      "ytdSales": 10490,
+      "vsLyPct": 39.1,
+      "proportPct": 9,
+      "target": 17668,
+      "vsTargetPct": 59,
+      "lySales": 7541.34
+    }
+  ],
+  "total": {
+    "code": "TOTAL",
+    "label": "Total",
+    "ytdSales": 111927,
+    "vsLyPct": 24.7,
+    "proportPct": 100,
+    "target": 165866,
+    "vsTargetPct": 67,
+    "lySales": 89771.20
+  }
+}

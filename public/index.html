@@ -1082,10 +1082,16 @@
           <div class="panel-block">
             <div class="panel-header">
               <div class="panel-title-group">
-                <h4 class="panel-title">Phân bổ theo Hãng (Brand)</h4>
+                <h4 class="panel-title">Phân bổ theo Hãng (Brand) <span class="badge-blue" id="stBrandMetricBadge">DOANH SỐ</span></h4>
                 <span class="panel-hint">Top 12 hãng — Click để lọc chéo</span>
               </div>
-              <button type="button" class="btn-mini" data-export-chart="storageBrand">PNG</button>
+              <div class="panel-controls">
+                <div class="seg-tabs" id="storageBrandMetricTabs">
+                  <button type="button" class="seg-btn active" data-val="sales">Doanh số</button>
+                  <button type="button" class="seg-btn" data-val="qty">Số lượng</button>
+                </div>
+                <button type="button" class="btn-mini" data-export-chart="storageBrand">PNG</button>
+              </div>
             </div>
             <div id="chartStorageBrand" class="chart-canvas storage-chart-md"></div>
           </div>
@@ -1102,29 +1108,31 @@
           </div>
         </div>
 
-        <!-- Matrix Detail Table: Capacity x Brand -->
+        <!-- Matrix Detail Table: Capacity (Columns) x Brand (Rows) -->
         <div class="panel-block">
           <div class="panel-header">
             <div class="panel-title-group">
-              <h4 class="panel-title">Bảng chi tiết Dung lượng × Hãng</h4>
-              <span class="panel-hint" id="storageTableInfo">-- tổ hợp</span>
+              <h4 class="panel-title">Ma trận Dung lượng × Hãng <span class="badge-blue" id="stTableMetricBadge">DOANH SỐ</span></h4>
+              <span class="panel-hint" id="storageTableInfo">Cột: Dung lượng • Hàng: Brand • Tỷ trọng % nhỏ bên cạnh số liệu</span>
+            </div>
+            <div class="panel-controls">
+              <div class="seg-tabs" id="storageTableMetricTabs">
+                <button type="button" class="seg-btn active" data-val="sales">Doanh số (VND)</button>
+                <button type="button" class="seg-btn" data-val="qty">Số lượng (Qty)</button>
+              </div>
+              <div class="seg-tabs" id="storageTableShareBasisTabs" title="Cách tính tỷ trọng % hiển thị">
+                <button type="button" class="seg-btn active" data-val="col">% Cột (Dung lượng)</button>
+                <button type="button" class="seg-btn" data-val="row">% Hàng (Brand)</button>
+                <button type="button" class="seg-btn" data-val="total">% Toàn bảng</button>
+              </div>
+              <button type="button" class="btn-primary-blue" id="storageTableExportBtn">⬇ Xuất Ma trận CSV</button>
             </div>
           </div>
-          <div class="table-wrap storage-table-wrap">
-            <table class="dark-table">
-              <thead>
-                <tr>
-                  <th>Nhóm</th>
-                  <th>Dung lượng</th>
-                  <th>Hãng (Brand)</th>
-                  <th class="num">Số lượng (Qty)</th>
-                  <th class="num">Doanh số (VND)</th>
-                  <th class="num">Tỷ trọng</th>
-                  <th class="num">ASP (VND/sp)</th>
-                  <th class="num">GM%</th>
-                </tr>
-              </thead>
+          <div class="table-wrap storage-table-wrap storage-matrix-wrap">
+            <table class="dark-table storage-pivot-table">
+              <thead id="storageMatrixHead"></thead>
               <tbody id="storageMatrixBody"></tbody>
+              <tfoot id="storageMatrixFoot"></tfoot>
             </table>
           </div>
         </div>

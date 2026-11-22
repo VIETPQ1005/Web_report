@@ -2374,8 +2374,124 @@ html, body {
 }
 
 .storage-table-wrap {
-  max-height: 280px;
-  overflow-y: auto;
+  max-height: 420px;
+  overflow: auto;
+}
+
+.storage-matrix-wrap {
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  background: #11141B;
+}
+
+.storage-pivot-table {
+  border-collapse: separate;
+  border-spacing: 0;
+  width: 100%;
+  font-size: 11.5px;
+  white-space: nowrap;
+}
+
+.storage-pivot-table th,
+.storage-pivot-table td {
+  padding: 8px 11px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  border-right: 1px solid rgba(255, 255, 255, 0.04);
+}
+
+.storage-pivot-table thead th {
+  position: sticky;
+  top: 0;
+  background: #181D26;
+  z-index: 5;
+  color: #CBD5E1;
+  font-family: var(--font-display);
+  font-weight: 600;
+  border-bottom: 2px solid rgba(29, 122, 252, 0.45);
+  cursor: pointer;
+}
+
+.storage-pivot-table thead th:hover {
+  background: #202735;
+  color: #fff;
+}
+
+.storage-pivot-table .piv-sticky-col {
+  position: sticky;
+  left: 0;
+  background: #15181F;
+  z-index: 3;
+  box-shadow: 2px 0 8px rgba(0, 0, 0, 0.45);
+  min-width: 130px;
+  max-width: 170px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+
+.storage-pivot-table .piv-sticky-col:hover {
+  color: var(--amber);
+}
+
+.storage-pivot-table thead th.piv-sticky-col {
+  z-index: 7;
+  background: #1D232F;
+}
+
+.storage-pivot-table tfoot th.piv-sticky-col {
+  z-index: 6;
+  background: #18202D;
+}
+
+.storage-pivot-table tfoot tr {
+  position: sticky;
+  bottom: 0;
+  background: #151D2A;
+  z-index: 4;
+  border-top: 2px solid rgba(29, 122, 252, 0.55);
+  box-shadow: 0 -3px 10px rgba(0, 0, 0, 0.45);
+}
+
+.storage-pivot-table tfoot th {
+  color: #F1F5F9;
+  font-weight: 700;
+}
+
+.storage-pivot-table .piv-total-col {
+  background: rgba(29, 122, 252, 0.09);
+  font-weight: 700;
+  border-left: 1px solid rgba(29, 122, 252, 0.3);
+}
+
+.storage-pivot-table thead th.piv-total-col {
+  background: rgba(29, 122, 252, 0.22);
+  color: #93C5FD;
+}
+
+.storage-pivot-table tfoot th.piv-total-col {
+  background: rgba(29, 122, 252, 0.3);
+  color: var(--amber);
+}
+
+.piv-cell {
+  display: flex;
+  align-items: baseline;
+  justify-content: flex-end;
+  gap: 5px;
+}
+
+.piv-val {
+  font-family: var(--font-mono);
+  font-weight: 600;
+  color: #F1F5F9;
+}
+
+.piv-pct {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--cyan);
+  opacity: 0.9;
+  font-weight: 500;
 }
 
 @media (max-width: 980px) {

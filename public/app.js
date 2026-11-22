@@ -256,10 +256,15 @@
       open: false,
       group: "all",               // all | OCGN | SSD | HDD | PK_LUU_TRU | USB | Thẻ nhớ
       metric: "sales",            // sales | qty
+      brandMetric: "sales",       // sales | qty
+      tableMetric: "sales",       // sales | qty
+      tableShareBasis: "col",     // col | row | total
       cap: "",
       brand: "",
       priceBand: "",
+      storageMapCache: null,
       lastExport: { headers: [], rows: [], filename: "storage_ocgn_pk_report.csv" },
+      matrixExport: { headers: [], rows: [], filename: "storage_matrix_capacity_brand.csv" },
     },
     // Table controls
     tableTab: "sites",            // sites | matrix | raw
@@ -1312,13 +1317,37 @@
     document.addEventListener("keydown", (e) => {
       if (e.key === "Escape" && state.storage.open) closeStorageReportModal();
     });
+    const syncSegActive = (id, val) => {
+      const el = document.getElementById(id);
+      if (!el) return;
+      el.querySelectorAll(".seg-btn").forEach((b) => {
+        b.classList.toggle("active", b.dataset.val === val);
+      });
+    };
+
     bindSeg("storageGroupTabs", (v) => {
       state.storage.group = v;
       renderStorageReport();
     });
     bindSeg("storageMetricTabs", (v) => {
       state.storage.metric = v;
+      state.storage.brandMetric = v;
+      state.storage.tableMetric = v;
+      syncSegActive("storageBrandMetricTabs", v);
+      syncSegActive("storageTableMetricTabs", v);
       renderStorageReport();
+    });
+    bindSeg("storageBrandMetricTabs", (v) => {
+      state.storage.brandMetric = v;
+      renderStorageBrandChart();
+    });
+    bindSeg("storageTableMetricTabs", (v) => {
+      state.storage.tableMetric = v;
+      renderStorageMatrixTable();
+    });
+    bindSeg("storageTableShareBasisTabs", (v) => {
+      state.storage.tableShareBasis = v;
+      renderStorageMatrixTable();
     });
     document.getElementById("storageResetBtn")?.addEventListener("click", () => {
       state.storage.cap = "";
@@ -1329,6 +1358,10 @@
     document.getElementById("storageExportCsvBtn")?.addEventListener("click", () => {
       const { headers, rows, filename } = state.storage.lastExport;
       if (rows.length) downloadCsv(headers, rows, filename);
+    });
+    document.getElementById("storageTableExportBtn")?.addEventListener("click", () => {
+      const { headers, rows, filename } = state.storage.matrixExport;
+      if (rows && rows.length) downloadCsv(headers, rows, filename);
     });
     bindSeg("tableTabGroup", (v) => {
       state.tableTab = v;
@@ -3127,14 +3160,16 @@
     const capMap = new Map();
     const brandMap = new Map();
     const priceMap = new Map();
-    const matrixMap = new Map();
+    const pivotMap = new Map();
+    const rowTotals = new Map();
+    const colTotals = new Map();
 
     for (let i = 0; i < filtered.length; i++) {
       const r = filtered[i];
       const qty = r[9], sal = r[10], gp = r[11], cnt = r[12] || 1;
       totQty += qty; totSales += sal; totGp += gp; totTx += cnt;
 
-      const capI = r[6], brI = r[7], pbI = r[8], stI = r[5];
+      const capI = r[6], brI = r[7], pbI = r[8];
       let cObj = capMap.get(capI);
       if (!cObj) { cObj = { idx: capI, name: sL.capacities[capI], sales: 0, qty: 0, gp: 0 }; capMap.set(capI, cObj); }
       cObj.sales += sal; cObj.qty += qty; cObj.gp += gp;
@@ -3148,14 +3183,27 @@
       if (!pObj) { pObj = { idx: pbI, name: sL.priceBands[pbI], sales: 0, qty: 0, gp: 0 }; priceMap.set(pbI, pObj); }
       pObj.sales += sal; pObj.qty += qty; pObj.gp += gp;
 
-      const mk = `${stI}|${capI}|${brName}`;
-      let mObj = matrixMap.get(mk);
-      if (!mObj) {
-        mObj = { subType: sL.subTypes[stI], cap: sL.capacities[capI], capIdx: capI, brand: brName, sales: 0, qty: 0, gp: 0 };
-        matrixMap.set(mk, mObj);
-      }
-      mObj.sales += sal; mObj.qty += qty; mObj.gp += gp;
+      // Pivot: Brand (Rows) x Capacity (Columns)
+      let bPivot = pivotMap.get(brName);
+      if (!bPivot) { bPivot = new Map(); pivotMap.set(brName, bPivot); }
+      let cell = bPivot.get(capI);
+      if (!cell) { cell = { sales: 0, qty: 0, gp: 0 }; bPivot.set(capI, cell); }
+      cell.sales += sal; cell.qty += qty; cell.gp += gp;
+
+      let rTot = rowTotals.get(brName);
+      if (!rTot) { rTot = { sales: 0, qty: 0, gp: 0 }; rowTotals.set(brName, rTot); }
+      rTot.sales += sal; rTot.qty += qty; rTot.gp += gp;
+
+      let cTot = colTotals.get(capI);
+      if (!cTot) { cTot = { sales: 0, qty: 0, gp: 0 }; colTotals.set(capI, cTot); }
+      cTot.sales += sal; cTot.qty += qty; cTot.gp += gp;
     }
+
+    st.storageMapCache = {
+      totSales, totQty, totGp, totTx,
+      capMap, brandMap, priceMap, pivotMap, rowTotals, colTotals,
+      grandTotal: { sales: totSales, qty: totQty, gp: totGp },
+    };
 
     const totalMetric = isQty ? totQty : totSales;
     const capList = Array.from(capMap.values()).filter((d) => d.sales !== 0 || d.qty !== 0).sort((a, b) => a.idx - b.idx);
@@ -3218,40 +3266,8 @@
       }, true);
     }
 
-    // Chart 2: Brand (Top 12 Horizontal)
-    if (charts.storageBrand) {
-      const topBrands = brandList.slice(0, 12).reverse();
-      charts.storageBrand.setOption({
-        tooltip: {
-          trigger: "axis",
-          axisPointer: { type: "shadow" },
-          backgroundColor: COLORS.tooltipBg,
-          borderColor: COLORS.tooltipBorder,
-          textStyle: { color: "#F1F5F9" },
-          formatter: (params) => {
-            const d = params[0]?.data;
-            if (!d) return "";
-            const share = totalMetric ? ((d[mKey] / totalMetric) * 100).toFixed(1) : "0.0";
-            return `<div style="font-weight:700;margin-bottom:4px">Hãng: ${esc(d.name)} (${share}%)</div>`
-              + `<div>Doanh số: <b class="mono">${fmtVndFull(d.sales)}</b></div>`
-              + `<div>Số lượng: <b class="mono">${fmtInt(d.qty)}</b></div>`;
-          },
-        },
-        grid: { left: 108, right: 74, top: 12, bottom: 24 },
-        xAxis: { type: "value", axisLabel: { color: COLORS.axisLabel, formatter: fmtAxis }, splitLine: { lineStyle: { color: COLORS.gridLine } } },
-        yAxis: { type: "category", data: topBrands.map((d) => d.name), axisLabel: { color: "#E2E8F0", width: 98, overflow: "truncate", fontSize: 11 } },
-        series: [{
-          type: "bar",
-          barMaxWidth: 18,
-          data: topBrands.map((d) => ({
-            value: Math.round(d[mKey]),
-            ...d,
-            itemStyle: { color: d.name === st.brand ? COLORS.amber : COLORS.emerald, borderRadius: [0, 3, 3, 0] },
-          })),
-          label: { show: true, position: "right", color: "#CBD5E1", fontFamily: "JetBrains Mono", fontSize: 10, formatter: (p) => fmtVal(p.value) },
-        }],
-      }, true);
-    }
+    // Chart 2: Brand (Top 12 Horizontal - with dedicated toggle)
+    renderStorageBrandChart();
 
     // Chart 3: Price Range
     if (charts.storagePrice) {
@@ -3287,45 +3303,248 @@
       }, true);
     }
 
-    // Matrix Detail Table (Capacity x Brand)
-    const matList = Array.from(matrixMap.values()).sort((a, b) => b[mKey] - a[mKey]);
-    setTxt("storageTableInfo", `Hiển thị ${fmtInt(Math.min(matList.length, 80))} / ${fmtInt(matList.length)} tổ hợp (sắp xếp theo ${isQty ? "Số lượng" : "Doanh số"})`);
-    const tbody = document.getElementById("storageMatrixBody");
-    if (tbody) {
-      if (!matList.length) {
-        tbody.innerHTML = `<tr><td colspan="8" style="text-align:center;padding:20px" class="muted">Không có dữ liệu khớp bộ lọc.</td></tr>`;
-      } else {
-        tbody.innerHTML = matList.slice(0, 80).map((d) => {
-          const share = totalMetric ? ((d[mKey] / totalMetric) * 100).toFixed(1) : "0.0";
-          const dAsp = d.qty ? d.sales / d.qty : 0;
-          const dGm = d.sales ? (d.gp / d.sales) * 100 : 0;
-          return `<tr>
-            <td><span class="badge-blue">${esc(d.subType)}</span></td>
-            <td class="mono"><strong>${esc(d.cap)}</strong></td>
-            <td>${esc(d.brand)}</td>
-            <td class="num mono">${fmtInt(d.qty)}</td>
-            <td class="num mono">${fmtVndFull(d.sales)}</td>
-            <td class="num mono">${share}%</td>
-            <td class="num mono">${fmtCompactVnd(dAsp)}</td>
-            <td class="num mono">${dGm.toFixed(1)}%</td>
-          </tr>`;
-        }).join("");
-      }
-    }
+    // Matrix Detail Table (Capacity Columns x Brand Rows)
+    renderStorageMatrixTable();
 
     st.lastExport = {
       headers: ["Nhóm", "Dung lượng", "Hãng", "Số lượng (Qty)", "Doanh số (VND)", "Tỷ trọng (%)", "ASP (VND/sp)", "GM (%)"],
-      rows: matList.map((d) => [
-        d.subType,
-        d.cap,
-        d.brand,
-        d.qty,
-        Math.round(d.sales),
-        totalMetric ? ((d[mKey] / totalMetric) * 100).toFixed(2) : "0.00",
-        d.qty ? Math.round(d.sales / d.qty) : 0,
-        d.sales ? ((d.gp / d.sales) * 100).toFixed(2) : "0.00",
-      ]),
+      rows: Array.from(pivotMap.entries()).flatMap(([brand, bMap]) =>
+        Array.from(bMap.entries()).map(([cIdx, cell]) => [
+          st.group,
+          sL.capacities[cIdx],
+          brand,
+          cell.qty,
+          Math.round(cell.sales),
+          totalMetric ? ((cell[mKey] / totalMetric) * 100).toFixed(2) : "0.00",
+          cell.qty ? Math.round(cell.sales / cell.qty) : 0,
+          cell.sales ? ((cell.gp / cell.sales) * 100).toFixed(2) : "0.00",
+        ])
+      ),
       filename: `bao_cao_dung_luong_brand_${st.group}_${st.metric}.csv`,
+    };
+  }
+
+  function renderStorageBrandChart() {
+    if (!charts.storageBrand) return;
+    const { storageMapCache } = state.storage;
+    if (!storageMapCache) return;
+
+    const st = state.storage;
+    const isBrandQty = st.brandMetric === "qty";
+    const bKey = isBrandQty ? "qty" : "sales";
+    const brandList = Array.from(storageMapCache.brandMap.values())
+      .filter((d) => d.sales !== 0 || d.qty !== 0)
+      .sort((a, b) => b[bKey] - a[bKey]);
+
+    const totalVal = isBrandQty ? storageMapCache.totQty : storageMapCache.totSales;
+    const badgeEl = document.getElementById("stBrandMetricBadge");
+    if (badgeEl) badgeEl.textContent = isBrandQty ? "SỐ LƯỢNG (QTY)" : "DOANH SỐ (VND)";
+
+    const topBrands = brandList.slice(0, 12).reverse();
+    charts.storageBrand.setOption({
+      tooltip: {
+        trigger: "axis",
+        axisPointer: { type: "shadow" },
+        backgroundColor: COLORS.tooltipBg,
+        borderColor: COLORS.tooltipBorder,
+        textStyle: { color: "#F1F5F9" },
+        formatter: (params) => {
+          const d = params[0]?.data;
+          if (!d) return "";
+          const share = totalVal ? ((d[bKey] / totalVal) * 100).toFixed(1) : "0.0";
+          const asp = d.qty ? d.sales / d.qty : 0;
+          return `<div style="font-weight:700;margin-bottom:4px">Hãng: ${esc(d.name)} (${share}%)</div>`
+            + `<div>Doanh số: <b class="mono">${fmtVndFull(d.sales)}</b></div>`
+            + `<div>Số lượng: <b class="mono">${fmtInt(d.qty)}</b></div>`
+            + `<div>Đơn giá TB: <b class="mono">${fmtCompactVnd(asp)}</b></div>`;
+        },
+      },
+      grid: { left: 110, right: 78, top: 12, bottom: 24 },
+      xAxis: {
+        type: "value",
+        axisLabel: { color: COLORS.axisLabel, formatter: (v) => (isBrandQty ? fmtInt(v) : fmtAxisVnd(v)) },
+        splitLine: { lineStyle: { color: COLORS.gridLine } },
+      },
+      yAxis: { type: "category", data: topBrands.map((d) => d.name), axisLabel: { color: "#E2E8F0", width: 100, overflow: "truncate", fontSize: 11 } },
+      series: [{
+        name: isBrandQty ? "Qty" : "Sales",
+        type: "bar",
+        barMaxWidth: 18,
+        data: topBrands.map((d) => ({
+          value: Math.round(d[bKey]),
+          ...d,
+          itemStyle: {
+            color: d.name === st.brand ? COLORS.amber : (isBrandQty ? COLORS.cyan : COLORS.emerald),
+            borderRadius: [0, 3, 3, 0],
+          },
+        })),
+        label: {
+          show: true,
+          position: "right",
+          color: "#CBD5E1",
+          fontFamily: "JetBrains Mono",
+          fontSize: 10,
+          formatter: (p) => (isBrandQty ? fmtInt(p.value) : fmtCompactVnd(p.value)),
+        },
+      }],
+    }, true);
+  }
+
+  function renderStorageMatrixTable() {
+    const { storageMapCache } = state.storage;
+    if (!storageMapCache || !state.raw?.storageReport?.lookups) return;
+
+    const sL = state.raw.storageReport.lookups;
+    const st = state.storage;
+    const isTableQty = st.tableMetric === "qty";
+    const tmKey = isTableQty ? "qty" : "sales";
+    const basis = st.tableShareBasis || "col";
+
+    const badgeEl = document.getElementById("stTableMetricBadge");
+    if (badgeEl) badgeEl.textContent = isTableQty ? "SỐ LƯỢNG (QTY)" : "DOANH SỐ (VND)";
+
+    const fmtVal = (v) => (isTableQty ? fmtInt(v) : fmtCompactVnd(v));
+
+    const { pivotMap, grandTotal, rowTotals, colTotals } = storageMapCache;
+
+    // Active capacities sorted in order
+    const activeCaps = sL.capacities
+      .map((name, idx) => ({ name, idx, obj: colTotals.get(idx) }))
+      .filter((c) => c.obj && (c.obj.sales !== 0 || c.obj.qty !== 0));
+
+    // Brands sorted descending by their row total in the chosen metric
+    const sortedBrands = Array.from(rowTotals.entries())
+      .filter(([b, tot]) => tot.sales !== 0 || tot.qty !== 0)
+      .sort((a, b) => b[1][tmKey] - a[1][tmKey]);
+
+    const infoEl = document.getElementById("storageTableInfo");
+    if (infoEl) {
+      infoEl.textContent = `Ma trận ${sortedBrands.length} Hãng × ${activeCaps.length} Mức dung lượng • Click Hãng hoặc Dung lượng để lọc chéo`;
+    }
+
+    // 1. Build <thead>
+    const thead = document.getElementById("storageMatrixHead");
+    if (thead) {
+      let hHtml = `<tr><th class="piv-sticky-col">Hãng (Brand)</th>`;
+      activeCaps.forEach((c) => {
+        const isAct = st.cap === c.name ? "style='color:var(--amber)'" : "";
+        hHtml += `<th class="num piv-cap-col" data-cap="${esc(c.name)}" ${isAct} title="Click để lọc Dung lượng ${esc(c.name)}">${esc(c.name)}</th>`;
+      });
+      hHtml += `<th class="num piv-total-col">TỔNG CỘNG</th></tr>`;
+      thead.innerHTML = hHtml;
+    }
+
+    // 2. Build <tbody>
+    const tbody = document.getElementById("storageMatrixBody");
+    const matrixExportRows = [];
+    if (tbody) {
+      if (!sortedBrands.length) {
+        tbody.innerHTML = `<tr><td colspan="${activeCaps.length + 2}" style="text-align:center;padding:24px" class="muted">Không có dữ liệu khớp bộ lọc.</td></tr>`;
+      } else {
+        let bHtml = "";
+        sortedBrands.forEach(([brand, rTot]) => {
+          const bMap = pivotMap.get(brand);
+          const isBrandAct = st.brand === brand ? "style='color:var(--amber)'" : "";
+          const rowVal = rTot[tmKey];
+          const rowPct = grandTotal[tmKey] ? ((rowVal / grandTotal[tmKey]) * 100).toFixed(1) : "0.0";
+          const expRow = [brand];
+
+          bHtml += `<tr><td class="piv-sticky-col" data-brand="${esc(brand)}" ${isBrandAct} title="Click để lọc Hãng ${esc(brand)}"><strong>${esc(brand)}</strong></td>`;
+
+          activeCaps.forEach((c) => {
+            const cell = bMap ? bMap.get(c.idx) : null;
+            if (!cell || cell[tmKey] === 0) {
+              bHtml += `<td class="num muted">-</td>`;
+              expRow.push(0);
+            } else {
+              const cVal = cell[tmKey];
+              let sharePct = "0.0";
+              if (basis === "row") {
+                sharePct = rowVal ? ((cVal / rowVal) * 100).toFixed(1) : "0.0";
+              } else if (basis === "total") {
+                sharePct = grandTotal[tmKey] ? ((cVal / grandTotal[tmKey]) * 100).toFixed(1) : "0.0";
+              } else {
+                // col
+                const colVal = colTotals.get(c.idx)?.[tmKey] || 0;
+                sharePct = colVal ? ((cVal / colVal) * 100).toFixed(1) : "0.0";
+              }
+              bHtml += `<td class="num">
+                <div class="piv-cell">
+                  <span class="piv-val">${fmtVal(cVal)}</span>
+                  <span class="piv-pct">(${sharePct}%)</span>
+                </div>
+              </td>`;
+              expRow.push(cVal);
+            }
+          });
+
+          bHtml += `<td class="num piv-total-col">
+            <div class="piv-cell">
+              <span class="piv-val">${fmtVal(rowVal)}</span>
+              <span class="piv-pct">(${rowPct}%)</span>
+            </div>
+          </td></tr>`;
+
+          expRow.push(rowVal);
+          matrixExportRows.push(expRow);
+        });
+        tbody.innerHTML = bHtml;
+      }
+    }
+
+    // 3. Build <tfoot>
+    const tfoot = document.getElementById("storageMatrixFoot");
+    if (tfoot) {
+      if (sortedBrands.length) {
+        let fHtml = `<tr><th class="piv-sticky-col">TỔNG CỘNG</th>`;
+        const footExp = ["TỔNG CỘNG"];
+        activeCaps.forEach((c) => {
+          const cTot = colTotals.get(c.idx);
+          const cVal = cTot ? cTot[tmKey] : 0;
+          const cPct = grandTotal[tmKey] ? ((cVal / grandTotal[tmKey]) * 100).toFixed(1) : "0.0";
+          fHtml += `<th class="num piv-cap-col">
+            <div class="piv-cell">
+              <span class="piv-val">${fmtVal(cVal)}</span>
+              <span class="piv-pct">(${cPct}%)</span>
+            </div>
+          </th>`;
+          footExp.push(cVal);
+        });
+        const gVal = grandTotal[tmKey];
+        fHtml += `<th class="num piv-total-col">
+          <div class="piv-cell">
+            <span class="piv-val">${fmtVal(gVal)}</span>
+            <span class="piv-pct">(100%)</span>
+          </div>
+        </th></tr>`;
+        footExp.push(gVal);
+        matrixExportRows.push(footExp);
+        tfoot.innerHTML = fHtml;
+      } else {
+        tfoot.innerHTML = "";
+      }
+    }
+
+    // Attach click listeners on table
+    thead?.querySelectorAll("th[data-cap]").forEach((th) => {
+      th.addEventListener("click", () => {
+        const c = th.dataset.cap;
+        st.cap = st.cap === c ? "" : c;
+        renderStorageReport();
+      });
+    });
+    tbody?.querySelectorAll("td[data-brand]").forEach((td) => {
+      td.addEventListener("click", () => {
+        const b = td.dataset.brand;
+        st.brand = st.brand === b ? "" : b;
+        renderStorageReport();
+      });
+    });
+
+    st.matrixExport = {
+      headers: ["Hãng (Brand)", ...activeCaps.map((c) => c.name), "Tổng cộng"],
+      rows: matrixExportRows,
+      filename: `ma_tran_dung_luong_hang_${st.group}_${st.tableMetric}.csv`,
     };
   }
 

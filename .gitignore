@@ -4,9 +4,10 @@ node_modules/
 __pycache__/
 *.pyc
 
-# Raw Excel data (keep private if pushing to a public repo)
+# Raw Excel data & local frozen cache (keep private if pushing to a public repo)
 data/*.xlsx
 ~$*.xlsx
+data/.sales_frozen_cache.json.gz
 
 # OS & Editor files
 .DS_Store

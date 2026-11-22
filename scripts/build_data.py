@@ -15,6 +15,7 @@ Outputs:
 
 import argparse
 import datetime
+import gzip
 import json
 import math
 import os
@@ -42,6 +43,13 @@ OUT_DIR = BASE_DIR / "public" / "data"
 OUT_MAIN = OUT_DIR / "report_data.json"
 OUT_MASTER = OUT_DIR / "lookup_master.json"
 OUT_SERIALS = OUT_DIR / "lookup_serials.json"
+
+# Frozen historical Sales lock: rows 2..478302 in Sale_Revenue_Detail.xlsx are immutable
+# and cached in data/.sales_frozen_cache.json.gz so future updates never re-parse them.
+FROZEN_SALES_FILENAME = "Sale_Revenue_Detail.xlsx"
+FROZEN_SALES_START_ROW = 2
+FROZEN_SALES_END_ROW = 478302
+FROZEN_SALES_CACHE = DATA_DIR / ".sales_frozen_cache.json.gz"
 
 CAT_LABELS = {
     "NH11": "Phụ kiện",
@@ -174,8 +182,11 @@ def normalize_subcat2(raw_full: str = "", code: str = "", name: str = "", cat3_c
     return c or n or "Khác"
 
 
-def stream_xlsx_rows(xlsx_path: Path):
-    """Generator yielding (headers, row_vals) via streaming XML iterparse."""
+def stream_xlsx_rows(xlsx_path: Path, min_row: int = 2, max_row: int | None = None):
+    """Generator yielding (headers, row_vals) via streaming XML iterparse.
+    When min_row > 2, skips parsing cells for rows 2..(min_row-1) for fast incremental reads.
+    When max_row is set, stops immediately after Excel row max_row.
+    """
     with zipfile.ZipFile(xlsx_path, "r") as z:
         shared: list[str] = []
         if "xl/sharedStrings.xml" in z.namelist():
@@ -189,9 +200,22 @@ def stream_xlsx_rows(xlsx_path: Path):
         for sf in sheets:
             with z.open(sf) as f:
                 headers = None
+                seq_row = 0
                 for _, elem in ET.iterparse(f, events=("end",)):
                     if elem.tag != TAG_ROW:
                         continue
+                    seq_row += 1
+                    r_attr = elem.attrib.get("r")
+                    row_num = int(r_attr) if (r_attr and r_attr.isdigit()) else seq_row
+
+                    if headers is not None:
+                        if row_num < min_row:
+                            elem.clear()
+                            continue
+                        if max_row is not None and row_num > max_row:
+                            elem.clear()
+                            break
+
                     vals = []
                     for c in elem:
                         if c.tag != TAG_C:
@@ -273,16 +297,19 @@ def detect_dataset_kind(headers: list[str], filename: str) -> str:
     return "sales"
 
 
-def build():
+def build(rebuild_sales_cache: bool = False):
     t_start = time.time()
     xlsx_files = sorted([p for p in DATA_DIR.glob("*.xlsx") if not p.name.startswith("~$")])
-    if not xlsx_files:
+    if not xlsx_files and not FROZEN_SALES_CACHE.exists():
         print(f"ERROR: No .xlsx files found in {DATA_DIR}", file=sys.stderr)
         sys.exit(1)
 
-    # Phase 1: Classify files by peeking header row
+    # Phase 1: Classify files by peeking header row (skip opening frozen 84MB Sale_Revenue_Detail.xlsx!)
     files_by_kind: dict[str, list[Path]] = defaultdict(list)
     for f in xlsx_files:
+        if f.name.lower() == FROZEN_SALES_FILENAME.lower():
+            files_by_kind["sales"].append(f)
+            continue
         for tag, payload in stream_xlsx_rows(f):
             if tag == "__HEADERS__":
                 kind = detect_dataset_kind(payload, f.name)
@@ -412,10 +439,12 @@ def build():
     bulk_qty = 0
     all_months_set = set()
 
-    for f in files_by_kind["sales"]:
+    def ingest_sales_file(f: Path, min_row: int = 2, max_row: int | None = None) -> int:
+        nonlocal tot_sales, tot_qty, tot_cogs, tot_gp, tot_rows
+        nonlocal min_date, max_date, bulk_count, bulk_sales, bulk_qty
         hmap = {}
         rc = 0
-        for tag, vals in stream_xlsx_rows(f):
+        for tag, vals in stream_xlsx_rows(f, min_row=min_row, max_row=max_row):
             if tag == "__HEADERS__":
                 hmap = {h.lower(): i for i, h in enumerate(vals) if h}
                 continue
@@ -499,8 +528,119 @@ def build():
                 sy[1] += qty
                 sy[2] += gp
                 sy[3] += 1
+        return rc
 
-        sales_sources.append({"file": f.name, "sizeBytes": f.stat().st_size, "rows": rc, "kind": "sales"})
+    frozen_file = next((f for f in files_by_kind["sales"] if f.name.lower() == FROZEN_SALES_FILENAME.lower()), None)
+    extra_sales_files = [f for f in files_by_kind["sales"] if f is not frozen_file]
+
+    if FROZEN_SALES_CACHE.exists() and not rebuild_sales_cache:
+        t_cache = time.time()
+        with gzip.open(FROZEN_SALES_CACHE, "rt", encoding="utf-8") as cf:
+            fc = json.load(cf)
+        for k in s_lookups:
+            s_lookups[k] = list(fc["lookups"][k])
+            s_maps[k] = {v: i for i, v in enumerate(s_lookups[k])}
+        for row in fc["monthlyCube"]:
+            monthly_cube[tuple(row[:9])] = list(row[9:])
+        for row in fc["dailyCube"]:
+            daily_cube[tuple(row[:7])] = list(row[7:])
+        for sku, vals in fc["skuYtdSales"].items():
+            sku_ytd_sales[sku] = list(vals)
+        site_directory.update(fc["siteDirectory"])
+        tots = fc["totals"]
+        tot_sales = tots["tot_sales"]
+        tot_qty = tots["tot_qty"]
+        tot_cogs = tots["tot_cogs"]
+        tot_gp = tots["tot_gp"]
+        tot_rows = tots["tot_rows"]
+        min_date = datetime.date.fromisoformat(tots["min_date"]) if tots["min_date"] else None
+        max_date = datetime.date.fromisoformat(tots["max_date"]) if tots["max_date"] else None
+        bulk_count = tots["bulk_count"]
+        bulk_sales = tots["bulk_sales"]
+        bulk_qty = tots["bulk_qty"]
+        all_months_set.update(tots["all_months"])
+
+        cached_src = fc.get("sourceMeta", {})
+        sales_sources.append({
+            "file": cached_src.get("file", FROZEN_SALES_FILENAME),
+            "sizeBytes": cached_src.get("sizeBytes", 0),
+            "rows": tot_rows,
+            "kind": "sales",
+            "frozenRange": f"{fc.get('frozenStartRow', FROZEN_SALES_START_ROW)}-{fc.get('frozenEndRow', FROZEN_SALES_END_ROW)}",
+        })
+        print(
+            f"[2/6 SALES]     LOCKED CACHE HIT ({time.time() - t_cache:.2f}s): "
+            f"rows {FROZEN_SALES_START_ROW}-{FROZEN_SALES_END_ROW:,} ({tot_rows:,} rows)"
+        )
+        # Only read Sale_Revenue_Detail.xlsx if it was modified after being locked, and ONLY rows >= 478,303!
+        if frozen_file is not None:
+            st = frozen_file.stat()
+            file_changed = (
+                st.st_size != cached_src.get("sizeBytes")
+                or int(st.st_mtime) != cached_src.get("mtime")
+            )
+            if file_changed:
+                new_rc = ingest_sales_file(frozen_file, min_row=FROZEN_SALES_END_ROW + 1)
+                if new_rc > 0:
+                    sales_sources.append({
+                        "file": f"{frozen_file.name} (rows {FROZEN_SALES_END_ROW + 1}+)",
+                        "sizeBytes": st.st_size,
+                        "rows": new_rc,
+                        "kind": "sales_incremental",
+                    })
+                    print(f"[2/6 SALES]     + Merged {new_rc:,} new rows (row {FROZEN_SALES_END_ROW + 1:,}+) from {frozen_file.name}")
+    elif frozen_file is not None:
+        # Build & lock frozen snapshot for rows 2..478302 once
+        frozen_rc = ingest_sales_file(frozen_file, min_row=FROZEN_SALES_START_ROW, max_row=FROZEN_SALES_END_ROW)
+        st = frozen_file.stat()
+        frozen_payload = {
+            "version": 1,
+            "frozenAt": datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00", "Z"),
+            "frozenStartRow": FROZEN_SALES_START_ROW,
+            "frozenEndRow": FROZEN_SALES_END_ROW,
+            "sourceMeta": {
+                "file": frozen_file.name,
+                "sizeBytes": st.st_size,
+                "mtime": int(st.st_mtime),
+            },
+            "lookups": s_lookups,
+            "monthlyCube": [list(k) + v for k, v in monthly_cube.items()],
+            "dailyCube": [list(k) + v for k, v in daily_cube.items()],
+            "skuYtdSales": dict(sku_ytd_sales),
+            "siteDirectory": site_directory,
+            "totals": {
+                "tot_sales": tot_sales,
+                "tot_qty": tot_qty,
+                "tot_cogs": tot_cogs,
+                "tot_gp": tot_gp,
+                "tot_rows": tot_rows,
+                "min_date": min_date.isoformat() if min_date else None,
+                "max_date": max_date.isoformat() if max_date else None,
+                "bulk_count": bulk_count,
+                "bulk_sales": bulk_sales,
+                "bulk_qty": bulk_qty,
+                "all_months": sorted(all_months_set),
+            },
+        }
+        with gzip.open(FROZEN_SALES_CACHE, "wt", encoding="utf-8", compresslevel=6) as cf:
+            json.dump(frozen_payload, cf, ensure_ascii=False, separators=(",", ":"))
+        sales_sources.append({
+            "file": frozen_file.name,
+            "sizeBytes": st.st_size,
+            "rows": frozen_rc,
+            "kind": "sales",
+            "frozenRange": f"{FROZEN_SALES_START_ROW}-{FROZEN_SALES_END_ROW}",
+        })
+        print(
+            f"[2/6 SALES]     LOCKED & SAVED CACHE -> {FROZEN_SALES_CACHE.name} "
+            f"({FROZEN_SALES_CACHE.stat().st_size / 1024:,.1f} KB | rows {FROZEN_SALES_START_ROW}-{FROZEN_SALES_END_ROW:,})"
+        )
+
+    # Always merge any additional incremental sales files (e.g. Sale_Revenue_Detail_New.xlsx)
+    for f in extra_sales_files:
+        rc = ingest_sales_file(f, min_row=2)
+        sales_sources.append({"file": f.name, "sizeBytes": f.stat().st_size, "rows": rc, "kind": "sales_incremental"})
+        print(f"[2/6 SALES]     + Merged {rc:,} incremental rows from {f.name}")
 
     sorted_months = sorted(all_months_set)
     m_map = {m: i for i, m in enumerate(sorted_months)}
@@ -1152,7 +1292,8 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Build Star-Schema Sales + Inventory + Lazy Lookup Shards from data/*.xlsx")
     parser.add_argument("--push-url", default="", help="Optional Netlify site URL to push report_data.json live")
     parser.add_argument("--key", default=os.environ.get("UPDATE_DATA_KEY", ""), help="Optional UPDATE_DATA_KEY passcode")
+    parser.add_argument("--rebuild-sales-cache", action="store_true", help="Force re-reading rows 2..478302 of Sale_Revenue_Detail.xlsx to recreate frozen cache")
     args = parser.parse_args()
-    data_str = build()
+    data_str = build(rebuild_sales_cache=args.rebuild_sales_cache)
     if args.push_url:
         push_live(args.push_url, data_str, args.key)

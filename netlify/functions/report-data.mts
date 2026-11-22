@@ -38,7 +38,11 @@ interface ReportPayload {
     skus: string[];
   };
   siteDirectory: Record<string, unknown>;
-  rows: unknown[][];
+  rows?: unknown[][];
+  salesCube?: unknown[][];
+  salesDaily?: unknown[][];
+  schemaVersion?: number;
+  taxonomy?: unknown;
   inventory?: {
     meta?: {
       rowCount?: number;
@@ -51,9 +55,11 @@ interface ReportPayload {
     rows?: unknown[][];
   };
   masterProducts?: { meta?: { rowCount?: number }; rows?: unknown[][] };
+  masterSummary?: { meta?: { rowCount?: number }; rows?: unknown[][] };
   invSkuLevel?: { meta?: { rowCount?: number }; rows?: unknown[][] };
   invBranchLevel?: { meta?: { rowCount?: number }; rows?: unknown[][] };
   invSerials?: { meta?: { rowCount?: number }; rows?: unknown[][] };
+  invSerialCube?: { meta?: { totalSerials?: number; cubeRows?: number }; rows?: unknown[][] };
 }
 
 function getReportStore(context: Context) {
@@ -111,13 +117,11 @@ function validatePayload(data: unknown): { valid: boolean; error?: string } {
   }
   const reqLookups = [
     "sites",
-    "stores",
     "regions",
     "channels",
     "subcats",
     "brands",
     "orderTypes",
-    "skus",
   ] as const;
   for (const k of reqLookups) {
     if (!Array.isArray(p.lookups[k])) {
@@ -127,12 +131,10 @@ function validatePayload(data: unknown): { valid: boolean; error?: string } {
   if (!p.siteDirectory || typeof p.siteDirectory !== "object") {
     return { valid: false, error: "Thiếu siteDirectory." };
   }
-  if (!Array.isArray(p.rows) || p.rows.length === 0) {
-    return { valid: false, error: "Dữ liệu rows rỗng — cần ít nhất 1 giao dịch hợp lệ." };
-  }
-  const firstRow = p.rows[0];
-  if (!Array.isArray(firstRow) || firstRow.length < 15) {
-    return { valid: false, error: "Cấu trúc dòng dữ liệu không khớp 15 cột chuẩn." };
+  const hasCube = Array.isArray(p.salesCube) && p.salesCube.length > 0;
+  const hasRows = Array.isArray(p.rows) && p.rows.length > 0;
+  if (!hasCube && !hasRows) {
+    return { valid: false, error: "Dữ liệu salesCube/rows rỗng — cần ít nhất 1 giao dịch hợp lệ." };
   }
   return { valid: true };
 }
@@ -236,10 +238,10 @@ export default async (req: Request, context: Context) => {
 
       const metadata = {
         updatedAt,
-        rowCount: parsed.rows.length,
+        rowCount: parsed.meta.rowCount || (parsed.salesCube?.length ?? parsed.rows?.length ?? 0),
         inventoryRows: Array.isArray(parsed.inventory?.rows) ? parsed.inventory.rows.length : 0,
-        serialRows: Array.isArray(parsed.invSerials?.rows) ? parsed.invSerials.rows.length : 0,
-        masterRows: Array.isArray(parsed.masterProducts?.rows) ? parsed.masterProducts.rows.length : 0,
+        serialRows: parsed.invSerialCube?.meta?.totalSerials ?? (Array.isArray(parsed.invSerials?.rows) ? parsed.invSerials.rows.length : 0),
+        masterRows: parsed.masterSummary?.meta?.rowCount ?? (Array.isArray(parsed.masterProducts?.rows) ? parsed.masterProducts.rows.length : 0),
         dateMin: String(parsed.meta.dateMin || ""),
         dateMax: String(parsed.meta.dateMax || ""),
         sources: sourceNames || "Uploaded Excel",

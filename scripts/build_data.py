@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
 r"""
-Unified ETL Pipeline: Read all .xlsx files in D:\Project_AI\Website\data,
-auto-detect all 7 datasets:
-  1. Sale_Revenue_Detail      -> payload (root sales)
-  2. Inventory_Details        -> payload.inventory (BIN-level inventory)
-  3. Inventory_SKU_Level      -> payload.invSkuLevel (SKU 7D/30D/90D/180D velocity)
-  4. Inventory_Branch_Level   -> payload.invBranchLevel (SKU x Site velocity)
-  5. Bad Stock by Serial      -> merged into payload.invSerials + payload.badStockMeta
-  6. Inventory Serial Details -> payload.invSerials (Serial-level stock + aging + bad stock)
-  7. Master Product           -> payload.masterProducts (4,068 SKUs catalog, Range, Purchase status, prices)
+Enterprise Streaming ETL Pipeline for CYBERPULSE BI Command Dashboard.
+Streams all 7 .xlsx files in D:\Project_AI\Website\data using stdlib zipfile + xml.etree.ElementTree.iterparse
+(handles 84MB+ Excel files with ~500K rows in low RAM, zero external dependencies).
 
-Zero external Python dependencies (uses stdlib zipfile + xml.etree.ElementTree).
+Outputs:
+  1. public/data/report_data.json    — Compact Star-Schema Cube for fast initial dashboard load
+                                       (Sales monthly/site/region/cat/subcat/brand cube + daily trend cube,
+                                        Inventory BIN details, Serial+BadStock cube, SKU Level, Branch Level,
+                                        Master Product summary, Category/Subcat2 taxonomy).
+  2. public/data/lookup_master.json  — Lazy-loaded full catalog (17,118+ SKUs + YTD Sales per SKU) for 360° Search.
+  3. public/data/lookup_serials.json — Lazy-loaded full serial ledger (40,726+ Serials joined with Bad Stock).
 """
 
 import argparse
@@ -20,17 +20,63 @@ import math
 import os
 import re
 import sys
+import time
 import urllib.error
 import urllib.request
 import zipfile
 import xml.etree.ElementTree as ET
+from collections import defaultdict
 from pathlib import Path
 
-NS = {"main": "http://schemas.openxmlformats.org/spreadsheetml/2006/main"}
+NS_URI = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
+TAG_ROW = f"{{{NS_URI}}}row"
+TAG_C = f"{{{NS_URI}}}c"
+TAG_V = f"{{{NS_URI}}}v"
+TAG_IS = f"{{{NS_URI}}}is"
+TAG_T = f"{{{NS_URI}}}t"
+TAG_SI = f"{{{NS_URI}}}si"
+
 BASE_DIR = Path(__file__).resolve().parent.parent
 DATA_DIR = BASE_DIR / "data"
-OUT_FILE = BASE_DIR / "public" / "data" / "report_data.json"
-OUT_JS_FILE = BASE_DIR / "public" / "data" / "report_data.js"
+OUT_DIR = BASE_DIR / "public" / "data"
+OUT_MAIN = OUT_DIR / "report_data.json"
+OUT_MASTER = OUT_DIR / "lookup_master.json"
+OUT_SERIALS = OUT_DIR / "lookup_serials.json"
+
+CAT_LABELS = {
+    "NH11": "Phụ kiện",
+    "NH06": "Thiết bị ngoại vi",
+    "NH93": "Linh kiện sửa chữa",
+    "NH03": "Linh kiện máy tính",
+    "NH10": "Giải trí & KTS",
+    "NH07": "Thiết bị văn phòng",
+}
+
+AGING_LABELS = [
+    ("0-30", lambda d: 0 <= d <= 30),
+    ("31-60", lambda d: 31 <= d <= 60),
+    ("61-90", lambda d: 61 <= d <= 90),
+    ("91-180", lambda d: 91 <= d <= 180),
+    ("181-365", lambda d: 181 <= d <= 365),
+    ("365+", lambda d: d > 365),
+    ("unknown", lambda d: d < 0),
+]
+
+
+def aging_bucket_idx(days: int) -> int:
+    if days < 0:
+        return 6
+    if days <= 30:
+        return 0
+    if days <= 60:
+        return 1
+    if days <= 90:
+        return 2
+    if days <= 180:
+        return 3
+    if days <= 365:
+        return 4
+    return 5
 
 
 def col_letters_to_index(col_str: str) -> int:
@@ -40,24 +86,33 @@ def col_letters_to_index(col_str: str) -> int:
     return idx - 1
 
 
+_DATE_CACHE: dict[str, datetime.date | None] = {}
+_EXCEL_EPOCH = datetime.date(1899, 12, 30)
+
+
 def parse_excel_date(raw_val) -> datetime.date | None:
     if raw_val is None:
         return None
     s = str(raw_val).strip()
     if not s:
         return None
+    if s in _DATE_CACHE:
+        return _DATE_CACHE[s]
+    res = None
     try:
         num = float(s)
         if 30000 <= num <= 70000:
-            return datetime.date(1899, 12, 30) + datetime.timedelta(days=int(num))
+            res = _EXCEL_EPOCH + datetime.timedelta(days=int(num))
     except ValueError:
-        pass
-    for fmt in ("%Y-%m-%d", "%d.%m.%y", "%d.%m.%Y", "%d/%m/%Y", "%m/%d/%Y"):
-        try:
-            return datetime.datetime.strptime(s, fmt).date()
-        except ValueError:
-            continue
-    return None
+        for fmt in ("%Y-%m-%d", "%d.%m.%y", "%d.%m.%Y", "%d/%m/%Y", "%m/%d/%Y"):
+            try:
+                res = datetime.datetime.strptime(s, fmt).date()
+                break
+            except ValueError:
+                continue
+    if len(_DATE_CACHE) < 50000:
+        _DATE_CACHE[s] = res
+    return res
 
 
 def parse_float(val, default: float = 0.0) -> float:
@@ -65,8 +120,12 @@ def parse_float(val, default: float = 0.0) -> float:
         return default
     if isinstance(val, (int, float)):
         return float(val) if math.isfinite(float(val)) else default
-    s = str(val).strip().replace(",", "")
-    if not s or s.lower() in ("inf", "-inf", "nan", "infinity", "#div/0!", "#n/a"):
+    s = str(val).strip()
+    if not s:
+        return default
+    if "," in s:
+        s = s.replace(",", "")
+    if s.lower() in ("inf", "-inf", "nan", "infinity", "#div/0!", "#n/a"):
         return default
     try:
         n = float(s)
@@ -90,72 +149,87 @@ def parse_nullable_float(val):
         return None
 
 
-def read_xlsx_rows(xlsx_path: Path) -> tuple[list[str], list[dict[str, str | None]]]:
-    records: list[dict[str, str | None]] = []
-    detected_headers: list[str] = []
+def extract_cat_code(raw_val: str) -> str:
+    s = (raw_val or "").strip()
+    m = re.match(r"^(NH\d+)", s, re.IGNORECASE)
+    return m.group(1).upper() if m else (s.split("-")[0].strip().upper() if s else "KHÁC")
+
+
+def normalize_subcat2(raw_full: str = "", code: str = "", name: str = "", cat3_code: str = "") -> str:
+    s = (raw_full or "").strip()
+    if s:
+        # Normalize spaces around hyphen if any, preserve "NHxx-xx-xx-Name"
+        m = re.match(r"^(NH\d+(?:-\d+)+)\s*-\s*(.+)$", s, re.IGNORECASE)
+        if m:
+            return f"{m.group(1).upper()}-{m.group(2).strip()}"
+        return s
+    c = (code or "").strip().upper()
+    n = (name or "").strip()
+    if not c and cat3_code:
+        parts = cat3_code.strip().upper().split("-")
+        if len(parts) >= 3:
+            c = "-".join(parts[:3])
+    if c and n:
+        return f"{c}-{n}"
+    return c or n or "Khác"
+
+
+def stream_xlsx_rows(xlsx_path: Path):
+    """Generator yielding (headers, row_vals) via streaming XML iterparse."""
     with zipfile.ZipFile(xlsx_path, "r") as z:
-        shared_strings: list[str] = []
+        shared: list[str] = []
         if "xl/sharedStrings.xml" in z.namelist():
-            ss_root = ET.fromstring(z.read("xl/sharedStrings.xml"))
-            for si in ss_root.findall("main:si", NS):
-                text = "".join(t.text or "" for t in si.findall(".//main:t", NS))
-                shared_strings.append(text)
+            with z.open("xl/sharedStrings.xml") as f:
+                for _, elem in ET.iterparse(f, events=("end",)):
+                    if elem.tag == TAG_SI:
+                        shared.append("".join(t.text or "" for t in elem.iter(TAG_T)))
+                        elem.clear()
 
-        sheet_files = sorted(
-            [n for n in z.namelist() if re.match(r"^xl/worksheets/sheet\d+\.xml$", n)]
-        )
-        for sf in sheet_files:
-            root = ET.parse(z.open(sf)).getroot()
-            raw_rows = []
-            for row_el in root.findall(".//main:sheetData/main:row", NS):
-                cells = row_el.findall("main:c", NS)
-                if not cells:
-                    continue
-                row_vals: list[str | None] = []
-                for c in cells:
-                    ref = c.attrib.get("r", "")
-                    if ref:
-                        col_str = "".join(ch for ch in ref if ch.isalpha())
-                        col_idx = col_letters_to_index(col_str)
-                        while len(row_vals) < col_idx:
-                            row_vals.append(None)
-                    t = c.attrib.get("t", "")
-                    val = None
-                    if t == "inlineStr":
-                        is_el = c.find("main:is", NS)
-                        if is_el is not None:
-                            val = "".join(t_el.text or "" for t_el in is_el.findall(".//main:t", NS))
-                    elif t == "s":
-                        v_el = c.find("main:v", NS)
-                        if v_el is not None and v_el.text is not None:
-                            idx = int(v_el.text)
-                            val = shared_strings[idx] if idx < len(shared_strings) else ""
-                    else:
-                        v_el = c.find("main:v", NS)
-                        if v_el is not None:
-                            val = v_el.text
-                    row_vals.append(val)
-                raw_rows.append(row_vals)
-
-            if not raw_rows:
-                continue
-
-            headers = [str(h or "").strip() for h in raw_rows[0]]
-            if not detected_headers:
-                detected_headers = headers
-            for r in raw_rows[1:]:
-                if not r:
-                    continue
-                first_cell = str(r[0] or "").strip()
-                first_lower = first_cell.lower()
-                if not first_cell or first_lower == "total" or first_lower.startswith("applied filters"):
-                    continue
-                rec = {}
-                for i, h in enumerate(headers):
-                    if h:
-                        rec[h] = r[i] if i < len(r) else None
-                records.append(rec)
-    return detected_headers, records
+        sheets = sorted([n for n in z.namelist() if re.match(r"^xl/worksheets/sheet\d+\.xml$", n)])
+        for sf in sheets:
+            with z.open(sf) as f:
+                headers = None
+                for _, elem in ET.iterparse(f, events=("end",)):
+                    if elem.tag != TAG_ROW:
+                        continue
+                    vals = []
+                    for c in elem:
+                        if c.tag != TAG_C:
+                            continue
+                        ref = c.attrib.get("r", "")
+                        if ref:
+                            cs = "".join(ch for ch in ref if ch.isalpha())
+                            ci = col_letters_to_index(cs)
+                            while len(vals) < ci:
+                                vals.append(None)
+                        t = c.attrib.get("t", "")
+                        val = None
+                        if t == "inlineStr":
+                            is_el = c.find(TAG_IS)
+                            if is_el is not None:
+                                val = "".join(x.text or "" for x in is_el.iter(TAG_T))
+                        elif t == "s":
+                            v_el = c.find(TAG_V)
+                            if v_el is not None and v_el.text is not None:
+                                idx = int(v_el.text)
+                                val = shared[idx] if idx < len(shared) else ""
+                        else:
+                            v_el = c.find(TAG_V)
+                            if v_el is not None:
+                                val = v_el.text
+                        vals.append(val)
+                    elem.clear()
+                    if not vals:
+                        continue
+                    if headers is None:
+                        headers = [str(h or "").strip() for h in vals]
+                        yield ("__HEADERS__", headers)
+                        continue
+                    first_cell = str(vals[0] or "").strip()
+                    first_low = first_cell.lower()
+                    if not first_cell or first_low == "total" or first_low.startswith("applied filters"):
+                        continue
+                    yield ("__ROW__", vals)
 
 
 def detect_dataset_kind(headers: list[str], filename: str) -> str:
@@ -183,7 +257,6 @@ def detect_dataset_kind(headers: list[str], filename: str) -> str:
         return "master_product"
     if "bin code" in lower_set or "inventory qty" in lower_set:
         return "inv_details"
-
     fname = filename.lower()
     if "bad" in fname:
         return "bad_stock"
@@ -200,123 +273,718 @@ def detect_dataset_kind(headers: list[str], filename: str) -> str:
     return "sales"
 
 
-def clean_subcat(val: str) -> str:
-    s = (val or "").strip()
-    if not s:
-        return "Khác"
-    m = re.match(r"^NH\d+(?:-\d+)+-(.+)$", s)
-    return m.group(1).strip() if m else s
+def build():
+    t_start = time.time()
+    xlsx_files = sorted([p for p in DATA_DIR.glob("*.xlsx") if not p.name.startswith("~$")])
+    if not xlsx_files:
+        print(f"ERROR: No .xlsx files found in {DATA_DIR}", file=sys.stderr)
+        sys.exit(1)
 
+    # Phase 1: Classify files by peeking header row
+    files_by_kind: dict[str, list[Path]] = defaultdict(list)
+    for f in xlsx_files:
+        for tag, payload in stream_xlsx_rows(f):
+            if tag == "__HEADERS__":
+                kind = detect_dataset_kind(payload, f.name)
+                files_by_kind[kind].append(f)
+                break
 
-def build_sales_section(all_raw: list[dict], source_meta: list[dict]) -> dict:
-    lookups = {
-        "sites": [],
-        "stores": [],
-        "regions": [],
-        "channels": [],
-        "subcats": [],
-        "brands": [],
-        "orderTypes": [],
-        "skus": [],
+    # ------------------------------------------------------------------
+    # 1. MASTER PRODUCT (17,118 SKUs) — Build first so every other file
+    #    can enrich Cat Code, Subcat 2, Range, Purchase Status cleanly!
+    # ------------------------------------------------------------------
+    mp_lookups = {
+        "cats": [], "subcats": [], "subcat3s": [], "brands": [],
+        "listings": [], "purchaseStatuses": [], "ranges": [], "promoAlerts": [],
     }
-    lookup_maps = {k: {} for k in lookups}
+    mp_maps = {k: {} for k in mp_lookups}
 
-    def get_idx(key: str, val: str) -> int:
-        m = lookup_maps[key]
-        if val not in m:
-            m[val] = len(lookups[key])
-            lookups[key].append(val)
-        return m[val]
+    def mp_idx(k, v):
+        m = mp_maps[k]
+        if v not in m:
+            m[v] = len(mp_lookups[k])
+            mp_lookups[k].append(v)
+        return m[v]
 
-    compact_rows = []
-    site_directory = {}
+    mp_rows = []
+    master_map: dict[str, dict] = {}
+    mp_sources = []
+    mp_summary_agg: dict[tuple, list] = defaultdict(lambda: [0, 0, 0.0])  # (cat, subcat, brand, status, range) -> [skuCnt, invQty, invVal]
+
+    for f in files_by_kind["master_product"]:
+        hmap = {}
+        rc = 0
+        for tag, vals in stream_xlsx_rows(f):
+            if tag == "__HEADERS__":
+                hmap = {h.lower(): i for i, h in enumerate(vals) if h}
+                continue
+            get = lambda k: vals[hmap[k]] if k in hmap and hmap[k] < len(vals) else None
+            sku = str(get("sku") or "").strip()
+            if not sku:
+                continue
+            rc += 1
+            name = str(get("sku name") or "").strip()
+            raw_cat = str(get("category") or "").strip()
+            subcat2 = normalize_subcat2(str(get("subcat 2 (code - name)") or ""))
+            cat = extract_cat_code(raw_cat or subcat2)
+            subcat3 = str(get("subcat 3 (code - name)") or "").strip()
+            brand = str(get("brand name") or "Khác").strip()
+            listing = str(get("product listing") or "active").strip()
+            pstatus = str(get("purchase status") or "Normal").strip()
+            rng = str(get("range") or "No").strip() or "No"
+            has_sn = 1 if str(get("has serial number") or "").strip().lower() == "yes" else 0
+            promo = str(get("promotion alert") or "").strip()
+            listed = round(parse_float(get("listed price")), 2)
+            sr_promo = round(parse_float(get("sr min promotion price")), 2)
+            wcogs = round(parse_float(get("w.cogs no vat")), 2)
+            last_pur = round(parse_float(get("last pur price no vat")), 2)
+            latest_q = round(parse_float(get("latest quotation")), 2)
+            temp_gp = round(parse_float(get("temporary gp")), 2)
+            raw_gm = parse_nullable_float(get("temporary gm"))
+            temp_gm = round(raw_gm * 100, 2) if raw_gm is not None else None
+            inv_qty = int(round(parse_float(get("inv qty"))))
+            inv_val = round(parse_float(get("inv")), 2)
+            sales_30d = int(round(parse_float(get("30d sales qty"))))
+            w_mo = int(round(parse_float(get("warranty period"))))
+            w_note = str(get("warranty period note") or "").strip()
+
+            master_map[sku] = {
+                "cat": cat, "subcat2": subcat2, "brand": brand,
+                "purchaseStatus": pstatus, "range": rng, "name": name,
+            }
+            c_i, s_i, b_i, st_i, r_i = (
+                mp_idx("cats", cat), mp_idx("subcats", subcat2),
+                mp_idx("brands", brand), mp_idx("purchaseStatuses", pstatus), mp_idx("ranges", rng),
+            )
+            agg = mp_summary_agg[(c_i, s_i, st_i, r_i)]
+            agg[0] += 1
+            agg[1] += inv_qty
+            agg[2] += inv_val
+
+            mp_rows.append([
+                sku, name, c_i, s_i, mp_idx("subcat3s", subcat3), b_i,
+                mp_idx("listings", listing), st_i, r_i, has_sn, mp_idx("promoAlerts", promo),
+                listed, sr_promo, wcogs, last_pur, latest_q, temp_gp, temp_gm,
+                inv_qty, inv_val, sales_30d, w_mo, w_note,
+            ])
+        mp_sources.append({"file": f.name, "sizeBytes": f.stat().st_size, "rows": rc, "kind": "master_product"})
+
+    mp_summary_rows = [[k[0], k[1], k[2], k[3], v[0], v[1], round(v[2], 2)] for k, v in mp_summary_agg.items()]
+    print(f"[1/6 MASTER]    {len(mp_rows):,} SKUs | summary={len(mp_summary_rows)} rows | cats={mp_lookups['cats']}")
+
+    # ------------------------------------------------------------------
+    # 2. SALES (478,301 rows -> Exact Star-Schema Cube + Daily Cube + Per-SKU YTD)
+    # ------------------------------------------------------------------
+    s_lookups = {
+        "cats": [], "subcats": [], "sites": [], "stores": [],
+        "regions": [], "channels": [], "brands": [], "orderTypes": [],
+    }
+    s_maps = {k: {} for k in s_lookups}
+
+    def s_idx(k, v):
+        m = s_maps[k]
+        if v not in m:
+            m[v] = len(s_lookups[k])
+            s_lookups[k].append(v)
+        return m[v]
+
+    # Monthly Cube key: (month, siteIdx, regionIdx, channelIdx, catIdx, subcatIdx, brandIdx, orderTypeIdx, isBulk)
+    # -> [qty, sales, cogs, gp, rowCount]
+    monthly_cube: dict[tuple, list] = defaultdict(lambda: [0, 0.0, 0.0, 0.0, 0])
+    # Time Drill Cube key: (dateIso, weekStr, monthStr, catIdx, subcatIdx, regionIdx, siteIdx, channelIdx, orderTypeIdx, isBulk)
+    # Wait: keep daily cube lean: (dateIso, weekStr, monthStr, catIdx, subcatIdx, regionIdx, channelIdx, orderTypeIdx, isBulk)
+    # Actually let's aggregate by (dateIso, weekStr, monthStr, catIdx, subcatIdx, regionIdx, isBulk) -> compact & fast!
+    daily_cube: dict[tuple, list] = defaultdict(lambda: [0, 0.0, 0.0, 0.0, 0])
+    sku_ytd_sales: dict[str, list] = defaultdict(lambda: [0.0, 0, 0.0, 0])  # sku -> [sales, qty, gp, orders]
+    top_sku_sales: dict[tuple, list] = defaultdict(lambda: [0, 0.0, 0.0, 0.0, 0])  # (sku, skuName, catIdx, subcatIdx, brandIdx) -> [qty, sales, cogs, gp, orders]
+    site_directory: dict[str, dict] = {}
+    sales_sources = []
+
     tot_sales = 0.0
     tot_qty = 0
     tot_cogs = 0.0
     tot_gp = 0.0
+    tot_rows = 0
     min_date = None
     max_date = None
     bulk_count = 0
     bulk_sales = 0.0
     bulk_qty = 0
+    all_months_set = set()
 
-    for rec in all_raw:
-        d = parse_excel_date(rec.get("Report Date"))
-        if d is None:
-            continue
-        if min_date is None or d < min_date:
-            min_date = d
-        if max_date is None or d > max_date:
-            max_date = d
+    for f in files_by_kind["sales"]:
+        hmap = {}
+        rc = 0
+        for tag, vals in stream_xlsx_rows(f):
+            if tag == "__HEADERS__":
+                hmap = {h.lower(): i for i, h in enumerate(vals) if h}
+                continue
+            get = lambda k: vals[hmap[k]] if k in hmap and hmap[k] < len(vals) else None
+            d = parse_excel_date(get("report date"))
+            if d is None:
+                continue
+            rc += 1
+            tot_rows += 1
+            if min_date is None or d < min_date:
+                min_date = d
+            if max_date is None or d > max_date:
+                max_date = d
 
-        date_iso = d.strftime("%Y-%m-%d")
-        month_str = d.strftime("%Y-%m")
-        iso_year, iso_week, _ = d.isocalendar()
-        week_str = f"{iso_year}-W{iso_week:02d}"
+            date_iso = d.strftime("%Y-%m-%d")
+            month_str = date_iso[:7]
+            all_months_set.add(month_str)
+            iso_y, iso_w, _ = d.isocalendar()
+            week_str = f"{iso_y}-W{iso_w:02d}"
 
-        site = (rec.get("Sales Site Code") or "UNKNOWN").strip()
-        store = (rec.get("Store name") or "").strip() or site
-        raw_region = (rec.get("Region name") or "").strip()
-        channel = (rec.get("Sales Channel") or "Other").strip()
-        region = raw_region if raw_region else f"Non-Store ({channel})"
-        subcat = clean_subcat(rec.get("Subcat 2 (Code - Name)") or "")
-        brand = (rec.get("Brand Name") or "Khác").strip()
-        order_type = (rec.get("Order Type") or "don_xuat_ban").strip()
-        sku_code = (rec.get("SKU") or "").strip()
-        sku_name = (rec.get("SKU Name") or "").strip()
-        sku_label = f"{sku_code} — {sku_name}" if sku_code else sku_name
+            site = str(get("sales site code") or "UNKNOWN").strip()
+            store = str(get("store name") or "").strip() or site
+            raw_reg = str(get("region name") or "").strip()
+            ch = str(get("sales channel") or "Other").strip()
+            reg = raw_reg if raw_reg else f"Non-Store ({ch})"
+            raw_cat = str(get("cat name") or "").strip()
+            subcat2 = normalize_subcat2(str(get("subcat 2 (code - name)") or ""))
+            cat = extract_cat_code(raw_cat or subcat2)
+            brand = str(get("brand name") or "Khác").strip()
+            otype = str(get("order type") or "don_xuat_ban").strip()
+            sku = str(get("sku") or "").strip()
 
-        qty = int(round(parse_float(rec.get("Sales QTY"))))
-        sales = round(parse_float(rec.get("Sales")), 2)
-        cogs = round(parse_float(rec.get("COGS")), 2)
-        gp = round(parse_float(rec.get("GP")), 2)
+            qty = int(round(parse_float(get("sales qty"))))
+            sales = parse_float(get("sales"))
+            cogs = parse_float(get("cogs"))
+            gp = parse_float(get("gp"))
 
-        tot_sales += sales
-        tot_qty += qty
-        tot_cogs += cogs
-        tot_gp += gp
+            tot_sales += sales
+            tot_qty += qty
+            tot_cogs += cogs
+            tot_gp += gp
 
-        if abs(qty) >= 100:
-            bulk_count += 1
-            bulk_sales += sales
-            bulk_qty += qty
+            is_bulk = 1 if abs(qty) >= 100 else 0
+            if is_bulk:
+                bulk_count += 1
+                bulk_sales += sales
+                bulk_qty += qty
 
-        if site not in site_directory:
-            site_directory[site] = {
-                "siteCode": site,
-                "storeName": store,
-                "region": region,
-                "rawRegion": raw_region,
-                "channel": channel,
-            }
+            if site not in site_directory:
+                site_directory[site] = {
+                    "siteCode": site, "storeName": store,
+                    "region": reg, "rawRegion": raw_reg, "channel": ch,
+                }
 
-        compact_rows.append([
-            date_iso,
-            month_str,
-            week_str,
-            get_idx("sites", site),
-            get_idx("stores", store),
-            get_idx("regions", region),
-            get_idx("channels", channel),
-            get_idx("subcats", subcat),
-            get_idx("brands", brand),
-            get_idx("orderTypes", order_type),
-            get_idx("skus", sku_label),
-            qty,
-            sales,
-            cogs,
-            gp,
+            si = s_idx("sites", site)
+            ri = s_idx("regions", reg)
+            ci = s_idx("channels", ch)
+            cati = s_idx("cats", cat)
+            subi = s_idx("subcats", subcat2)
+            bi = s_idx("brands", brand)
+            oi = s_idx("orderTypes", otype)
+            s_idx("stores", store)
+
+            mc = monthly_cube[(month_str, si, ri, ci, cati, subi, bi, oi, is_bulk)]
+            mc[0] += qty
+            mc[1] += sales
+            mc[2] += cogs
+            mc[3] += gp
+            mc[4] += 1
+
+            dc = daily_cube[(date_iso, week_str, month_str, cati, subi, ri, is_bulk)]
+            dc[0] += qty
+            dc[1] += sales
+            dc[2] += cogs
+            dc[3] += gp
+            dc[4] += 1
+
+            if sku:
+                sy = sku_ytd_sales[sku]
+                sy[0] += sales
+                sy[1] += qty
+                sy[2] += gp
+                sy[3] += 1
+
+        sales_sources.append({"file": f.name, "sizeBytes": f.stat().st_size, "rows": rc, "kind": "sales"})
+
+    sorted_months = sorted(all_months_set)
+    m_map = {m: i for i, m in enumerate(sorted_months)}
+    s_lookups["months"] = sorted_months
+
+    cube_rows = [
+        [m_map[k[0]], k[1], k[2], k[3], k[4], k[5], k[6], k[7], k[8], v[0], int(round(v[1])), int(round(v[2])), int(round(v[3])), v[4]]
+        for k, v in monthly_cube.items()
+    ]
+    cube_rows.sort(key=lambda x: x[0])
+
+    dates_list = []
+    d_map = {}
+    weeks_list = []
+    w_map = {}
+    daily_rows = []
+    for k, v in sorted(daily_cube.items(), key=lambda x: x[0][0]):
+        dt_s, wk_s, m_s = k[0], k[1], k[2]
+        if dt_s not in d_map:
+            d_map[dt_s] = len(dates_list)
+            dates_list.append(dt_s)
+        if wk_s not in w_map:
+            w_map[wk_s] = len(weeks_list)
+            weeks_list.append(wk_s)
+        daily_rows.append([
+            d_map[dt_s], w_map[wk_s], m_map[m_s], k[3], k[4], k[5], k[6],
+            v[0], int(round(v[1])), int(round(v[2])), int(round(v[3])), v[4]
+        ])
+    s_lookups["dates"] = dates_list
+    s_lookups["weeks"] = weeks_list
+
+    print(
+        f"[2/6 SALES]     Raw: {tot_rows:,} -> MonthlyCube: {len(cube_rows):,} | DailyCube: {len(daily_rows):,} | "
+        f"Sales: {tot_sales:,.0f} VND | Qty: {tot_qty:,} | Cats: {s_lookups['cats']}"
+    )
+
+    # ------------------------------------------------------------------
+    # 3. INVENTORY DETAILS (10,396 BIN rows)
+    # ------------------------------------------------------------------
+    inv_lookups = {
+        "cats": [], "sites": [], "siteNames": [], "subcats": [], "brands": [],
+        "binCodes": [], "binTypes": [], "binZones": [], "purchaseStatuses": [], "ranges": [], "skus": [],
+    }
+    inv_maps = {k: {} for k in inv_lookups}
+
+    def inv_idx(k, v):
+        m = inv_maps[k]
+        if v not in m:
+            m[v] = len(inv_lookups[k])
+            inv_lookups[k].append(v)
+        return m[v]
+
+    inv_raw_list = []
+    inv_sources = []
+    max_recv_d = None
+    for f in files_by_kind["inv_details"]:
+        hmap = {}
+        rc = 0
+        for tag, vals in stream_xlsx_rows(f):
+            if tag == "__HEADERS__":
+                hmap = {h.lower(): i for i, h in enumerate(vals) if h}
+                continue
+            get = lambda k: vals[hmap[k]] if k in hmap and hmap[k] < len(vals) else None
+            sku = str(get("sku") or "").strip()
+            if not sku:
+                continue
+            rc += 1
+            ld = parse_excel_date(get("last received date"))
+            fd = parse_excel_date(get("first received date"))
+            if ld and (max_recv_d is None or ld > max_recv_d):
+                max_recv_d = ld
+            inv_raw_list.append((
+                sku, str(get("sku name") or "").strip(), str(get("site code") or "UNKNOWN").strip(),
+                str(get("site name") or "").strip(), str(get("subcat 2 (code - name)") or "").strip(),
+                str(get("brand name") or "Khác").strip(), str(get("bin code") or "N/A").strip(),
+                str(get("bin type") or "Khác").strip(), str(get("bin zone") or "Khác").strip(),
+                str(get("purchase status") or "").strip(), str(get("range") or "").strip(),
+                ld, fd,
+                int(round(parse_float(get("inventory qty")))),
+                round(parse_float(get("inventory")), 2),
+                round(parse_float(get("included price protection & so si no condition")), 2),
+                round(parse_float(get("unit cost")), 2),
+                round(parse_float(get("listed price")), 2),
+                int(round(parse_float(get("min stock")))),
+            ))
+        inv_sources.append({"file": f.name, "sizeBytes": f.stat().st_size, "rows": rc, "kind": "inv_details"})
+
+    snapshot_d = max_recv_d or datetime.date.today()
+    inv_rows = []
+    inv_site_dir = {}
+    inv_tot_qty = 0
+    inv_tot_val = 0.0
+    inv_tot_net = 0.0
+    inv_sell_qty = 0
+    inv_sell_val = 0.0
+    inv_dmg_qty = 0
+    inv_dmg_val = 0.0
+    inv_disc_qty = 0
+    inv_disc_val = 0.0
+    inv_skus = set()
+
+    for tup in inv_raw_list:
+        (sku, sname, site, site_name, raw_sub, brand, bcode, btype, bzone,
+         pstat, rng_raw, ld, fd, qty, val, net_v, ucost, lprice, mstock) = tup
+        mp = master_map.get(sku, {})
+        subcat2 = normalize_subcat2(raw_sub) if raw_sub else mp.get("subcat2", "Khác")
+        cat = extract_cat_code(subcat2) if subcat2 != "Khác" else mp.get("cat", "KHÁC")
+        pstatus = pstat or mp.get("purchaseStatus") or "Normal"
+        rng = rng_raw or mp.get("range") or "No"
+        site_name = site_name or site
+        sku_label = f"{sku} — {sname}" if sname else sku
+        inv_skus.add(sku)
+
+        if net_v == 0.0 and val != 0.0:
+            net_v = val
+        if ucost == 0.0 and qty > 0 and val > 0:
+            ucost = round(val / qty, 2)
+
+        age_last = max(0, (snapshot_d - ld).days) if ld else -1
+        age_first = max(0, (snapshot_d - fd).days) if fd else age_last
+        inv_tot_qty += qty
+        inv_tot_val += val
+        inv_tot_net += net_v
+        bt_l = btype.lower()
+        if "bán mới" in bt_l:
+            inv_sell_qty += qty
+            inv_sell_val += val
+        if "hư hỏng" in bt_l:
+            inv_dmg_qty += qty
+            inv_dmg_val += val
+        if pstatus.lower() == "discontinued":
+            inv_disc_qty += qty
+            inv_disc_val += val
+        if site not in inv_site_dir:
+            inv_site_dir[site] = {"siteCode": site, "siteName": site_name}
+
+        inv_rows.append([
+            inv_idx("skus", sku_label),
+            inv_idx("sites", site),
+            inv_idx("siteNames", site_name),
+            inv_idx("subcats", subcat2),
+            inv_idx("brands", brand),
+            inv_idx("binCodes", bcode),
+            inv_idx("binTypes", btype),
+            inv_idx("binZones", bzone),
+            inv_idx("purchaseStatuses", pstatus),
+            ld.strftime("%Y-%m-%d") if ld else "",
+            fd.strftime("%Y-%m-%d") if fd else "",
+            age_last, qty, val, net_v, ucost, lprice, mstock,
+            inv_idx("ranges", rng), age_first, inv_idx("cats", cat),
         ])
 
-    compact_rows.sort(key=lambda x: x[0])
+    inv_rows.sort(key=lambda x: -x[13])
+    print(f"[3/6 INV DET]   {len(inv_rows):,} BIN rows | {inv_tot_qty:,} QTY | {inv_tot_val:,.0f} VND | Cats: {inv_lookups['cats']}")
 
-    return {
+    # ------------------------------------------------------------------
+    # 4. INVENTORY SKU LEVEL (1,380 SKUs) & BRANCH LEVEL (8,747 rows)
+    # ------------------------------------------------------------------
+    sku_vel_rows = []
+    sku_vel_sources = []
+    s7t = s30t = s90t = s180t = sqt = 0
+    svt = 0.0
+    for f in files_by_kind["sku_level"]:
+        hmap = {}
+        rc = 0
+        for tag, vals in stream_xlsx_rows(f):
+            if tag == "__HEADERS__":
+                hmap = {h.lower(): i for i, h in enumerate(vals) if h}
+                continue
+            get = lambda k: vals[hmap[k]] if k in hmap and hmap[k] < len(vals) else None
+            sku = str(get("sku") or "").strip()
+            if not sku:
+                continue
+            rc += 1
+            mp = master_map.get(sku, {})
+            subcat2 = normalize_subcat2(str(get("subcat 2 (code - name)") or "")) or mp.get("subcat2", "Khác")
+            cat = extract_cat_code(subcat2) if subcat2 != "Khác" else mp.get("cat", "KHÁC")
+            s7 = int(round(parse_float(get("7d sales qty"))))
+            s30 = int(round(parse_float(get("30d sales qty"))))
+            s90 = int(round(parse_float(get("90d sales qty"))))
+            s180 = int(round(parse_float(get("180d sales qty"))))
+            raw_gm = parse_nullable_float(get("gm (%)"))
+            gm = round(raw_gm * 100, 2) if raw_gm is not None else None
+            sdays = parse_nullable_float(get("current s.days"))
+            iq = int(round(parse_float(get("inv qty"))))
+            iv = round(parse_float(get("inv")), 2)
+            uc = round(parse_float(get("unit cost")), 2)
+            lp = round(parse_float(get("listed price")), 2)
+            pst = str(get("purchase status") or mp.get("purchaseStatus") or "Normal").strip()
+            rng = str(mp.get("range") or "No").strip()
+            s7t += s7; s30t += s30; s90t += s90; s180t += s180; sqt += iq; svt += iv
+            sku_vel_rows.append([
+                sku, str(get("sku name") or mp.get("name") or "").strip(),
+                subcat2, str(get("brand name") or "Khác").strip(), pst, rng,
+                s7, s30, s90, s180, gm, sdays, iq, iv, uc, lp, cat,
+            ])
+        sku_vel_sources.append({"file": f.name, "sizeBytes": f.stat().st_size, "rows": rc, "kind": "sku_level"})
+    sku_vel_rows.sort(key=lambda x: -x[13])
+
+    br_lookups = {"sites": [], "siteNames": []}
+    br_maps = {"sites": {}, "siteNames": {}}
+    br_rows = []
+    br_sources = []
+    for f in files_by_kind["branch_level"]:
+        hmap = {}
+        rc = 0
+        for tag, vals in stream_xlsx_rows(f):
+            if tag == "__HEADERS__":
+                hmap = {h.lower(): i for i, h in enumerate(vals) if h}
+                continue
+            get = lambda k: vals[hmap[k]] if k in hmap and hmap[k] < len(vals) else None
+            sku = str(get("sku") or "").strip()
+            if not sku:
+                continue
+            rc += 1
+            site = str(get("site code") or "UNKNOWN").strip()
+            sname = str(get("site name") or "").strip() or site
+            if site not in br_maps["sites"]:
+                br_maps["sites"][site] = len(br_lookups["sites"])
+                br_lookups["sites"].append(site)
+            if sname not in br_maps["siteNames"]:
+                br_maps["siteNames"][sname] = len(br_lookups["siteNames"])
+                br_lookups["siteNames"].append(sname)
+            br_rows.append([
+                sku, br_maps["sites"][site], br_maps["siteNames"][sname],
+                int(round(parse_float(get("7d sales qty")))),
+                int(round(parse_float(get("30d sales qty")))),
+                int(round(parse_float(get("90d sales qty")))),
+                int(round(parse_float(get("180d sales qty")))),
+                parse_nullable_float(get("current s.days")),
+                int(round(parse_float(get("inv qty")))),
+                round(parse_float(get("inv")), 2),
+                round(parse_float(get("unit cost")), 2),
+            ])
+        br_sources.append({"file": f.name, "sizeBytes": f.stat().st_size, "rows": rc, "kind": "branch_level"})
+    br_rows.sort(key=lambda x: -x[9])
+    print(f"[4/6 SKU+BR]    SKU Level: {len(sku_vel_rows):,} | Branch Level: {len(br_rows):,}")
+
+    # ------------------------------------------------------------------
+    # 5. BAD STOCK BY SERIAL (38,621) + INVENTORY SERIAL DETAILS (40,726)
+    #    -> Serial Cube in report_data.json + Full Serial list in lookup_serials.json
+    # ------------------------------------------------------------------
+    bad_by_sn: dict[str, dict] = {}
+    bad_sources = []
+    for f in files_by_kind["bad_stock"]:
+        hmap = {}
+        rc = 0
+        for tag, vals in stream_xlsx_rows(f):
+            if tag == "__HEADERS__":
+                hmap = {h.lower(): i for i, h in enumerate(vals) if h}
+                continue
+            get = lambda k: vals[hmap[k]] if k in hmap and hmap[k] < len(vals) else None
+            sn = str(get("serial number") or "").strip()
+            if not sn:
+                continue
+            rc += 1
+            sub2 = normalize_subcat2(code=str(get("subcat 2 code") or ""), name=str(get("subcat 2 name") or ""))
+            cat = extract_cat_code(str(get("category code") or sub2))
+            dc = parse_excel_date(get("date import company"))
+            ds = parse_excel_date(get("date import site"))
+            bad_by_sn[sn] = {
+                "sku": str(get("sku") or "").strip(),
+                "skuName": str(get("sku name") or "").strip(),
+                "site": str(get("site code") or "UNKNOWN").strip(),
+                "cat": cat, "subcat2": sub2,
+                "brand": str(get("brand name") or "Khác").strip(),
+                "pstatus": str(get("purchase status") or "Normal").strip(),
+                "loc": str(get("location code") or "N/A").strip(),
+                "btype": str(get("bin type") or "Hàng bán mới tại kho").strip(),
+                "bzone": str(get("bin zone") or "Khác").strip(),
+                "dComp": dc.strftime("%Y-%m-%d") if dc else "",
+                "aComp": int(round(parse_float(get("aging company"), -1))),
+                "sdComp": int(round(parse_float(get("stock day company"), 0))),
+                "badComp": str(get("bad stock company") or "Tồn thông thường").strip(),
+                "dSite": ds.strftime("%Y-%m-%d") if ds else "",
+                "aSite": int(round(parse_float(get("aging site"), -1))),
+                "sdSite": int(round(parse_float(get("stock day site"), 0))),
+                "badSite": str(get("bad stock site") or "Tồn thông thường").strip(),
+                "val": round(parse_float(get("inventory")), 2),
+            }
+        bad_sources.append({"file": f.name, "sizeBytes": f.stat().st_size, "rows": rc, "kind": "bad_stock"})
+
+    sn_lookups = {
+        "cats": [], "sites": [], "subcats": [], "brands": [], "suppliers": [],
+        "locations": [], "binTypes": [], "binZones": [], "importTypes": [],
+        "purchaseStatuses": [], "ranges": [], "badComp": [], "badSite": [],
+    }
+    sn_maps = {k: {} for k in sn_lookups}
+
+    def sn_idx(k, v):
+        m = sn_maps[k]
+        if v not in m:
+            m[v] = len(sn_lookups[k])
+            sn_lookups[k].append(v)
+        return m[v]
+
+    # Aggregated Serial Cube for instant dashboard charts:
+    # (catIdx, subcatIdx, siteIdx, binTypeIdx, binZoneIdx, brandIdx, statusIdx, rangeIdx, inBadFile, badCompIdx, badSiteIdx, aCompBucket, aSiteBucket)
+    # -> [snCount, invVal]
+    serial_cube: dict[tuple, list] = defaultdict(lambda: [0, 0.0])
+    full_serial_rows = []
+    seen_sn = set()
+    sn_sources = []
+    sn_tot_val = 0.0
+    sn_cls_cnt = 0
+    sn_cls_val = 0.0
+    sn_risk_cnt = 0
+    sn_risk_val = 0.0
+
+    for f in files_by_kind["serial_details"]:
+        hmap = {}
+        rc = 0
+        for tag, vals in stream_xlsx_rows(f):
+            if tag == "__HEADERS__":
+                hmap = {h.lower(): i for i, h in enumerate(vals) if h}
+                continue
+            get = lambda k: vals[hmap[k]] if k in hmap and hmap[k] < len(vals) else None
+            sn = str(get("serial number") or "").strip()
+            if not sn:
+                continue
+            rc += 1
+            seen_sn.add(sn)
+            sku = str(get("sku") or "").strip()
+            sname = str(get("sku name") or "").strip()
+            mp = master_map.get(sku, {})
+            bs = bad_by_sn.get(sn)
+
+            cat3 = str(get("category code") or "").strip()
+            sub2_name = str(get("subcat 2 name") or "").strip()
+            subcat2 = (bs["subcat2"] if bs else "") or mp.get("subcat2") or normalize_subcat2(name=sub2_name, cat3_code=cat3)
+            cat = (bs["cat"] if bs else "") or mp.get("cat") or extract_cat_code(cat3 or subcat2)
+
+            site = str(get("site code") or (bs["site"] if bs else "UNKNOWN")).strip()
+            brand = str(get("brand name") or mp.get("brand") or "Khác").strip()
+            supp = str(get("supplier short name") or "").strip() or "Không rõ NCC"
+            loc = str(get("location code") or "N/A").strip()
+            btype = str(get("bin type") or (bs["btype"] if bs else "Khác")).strip()
+            bzone = str(get("bin zone") or (bs["bzone"] if bs else "Khác")).strip()
+            itype = str(get("initial import type") or "").strip() or "Khác"
+            pstatus = str((bs["pstatus"] if bs else "") or mp.get("purchaseStatus") or "Normal").strip()
+            rng = str(mp.get("range") or "No").strip() or "No"
+
+            fd = parse_excel_date(get("first received date"))
+            ld = parse_excel_date(get("last received date"))
+            d_first = int(round(parse_float(get("inv days since first received"), -1)))
+            d_last = int(round(parse_float(get("inv days since last received"), -1)))
+            val = round(parse_float(get("inventory")), 2)
+            net_v = round(parse_float(get("included price protection")), 2)
+            if net_v == 0.0 and val != 0.0:
+                net_v = val
+            pp_v = round(parse_float(get("price protection")), 2)
+
+            in_bad = 1 if bs is not None else 0
+            a_comp = bs["aComp"] if bs else d_first
+            a_site = bs["aSite"] if bs else d_last
+            sd_comp = bs["sdComp"] if bs else 0
+            sd_site = bs["sdSite"] if bs else 0
+            b_comp = bs["badComp"] if bs else f"Không phân loại ({btype})"
+            b_site = bs["badSite"] if bs else f"Không phân loại ({btype})"
+
+            sn_tot_val += val
+            if bs:
+                sn_cls_cnt += 1
+                sn_cls_val += val
+                if b_comp != "Tồn thông thường":
+                    sn_risk_cnt += 1
+                    sn_risk_val += val
+
+            c_i = sn_idx("cats", cat)
+            sub_i = sn_idx("subcats", subcat2)
+            si_i = sn_idx("sites", site)
+            bt_i = sn_idx("binTypes", btype)
+            bz_i = sn_idx("binZones", bzone)
+            br_i = sn_idx("brands", brand)
+            ps_i = sn_idx("purchaseStatuses", pstatus)
+            rg_i = sn_idx("ranges", rng)
+            bc_i = sn_idx("badComp", b_comp)
+            bs_i = sn_idx("badSite", b_site)
+
+            ckey = (c_i, sub_i, si_i, bt_i, bz_i, br_i, ps_i, rg_i, in_bad, bc_i, bs_i, aging_bucket_idx(a_comp), aging_bucket_idx(a_site))
+            cv = serial_cube[ckey]
+            cv[0] += 1
+            cv[1] += val
+
+            full_serial_rows.append([
+                sn, sku, sname, si_i, sub_i, br_i, sn_idx("suppliers", supp),
+                sn_idx("locations", loc), bt_i, bz_i, sn_idx("importTypes", itype),
+                ps_i, rg_i,
+                fd.strftime("%Y-%m-%d") if fd else "", ld.strftime("%Y-%m-%d") if ld else "",
+                d_first, d_last, val, net_v, pp_v, in_bad,
+                a_comp, a_site, sd_comp, sd_site, bc_i, bs_i, c_i,
+            ])
+        sn_sources.append({"file": f.name, "sizeBytes": f.stat().st_size, "rows": rc, "kind": "serial_details"})
+
+    # Add any Bad Stock serials not in Serial Details
+    for sn, bs in bad_by_sn.items():
+        if sn in seen_sn:
+            continue
+        mp = master_map.get(bs["sku"], {})
+        rng = str(mp.get("range") or "No").strip() or "No"
+        val = bs["val"]
+        sn_tot_val += val
+        sn_cls_cnt += 1
+        sn_cls_val += val
+        if bs["badComp"] != "Tồn thông thường":
+            sn_risk_cnt += 1
+            sn_risk_val += val
+
+        c_i = sn_idx("cats", bs["cat"])
+        sub_i = sn_idx("subcats", bs["subcat2"])
+        si_i = sn_idx("sites", bs["site"])
+        bt_i = sn_idx("binTypes", bs["btype"])
+        bz_i = sn_idx("binZones", bs["bzone"])
+        br_i = sn_idx("brands", bs["brand"])
+        ps_i = sn_idx("purchaseStatuses", bs["pstatus"])
+        rg_i = sn_idx("ranges", rng)
+        bc_i = sn_idx("badComp", bs["badComp"])
+        bs_i = sn_idx("badSite", bs["badSite"])
+
+        ckey = (c_i, sub_i, si_i, bt_i, bz_i, br_i, ps_i, rg_i, 1, bc_i, bs_i, aging_bucket_idx(bs["aComp"]), aging_bucket_idx(bs["aSite"]))
+        cv = serial_cube[ckey]
+        cv[0] += 1
+        cv[1] += val
+
+        full_serial_rows.append([
+            sn, bs["sku"], bs["skuName"], si_i, sub_i, br_i, sn_idx("suppliers", "Không rõ NCC"),
+            sn_idx("locations", bs["loc"]), bt_i, bz_i, sn_idx("importTypes", "Khác"),
+            ps_i, rg_i, bs["dComp"], bs["dSite"], bs["aComp"], bs["aSite"],
+            val, val, 0.0, 1, bs["aComp"], bs["aSite"], bs["sdComp"], bs["sdSite"], bc_i, bs_i, c_i,
+        ])
+
+    serial_cube_rows = [list(k) + [v[0], round(v[1], 2)] for k, v in serial_cube.items()]
+    full_serial_rows.sort(key=lambda x: -x[17])
+    print(f"[5/6 SERIALS]   Full: {len(full_serial_rows):,} SN -> Cube: {len(serial_cube_rows):,} rows | BadStockRisk: {sn_risk_cnt:,} SN ({sn_risk_val:,.0f} VND)")
+
+    # ------------------------------------------------------------------
+    # 6. UNIFIED GLOBAL CATEGORY + SUBCAT2 TAXONOMY
+    # ------------------------------------------------------------------
+    cat_subcat_map: dict[str, set] = defaultdict(set)
+    cat_volume: dict[str, float] = defaultdict(float)
+
+    for row in cube_rows:
+        cat = s_lookups["cats"][row[4]]
+        sub = s_lookups["subcats"][row[5]]
+        cat_subcat_map[cat].add(sub)
+        cat_volume[cat] += row[10]
+    for row in inv_rows:
+        row[13] = int(round(row[13]))
+        row[14] = int(round(row[14]))
+        row[15] = int(round(row[15]))
+        row[16] = int(round(row[16]))
+        cat = inv_lookups["cats"][row[20]]
+        sub = inv_lookups["subcats"][row[3]]
+        cat_subcat_map[cat].add(sub)
+        cat_volume[cat] += row[13]
+    for row in serial_cube_rows:
+        row[14] = int(round(row[14]))
+    for row in mp_summary_rows:
+        cat = mp_lookups["cats"][row[0]]
+        sub = mp_lookups["subcats"][row[1]]
+        cat_subcat_map[cat].add(sub)
+
+    sorted_cats = sorted(cat_subcat_map.keys(), key=lambda c: (-cat_volume[c], c))
+    taxonomy = {
+        "categories": [
+            {"code": c, "label": CAT_LABELS.get(c, c), "subcats": sorted(cat_subcat_map[c])}
+            for c in sorted_cats
+        ],
+        "allSubcats": sorted({s for ss in cat_subcat_map.values() for s in ss}),
+    }
+
+    # Assemble main report_data.json (fast star-schema bundle)
+    now_iso = datetime.datetime.now().isoformat(timespec="seconds")
+    main_payload = {
+        "schemaVersion": 3,
+        "taxonomy": taxonomy,
         "meta": {
-            "generatedAt": datetime.datetime.now().isoformat(timespec="seconds"),
-            "sources": source_meta,
-            "rowCount": len(compact_rows),
+            "generatedAt": now_iso,
+            "sources": sales_sources,
+            "rowCount": tot_rows,
+            "cubeRowCount": len(cube_rows),
             "dateMin": min_date.strftime("%Y-%m-%d") if min_date else None,
             "dateMax": max_date.strftime("%Y-%m-%d") if max_date else None,
+            "months": sorted(all_months_set),
             "totals": {
                 "sales": round(tot_sales, 2),
                 "qty": tot_qty,
@@ -330,720 +998,119 @@ def build_sales_section(all_raw: list[dict], source_meta: list[dict]) -> dict:
                 "sales": round(bulk_sales, 2),
                 "qty": bulk_qty,
             },
-            "columns": [
-                "date", "month", "week", "siteIdx", "storeIdx", "regionIdx",
-                "channelIdx", "subcatIdx", "brandIdx", "orderTypeIdx", "skuIdx",
-                "qty", "sales", "cogs", "gp",
-            ],
         },
-        "lookups": lookups,
+        "lookups": s_lookups,
         "siteDirectory": site_directory,
-        "rows": compact_rows,
-    }
-
-
-def build_master_products(all_raw: list[dict], source_meta: list[dict]) -> tuple[dict | None, dict[str, dict]]:
-    if not all_raw:
-        return None, {}
-
-    lookups = {
-        "subcats": [],
-        "subcat3s": [],
-        "brands": [],
-        "listings": [],
-        "purchaseStatuses": [],
-        "ranges": [],
-        "promoAlerts": [],
-    }
-    lookup_maps = {k: {} for k in lookups}
-
-    def get_idx(key: str, val: str) -> int:
-        m = lookup_maps[key]
-        if val not in m:
-            m[val] = len(lookups[key])
-            lookups[key].append(val)
-        return m[val]
-
-    rows = []
-    sku_map: dict[str, dict] = {}
-    status_counts: dict[str, int] = {}
-    range_counts: dict[str, int] = {}
-
-    for rec in all_raw:
-        sku = str(rec.get("SKU") or "").strip()
-        if not sku:
-            continue
-        name = str(rec.get("SKU Name") or "").strip()
-        subcat = clean_subcat(rec.get("Subcat 2 (Code - Name)") or "")
-        subcat3 = str(rec.get("Subcat 3 (Code - Name)") or "").strip()
-        brand = str(rec.get("Brand Name") or "Khác").strip()
-        listing = str(rec.get("Product listing") or "active").strip()
-        pstatus = str(rec.get("Purchase status") or "Normal").strip()
-        rng = str(rec.get("Range") or "No").strip() or "No"
-        has_serial = 1 if str(rec.get("Has serial number") or "").strip().lower() == "yes" else 0
-        promo = str(rec.get("Promotion Alert") or "").strip()
-
-        listed_price = round(parse_float(rec.get("Listed price")), 2)
-        sr_promo = round(parse_float(rec.get("SR min promotion price")), 2)
-        wcogs = round(parse_float(rec.get("W.COGS No VAT")), 2)
-        last_pur = round(parse_float(rec.get("Last Pur Price No VAT")), 2)
-        latest_quote = round(parse_float(rec.get("Latest quotation")), 2)
-        temp_gp = round(parse_float(rec.get("Temporary GP")), 2)
-        temp_gm = round(parse_float(rec.get("Temporary GM")) * 100, 2) if rec.get("Temporary GM") not in (None, "") else None
-        inv_qty = int(round(parse_float(rec.get("Inv QTY"))))
-        inv_val = round(parse_float(rec.get("Inv")), 2)
-        sales_30d = int(round(parse_float(rec.get("30D Sales QTY"))))
-        warranty_mo = int(round(parse_float(rec.get("Warranty period"))))
-        warranty_note = str(rec.get("Warranty period note") or "").strip()
-
-        status_counts[pstatus] = status_counts.get(pstatus, 0) + 1
-        range_counts[rng] = range_counts.get(rng, 0) + 1
-
-        sku_map[sku] = {
-            "sku": sku,
-            "name": name,
-            "subcat": subcat,
-            "brand": brand,
-            "listing": listing,
-            "purchaseStatus": pstatus,
-            "range": rng,
-            "listedPrice": listed_price,
-            "wcogs": wcogs,
-            "warrantyMo": warranty_mo,
-        }
-
-        rows.append([
-            sku,
-            name,
-            get_idx("subcats", subcat),
-            get_idx("subcat3s", subcat3),
-            get_idx("brands", brand),
-            get_idx("listings", listing),
-            get_idx("purchaseStatuses", pstatus),
-            get_idx("ranges", rng),
-            has_serial,
-            get_idx("promoAlerts", promo),
-            listed_price,
-            sr_promo,
-            wcogs,
-            last_pur,
-            latest_quote,
-            temp_gp,
-            temp_gm,
-            inv_qty,
-            inv_val,
-            sales_30d,
-            warranty_mo,
-            warranty_note,
-        ])
-
-    return {
-        "meta": {
-            "sources": source_meta,
-            "rowCount": len(rows),
-            "statusCounts": status_counts,
-            "rangeCounts": range_counts,
-            "columns": [
-                "sku", "name", "subcatIdx", "subcat3Idx", "brandIdx",
-                "listingIdx", "purchaseStatusIdx", "rangeIdx", "hasSerial", "promoIdx",
-                "listedPrice", "srPromo", "wcogs", "lastPur", "latestQuote",
-                "tempGp", "tempGmPct", "invQty", "invVal", "sales30d", "warrantyMo", "warrantyNote",
-            ],
-        },
-        "lookups": lookups,
-        "rows": rows,
-    }, sku_map
-
-
-def build_inventory_section(
-    all_raw: list[dict],
-    source_meta: list[dict],
-    master_map: dict[str, dict],
-) -> dict | None:
-    if not all_raw:
-        return None
-
-    lookups = {
-        "sites": [],
-        "siteNames": [],
-        "subcats": [],
-        "brands": [],
-        "binCodes": [],
-        "binTypes": [],
-        "binZones": [],
-        "purchaseStatuses": [],
-        "ranges": [],
-        "skus": [],
-    }
-    lookup_maps = {k: {} for k in lookups}
-
-    def get_idx(key: str, val: str) -> int:
-        m = lookup_maps[key]
-        if val not in m:
-            m[val] = len(lookups[key])
-            lookups[key].append(val)
-        return m[val]
-
-    parsed_dates = []
-    for rec in all_raw:
-        ld = parse_excel_date(rec.get("Last Received Date"))
-        if ld is not None:
-            parsed_dates.append(ld)
-    snapshot_date = max(parsed_dates) if parsed_dates else datetime.date.today()
-
-    compact_rows = []
-    site_directory = {}
-    tot_qty = 0
-    tot_value = 0.0
-    tot_net_value = 0.0
-    tot_pp_done = 0.0
-    tot_pp_proc = 0.0
-    sellable_qty = 0
-    sellable_val = 0.0
-    damaged_qty = 0
-    damaged_val = 0.0
-    disc_qty = 0
-    disc_val = 0.0
-    unique_skus = set()
-
-    for rec in all_raw:
-        sku_code = str(rec.get("SKU") or "").strip()
-        if not sku_code:
-            continue
-        sku_name = str(rec.get("SKU Name") or "").strip()
-        sku_label = f"{sku_code} — {sku_name}" if sku_name else sku_code
-        unique_skus.add(sku_code)
-
-        mp = master_map.get(sku_code, {})
-        site = str(rec.get("Site Code") or "UNKNOWN").strip()
-        site_name = str(rec.get("Site Name") or "").strip() or site
-        subcat = clean_subcat(rec.get("Subcat 2 (Code - Name)") or "")
-        brand = str(rec.get("Brand Name") or "Khác").strip()
-        bin_code = str(rec.get("BIN Code") or "N/A").strip()
-        bin_type = str(rec.get("BIN Type") or "Khác").strip()
-        bin_zone = str(rec.get("BIN Zone") or "Khác").strip()
-        purchase_status = str(rec.get("Purchase status") or mp.get("purchaseStatus") or "Normal").strip()
-        rng = str(rec.get("Range") or mp.get("range") or "No").strip() or "No"
-
-        last_recv_d = parse_excel_date(rec.get("Last Received Date"))
-        first_recv_d = parse_excel_date(rec.get("First Received Date"))
-        last_recv_iso = last_recv_d.strftime("%Y-%m-%d") if last_recv_d else ""
-        first_recv_iso = first_recv_d.strftime("%Y-%m-%d") if first_recv_d else ""
-        aging_days = (snapshot_date - last_recv_d).days if last_recv_d else -1
-        if aging_days < 0 and last_recv_d is not None:
-            aging_days = 0
-        aging_first_days = (snapshot_date - first_recv_d).days if first_recv_d else aging_days
-        if aging_first_days < 0 and first_recv_d is not None:
-            aging_first_days = 0
-
-        qty = int(round(parse_float(rec.get("Inventory QTY"))))
-        inv_val = round(parse_float(rec.get("Inventory")), 2)
-        net_val = round(parse_float(rec.get("Included Price Protection & SO SI No Condition")), 2)
-        if net_val == 0.0 and inv_val != 0.0:
-            net_val = inv_val
-        unit_cost = round(parse_float(rec.get("Unit Cost")), 2)
-        if unit_cost == 0.0 and qty > 0 and inv_val > 0:
-            unit_cost = round(inv_val / qty, 2)
-        listed_price = round(parse_float(rec.get("Listed price")), 2)
-        min_stock = int(round(parse_float(rec.get("Min stock"))))
-        pp_done = round(parse_float(rec.get("Price Protection & SO SI No Condition Completed")), 2)
-        pp_proc = round(parse_float(rec.get("Price Protection & SO SI No Condition in Process")), 2)
-
-        tot_qty += qty
-        tot_value += inv_val
-        tot_net_value += net_val
-        tot_pp_done += pp_done
-        tot_pp_proc += pp_proc
-
-        bt_low = bin_type.lower()
-        if "bán mới" in bt_low:
-            sellable_qty += qty
-            sellable_val += inv_val
-        if "hư hỏng" in bt_low:
-            damaged_qty += qty
-            damaged_val += inv_val
-        if purchase_status.lower() == "discontinued":
-            disc_qty += qty
-            disc_val += inv_val
-
-        if site not in site_directory:
-            site_directory[site] = {
-                "siteCode": site,
-                "siteName": site_name,
-            }
-
-        compact_rows.append([
-            get_idx("skus", sku_label),
-            get_idx("sites", site),
-            get_idx("siteNames", site_name),
-            get_idx("subcats", subcat),
-            get_idx("brands", brand),
-            get_idx("binCodes", bin_code),
-            get_idx("binTypes", bin_type),
-            get_idx("binZones", bin_zone),
-            get_idx("purchaseStatuses", purchase_status),
-            last_recv_iso,
-            first_recv_iso,
-            aging_days,
-            qty,
-            inv_val,
-            net_val,
-            unit_cost,
-            listed_price,
-            min_stock,
-            get_idx("ranges", rng),
-            aging_first_days,
-        ])
-
-    compact_rows.sort(key=lambda x: -x[13])
-
-    return {
-        "meta": {
-            "generatedAt": datetime.datetime.now().isoformat(timespec="seconds"),
-            "snapshotDate": snapshot_date.strftime("%Y-%m-%d"),
-            "sources": source_meta,
-            "rowCount": len(compact_rows),
-            "uniqueSkuCount": len(unique_skus),
-            "totals": {
-                "qty": tot_qty,
-                "value": round(tot_value, 2),
-                "netValue": round(tot_net_value, 2),
-                "avgUnitCost": round(tot_value / tot_qty, 2) if tot_qty else 0.0,
-                "priceProtectionCompleted": round(tot_pp_done, 2),
-                "priceProtectionInProcess": round(tot_pp_proc, 2),
-                "sellableQty": sellable_qty,
-                "sellableValue": round(sellable_val, 2),
-                "damagedQty": damaged_qty,
-                "damagedValue": round(damaged_val, 2),
-                "discontinuedQty": disc_qty,
-                "discontinuedValue": round(disc_val, 2),
+        "salesCube": cube_rows,
+        "salesDaily": daily_rows,
+        "inventory": {
+            "meta": {
+                "generatedAt": now_iso,
+                "snapshotDate": snapshot_d.strftime("%Y-%m-%d"),
+                "sources": inv_sources,
+                "rowCount": len(inv_rows),
+                "uniqueSkuCount": len(inv_skus),
+                "totals": {
+                    "qty": inv_tot_qty,
+                    "value": round(inv_tot_val, 2),
+                    "netValue": round(inv_tot_net, 2),
+                    "avgUnitCost": round(inv_tot_val / inv_tot_qty, 2) if inv_tot_qty else 0.0,
+                    "sellableQty": inv_sell_qty,
+                    "sellableValue": round(inv_sell_val, 2),
+                    "damagedQty": inv_dmg_qty,
+                    "damagedValue": round(inv_dmg_val, 2),
+                    "discontinuedQty": inv_disc_qty,
+                    "discontinuedValue": round(inv_disc_val, 2),
+                },
             },
-            "columns": [
-                "skuIdx", "siteIdx", "siteNameIdx", "subcatIdx", "brandIdx",
-                "binCodeIdx", "binTypeIdx", "binZoneIdx", "purchaseStatusIdx",
-                "lastReceivedDate", "firstReceivedDate", "agingDays",
-                "qty", "value", "netValue", "unitCost", "listedPrice", "minStock",
-                "rangeIdx", "agingFirstDays",
-            ],
+            "lookups": inv_lookups,
+            "siteDirectory": inv_site_dir,
+            "rows": inv_rows,
         },
-        "lookups": lookups,
-        "siteDirectory": site_directory,
-        "rows": compact_rows,
-    }
-
-
-def build_sku_level(all_raw: list[dict], source_meta: list[dict], master_map: dict[str, dict]) -> dict | None:
-    if not all_raw:
-        return None
-    rows = []
-    tot_7d = tot_30d = tot_90d = tot_180d = tot_inv_qty = 0
-    tot_inv_val = 0.0
-    for rec in all_raw:
-        sku = str(rec.get("SKU") or "").strip()
-        if not sku:
-            continue
-        mp = master_map.get(sku, {})
-        s7 = int(round(parse_float(rec.get("7D Sales QTY"))))
-        s30 = int(round(parse_float(rec.get("30D Sales QTY"))))
-        s90 = int(round(parse_float(rec.get("90D Sales QTY"))))
-        s180 = int(round(parse_float(rec.get("180D Sales QTY"))))
-        gm = parse_nullable_float(parse_float(rec.get("GM (%)")) * 100) if rec.get("GM (%)") not in (None, "") else None
-        sdays = parse_nullable_float(rec.get("Current S.Days"))
-        inv_qty = int(round(parse_float(rec.get("Inv QTY"))))
-        inv_val = round(parse_float(rec.get("Inv")), 2)
-        unit_cost = round(parse_float(rec.get("Unit Cost")), 2)
-        listed = round(parse_float(rec.get("Listed price")), 2)
-        pstatus = str(rec.get("Purchase status") or mp.get("purchaseStatus") or "Normal").strip()
-        rng = str(mp.get("range") or "No").strip()
-
-        tot_7d += s7
-        tot_30d += s30
-        tot_90d += s90
-        tot_180d += s180
-        tot_inv_qty += inv_qty
-        tot_inv_val += inv_val
-
-        rows.append([
-            sku,
-            str(rec.get("SKU Name") or mp.get("name") or "").strip(),
-            clean_subcat(rec.get("Subcat 2 (Code - Name)") or ""),
-            str(rec.get("Brand Name") or "Khác").strip(),
-            pstatus,
-            rng,
-            s7, s30, s90, s180,
-            gm, sdays, inv_qty, inv_val, unit_cost, listed,
-        ])
-    rows.sort(key=lambda x: -x[13])
-    return {
-        "meta": {
-            "sources": source_meta,
-            "rowCount": len(rows),
-            "totals": {
-                "sales7d": tot_7d,
-                "sales30d": tot_30d,
-                "sales90d": tot_90d,
-                "sales180d": tot_180d,
-                "invQty": tot_inv_qty,
-                "invVal": round(tot_inv_val, 2),
+        "invSkuLevel": {
+            "meta": {
+                "sources": sku_vel_sources,
+                "rowCount": len(sku_vel_rows),
+                "totals": {
+                    "sales7d": s7t, "sales30d": s30t, "sales90d": s90t, "sales180d": s180t,
+                    "invQty": sqt, "invVal": round(svt, 2),
+                },
             },
-            "columns": [
-                "sku", "name", "subcat", "brand", "purchaseStatus", "range",
-                "s7d", "s30d", "s90d", "s180d", "gmPct", "sDays", "invQty", "invVal", "unitCost", "listedPrice",
-            ],
+            "rows": sku_vel_rows,
         },
-        "rows": rows,
+        "invBranchLevel": {
+            "meta": {"sources": br_sources, "rowCount": len(br_rows)},
+            "lookups": br_lookups,
+            "rows": br_rows,
+        },
+        "invSerialCube": {
+            "meta": {
+                "sources": sn_sources + bad_sources,
+                "totalSerials": len(full_serial_rows),
+                "cubeRows": len(serial_cube_rows),
+                "classifiedCount": sn_cls_cnt,
+                "classifiedValue": round(sn_cls_val, 2),
+                "badRiskCount": sn_risk_cnt,
+                "badRiskValue": round(sn_risk_val, 2),
+                "totalValue": round(sn_tot_val, 2),
+            },
+            "lookups": {
+                k: sn_lookups[k]
+                for k in ("cats", "sites", "subcats", "brands", "binTypes", "binZones", "purchaseStatuses", "ranges", "badComp", "badSite")
+            },
+            "rows": serial_cube_rows,
+        },
+        "masterSummary": {
+            "meta": {"sources": mp_sources, "rowCount": len(mp_rows)},
+            "lookups": {
+                k: mp_lookups[k]
+                for k in ("cats", "subcats", "purchaseStatuses", "ranges")
+            },
+            "rows": mp_summary_rows,
+        },
     }
 
+    # Lazy Shard 1: Master Product Full + YTD Sales per SKU
+    master_shard = {
+        "meta": {"generatedAt": now_iso, "rowCount": len(mp_rows), "sources": mp_sources},
+        "lookups": mp_lookups,
+        "rows": mp_rows,
+        "salesBySku": {sku: [round(v[0], 2), v[1], round(v[2], 2), v[3]] for sku, v in sku_ytd_sales.items()},
+    }
 
-def build_branch_level(all_raw: list[dict], source_meta: list[dict]) -> dict | None:
-    if not all_raw:
-        return None
-    lookups = {"sites": [], "siteNames": []}
-    maps = {"sites": {}, "siteNames": {}}
-
-    def get_idx(key: str, val: str) -> int:
-        m = maps[key]
-        if val not in m:
-            m[val] = len(lookups[key])
-            lookups[key].append(val)
-        return m[val]
-
-    rows = []
-    for rec in all_raw:
-        sku = str(rec.get("SKU") or "").strip()
-        if not sku:
-            continue
-        site = str(rec.get("Site Code") or "UNKNOWN").strip()
-        site_name = str(rec.get("Site Name") or "").strip() or site
-        s7 = int(round(parse_float(rec.get("7D Sales QTY"))))
-        s30 = int(round(parse_float(rec.get("30D Sales QTY"))))
-        s90 = int(round(parse_float(rec.get("90D Sales QTY"))))
-        s180 = int(round(parse_float(rec.get("180D Sales QTY"))))
-        sdays = parse_nullable_float(rec.get("Current S.Days"))
-        inv_qty = int(round(parse_float(rec.get("Inv QTY"))))
-        inv_val = round(parse_float(rec.get("Inv")), 2)
-        unit_cost = round(parse_float(rec.get("Unit Cost")), 2)
-        rows.append([
-            sku,
-            get_idx("sites", site),
-            get_idx("siteNames", site_name),
-            s7, s30, s90, s180,
-            sdays, inv_qty, inv_val, unit_cost,
-        ])
-    rows.sort(key=lambda x: -x[9])
-    return {
+    # Lazy Shard 2: Full Serial Details + Bad Stock
+    serial_shard = {
         "meta": {
-            "sources": source_meta,
-            "rowCount": len(rows),
-            "columns": ["sku", "siteIdx", "siteNameIdx", "s7d", "s30d", "s90d", "s180d", "sDays", "invQty", "invVal", "unitCost"],
+            "generatedAt": now_iso, "rowCount": len(full_serial_rows),
+            "classifiedCount": sn_cls_cnt, "badRiskCount": sn_risk_cnt,
+            "sources": sn_sources + bad_sources,
         },
-        "lookups": lookups,
-        "rows": rows,
+        "lookups": sn_lookups,
+        "rows": full_serial_rows,
     }
 
+    OUT_DIR.mkdir(parents=True, exist_ok=True)
+    main_str = json.dumps(main_payload, ensure_ascii=False, separators=(",", ":"))
+    master_str = json.dumps(master_shard, ensure_ascii=False, separators=(",", ":"))
+    serial_str = json.dumps(serial_shard, ensure_ascii=False, separators=(",", ":"))
 
-def build_serials_and_bad_stock(
-    serial_raw: list[dict],
-    bad_stock_raw: list[dict],
-    serial_sources: list[dict],
-    bad_stock_sources: list[dict],
-    master_map: dict[str, dict],
-) -> dict | None:
-    if not serial_raw and not bad_stock_raw:
-        return None
+    OUT_MAIN.write_text(main_str, encoding="utf-8")
+    OUT_MASTER.write_text(master_str, encoding="utf-8")
+    OUT_SERIALS.write_text(serial_str, encoding="utf-8")
 
-    # Index Bad Stock by Serial Number
-    bad_by_sn: dict[str, dict] = {}
-    for rec in bad_stock_raw:
-        sn = str(rec.get("Serial Number") or "").strip()
-        if not sn:
-            continue
-        bad_by_sn[sn] = {
-            "sku": str(rec.get("SKU") or "").strip(),
-            "skuName": str(rec.get("SKU Name") or "").strip(),
-            "site": str(rec.get("Site Code") or "UNKNOWN").strip(),
-            "siteName": str(rec.get("Site Name") or "").strip(),
-            "subcat": str(rec.get("Subcat 2 Name") or "Khác").strip(),
-            "brand": str(rec.get("Brand Name") or "Khác").strip(),
-            "purchaseStatus": str(rec.get("Purchase status") or "Normal").strip(),
-            "loc": str(rec.get("Location Code") or "N/A").strip(),
-            "binType": str(rec.get("BIN Type") or "Hàng bán mới tại kho").strip(),
-            "binZone": str(rec.get("BIN Zone") or "Khác").strip(),
-            "dateComp": (parse_excel_date(rec.get("Date import company")) or None),
-            "agingComp": int(round(parse_float(rec.get("Aging company"), -1))),
-            "stockDayComp": int(round(parse_float(rec.get("Stock day company"), 0))),
-            "badComp": str(rec.get("Bad stock company") or "Tồn thông thường").strip(),
-            "dateSite": (parse_excel_date(rec.get("Date import site")) or None),
-            "agingSite": int(round(parse_float(rec.get("Aging site"), -1))),
-            "stockDaySite": int(round(parse_float(rec.get("Stock day site"), 0))),
-            "badSite": str(rec.get("Bad stock site") or "Tồn thông thường").strip(),
-            "invVal": round(parse_float(rec.get("Inventory")), 2),
-        }
+    # Remove legacy report_data.js if oversized so static hosting stays lean
+    legacy_js = OUT_DIR / "report_data.js"
+    if legacy_js.exists():
+        legacy_js.unlink()
 
-    lookups = {
-        "sites": [],
-        "subcats": [],
-        "brands": [],
-        "suppliers": [],
-        "locations": [],
-        "binTypes": [],
-        "binZones": [],
-        "importTypes": [],
-        "purchaseStatuses": [],
-        "ranges": [],
-        "badComp": [],
-        "badSite": [],
-    }
-    lookup_maps = {k: {} for k in lookups}
-
-    def get_idx(key: str, val: str) -> int:
-        m = lookup_maps[key]
-        if val not in m:
-            m[val] = len(lookups[key])
-            lookups[key].append(val)
-        return m[val]
-
-    rows = []
-    seen_sn = set()
-    tot_val = 0.0
-    tot_net = 0.0
-    bad_stock_classified_count = 0
-    bad_stock_classified_val = 0.0
-    bad_stock_risk_count = 0
-    bad_stock_risk_val = 0.0
-
-    for rec in serial_raw:
-        sn = str(rec.get("Serial Number") or "").strip()
-        if not sn:
-            continue
-        seen_sn.add(sn)
-        sku = str(rec.get("SKU") or "").strip()
-        sku_name = str(rec.get("SKU Name") or "").strip()
-        mp = master_map.get(sku, {})
-        bs = bad_by_sn.get(sn)
-
-        site = str(rec.get("Site Code") or (bs["site"] if bs else "UNKNOWN")).strip()
-        subcat = str(rec.get("Subcat 2 Name") or mp.get("subcat") or "Khác").strip()
-        brand = str(rec.get("Brand Name") or mp.get("brand") or "Khác").strip()
-        supplier = str(rec.get("Supplier Short Name") or "").strip() or "Không rõ NCC"
-        loc = str(rec.get("Location Code") or "N/A").strip()
-        bin_type = str(rec.get("BIN Type") or (bs["binType"] if bs else "Khác")).strip()
-        bin_zone = str(rec.get("BIN Zone") or (bs["binZone"] if bs else "Khác")).strip()
-        import_type = str(rec.get("Initial import type") or "").strip() or "Khác"
-        pstatus = str((bs["purchaseStatus"] if bs else "") or mp.get("purchaseStatus") or "Normal").strip()
-        rng = str(mp.get("range") or "No").strip() or "No"
-
-        first_d = parse_excel_date(rec.get("First Received Date"))
-        last_d = parse_excel_date(rec.get("Last Received Date"))
-        first_iso = first_d.strftime("%Y-%m-%d") if first_d else ""
-        last_iso = last_d.strftime("%Y-%m-%d") if last_d else ""
-
-        days_first = int(round(parse_float(rec.get("inv days since first received"), -1)))
-        days_last = int(round(parse_float(rec.get("inv days since last received"), -1)))
-        inv_val = round(parse_float(rec.get("Inventory")), 2)
-        net_val = round(parse_float(rec.get("Included Price Protection")), 2)
-        if net_val == 0.0 and inv_val != 0.0:
-            net_val = inv_val
-        pp_val = round(parse_float(rec.get("Price Protection")), 2)
-
-        in_bad_file = 1 if bs is not None else 0
-        aging_comp = bs["agingComp"] if bs else days_first
-        aging_site = bs["agingSite"] if bs else days_last
-        sday_comp = bs["stockDayComp"] if bs else 0
-        sday_site = bs["stockDaySite"] if bs else 0
-        bad_comp = bs["badComp"] if bs else f"Không phân loại ({bin_type})"
-        bad_site = bs["badSite"] if bs else f"Không phân loại ({bin_type})"
-
-        tot_val += inv_val
-        tot_net += net_val
-        if bs is not None:
-            bad_stock_classified_count += 1
-            bad_stock_classified_val += inv_val
-            if bad_comp != "Tồn thông thường":
-                bad_stock_risk_count += 1
-                bad_stock_risk_val += inv_val
-
-        rows.append([
-            sn,
-            sku,
-            sku_name,
-            get_idx("sites", site),
-            get_idx("subcats", subcat),
-            get_idx("brands", brand),
-            get_idx("suppliers", supplier),
-            get_idx("locations", loc),
-            get_idx("binTypes", bin_type),
-            get_idx("binZones", bin_zone),
-            get_idx("importTypes", import_type),
-            get_idx("purchaseStatuses", pstatus),
-            get_idx("ranges", rng),
-            first_iso,
-            last_iso,
-            days_first,
-            days_last,
-            inv_val,
-            net_val,
-            pp_val,
-            in_bad_file,
-            aging_comp,
-            aging_site,
-            sday_comp,
-            sday_site,
-            get_idx("badComp", bad_comp),
-            get_idx("badSite", bad_site),
-        ])
-
-    # Include any Bad Stock serials not present in Serial Details
-    for sn, bs in bad_by_sn.items():
-        if sn in seen_sn:
-            continue
-        sku = bs["sku"]
-        mp = master_map.get(sku, {})
-        rng = str(mp.get("range") or "No").strip() or "No"
-        inv_val = bs["invVal"]
-        tot_val += inv_val
-        tot_net += inv_val
-        bad_stock_classified_count += 1
-        bad_stock_classified_val += inv_val
-        if bs["badComp"] != "Tồn thông thường":
-            bad_stock_risk_count += 1
-            bad_stock_risk_val += inv_val
-        rows.append([
-            sn,
-            sku,
-            bs["skuName"],
-            get_idx("sites", bs["site"]),
-            get_idx("subcats", bs["subcat"]),
-            get_idx("brands", bs["brand"]),
-            get_idx("suppliers", "Không rõ NCC"),
-            get_idx("locations", bs["loc"]),
-            get_idx("binTypes", bs["binType"]),
-            get_idx("binZones", bs["binZone"]),
-            get_idx("importTypes", "Khác"),
-            get_idx("purchaseStatuses", bs["purchaseStatus"]),
-            get_idx("ranges", rng),
-            bs["dateComp"].strftime("%Y-%m-%d") if bs["dateComp"] else "",
-            bs["dateSite"].strftime("%Y-%m-%d") if bs["dateSite"] else "",
-            bs["agingComp"],
-            bs["agingSite"],
-            inv_val,
-            inv_val,
-            0.0,
-            1,
-            bs["agingComp"],
-            bs["agingSite"],
-            bs["stockDayComp"],
-            bs["stockDaySite"],
-            get_idx("badComp", bs["badComp"]),
-            get_idx("badSite", bs["badSite"]),
-        ])
-
-    rows.sort(key=lambda x: -x[17])
-
-    return {
-        "meta": {
-            "sources": serial_sources + bad_stock_sources,
-            "rowCount": len(rows),
-            "classifiedCount": bad_stock_classified_count,
-            "classifiedValue": round(bad_stock_classified_val, 2),
-            "badRiskCount": bad_stock_risk_count,
-            "badRiskValue": round(bad_stock_risk_val, 2),
-            "totalValue": round(tot_val, 2),
-            "totalNetValue": round(tot_net, 2),
-            "columns": [
-                "sn", "sku", "skuName", "siteIdx", "subcatIdx", "brandIdx",
-                "supplierIdx", "locIdx", "binTypeIdx", "binZoneIdx", "importTypeIdx",
-                "purchaseStatusIdx", "rangeIdx", "firstDate", "lastDate",
-                "daysFirst", "daysLast", "invVal", "netVal", "ppVal",
-                "inBadFile", "agingComp", "agingSite", "sdayComp", "sdaySite",
-                "badCompIdx", "badSiteIdx",
-            ],
-        },
-        "lookups": lookups,
-        "rows": rows,
-    }
-
-
-def build():
-    xlsx_files = sorted(
-        [p for p in DATA_DIR.glob("*.xlsx") if not p.name.startswith("~$")]
-    )
-    if not xlsx_files:
-        print(f"ERROR: No .xlsx files found in {DATA_DIR}", file=sys.stderr)
-        sys.exit(1)
-
-    buckets: dict[str, list[dict]] = {
-        "sales": [],
-        "inv_details": [],
-        "sku_level": [],
-        "branch_level": [],
-        "bad_stock": [],
-        "serial_details": [],
-        "master_product": [],
-    }
-    sources: dict[str, list[dict]] = {k: [] for k in buckets}
-
-    for f in xlsx_files:
-        headers, recs = read_xlsx_rows(f)
-        kind = detect_dataset_kind(headers, f.name)
-        buckets[kind].extend(recs)
-        sources[kind].append({
-            "file": f.name,
-            "sizeBytes": f.stat().st_size,
-            "rows": len(recs),
-            "kind": kind,
-        })
-
-    payload = build_sales_section(buckets["sales"], sources["sales"])
-    master_section, master_map = build_master_products(buckets["master_product"], sources["master_product"])
-    inv_section = build_inventory_section(buckets["inv_details"], sources["inv_details"], master_map)
-    sku_level = build_sku_level(buckets["sku_level"], sources["sku_level"], master_map)
-    branch_level = build_branch_level(buckets["branch_level"], sources["branch_level"])
-    serials_section = build_serials_and_bad_stock(
-        buckets["serial_details"],
-        buckets["bad_stock"],
-        sources["serial_details"],
-        sources["bad_stock"],
-        master_map,
-    )
-
-    if inv_section is not None:
-        payload["inventory"] = inv_section
-    if master_section is not None:
-        payload["masterProducts"] = master_section
-    if sku_level is not None:
-        payload["invSkuLevel"] = sku_level
-    if branch_level is not None:
-        payload["invBranchLevel"] = branch_level
-    if serials_section is not None:
-        payload["invSerials"] = serials_section
-
-    OUT_FILE.parent.mkdir(parents=True, exist_ok=True)
-    json_str = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
-    with open(OUT_FILE, "w", encoding="utf-8") as f:
-        f.write(json_str)
-    with open(OUT_JS_FILE, "w", encoding="utf-8") as f:
-        f.write("window.REPORT_DATA=")
-        f.write(json_str)
-        f.write(";")
-
-    out_kb = OUT_FILE.stat().st_size / 1024
-    print(f"SUCCESS: Wrote {OUT_FILE} & {OUT_JS_FILE.name} ({out_kb:.1f} KB)")
-    st = payload["meta"]["totals"]
-    print(f"[SALES]         Rows: {payload['meta']['rowCount']:,} | Sales: {st['sales']:,.2f} VND | Qty: {st['qty']:,}")
-    if master_section:
-        print(f"[MASTER PROD]   SKUs: {master_section['meta']['rowCount']:,} | Status: {master_section['meta']['statusCounts']} | Range: {master_section['meta']['rangeCounts']}")
-    if inv_section:
-        it = inv_section["meta"]["totals"]
-        print(f"[INV DETAILS]   Rows: {inv_section['meta']['rowCount']:,} | Qty: {it['qty']:,} | Value: {it['value']:,.2f} VND")
-    if sku_level:
-        print(f"[SKU LEVEL]     SKUs: {sku_level['meta']['rowCount']:,} | 7D/30D/90D/180D: {sku_level['meta']['totals']['sales7d']}/{sku_level['meta']['totals']['sales30d']}/{sku_level['meta']['totals']['sales90d']}/{sku_level['meta']['totals']['sales180d']}")
-    if branch_level:
-        print(f"[BRANCH LEVEL]  Rows: {branch_level['meta']['rowCount']:,} | Sites: {len(branch_level['lookups']['sites'])}")
-    if serials_section:
-        sm = serials_section["meta"]
-        print(f"[SERIALS+BAD]   Total Serials: {sm['rowCount']:,} ({sm['totalValue']:,.0f} VND) | Bad Stock Classified: {sm['classifiedCount']:,} ({sm['classifiedValue']:,.0f} VND) | Risk (!=Thông thường): {sm['badRiskCount']:,} ({sm['badRiskValue']:,.0f} VND)")
-    return json_str
+    elapsed = time.time() - t_start
+    print("=" * 85)
+    print(f"[6/6 DONE in {elapsed:.1f}s]")
+    print(f"  report_data.json    : {OUT_MAIN.stat().st_size / 1024:,.1f} KB")
+    print(f"  lookup_master.json  : {OUT_MASTER.stat().st_size / 1024:,.1f} KB")
+    print(f"  lookup_serials.json : {OUT_SERIALS.stat().st_size / 1024:,.1f} KB")
+    print(f"  Taxonomy Categories : {[c['code'] for c in taxonomy['categories']]} ({len(taxonomy['allSubcats'])} Subcat 2)")
+    return main_str
 
 
 def push_live(site_url: str, json_str: str, update_key: str = ""):
@@ -1053,7 +1120,7 @@ def push_live(site_url: str, json_str: str, update_key: str = ""):
         headers["x-update-key"] = update_key
     req = urllib.request.Request(endpoint, data=json_str.encode("utf-8"), headers=headers, method="POST")
     try:
-        with urllib.request.urlopen(req, timeout=30) as resp:
+        with urllib.request.urlopen(req, timeout=45) as resp:
             body = resp.read().decode("utf-8", errors="replace")
             print(f"[CLOUD LIVE] HTTP {resp.status} -> {endpoint} | {body}")
     except urllib.error.HTTPError as e:
@@ -1066,8 +1133,8 @@ def push_live(site_url: str, json_str: str, update_key: str = ""):
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Build unified Sales + Inventory + Serial + Master Product JSON from data/*.xlsx")
-    parser.add_argument("--push-url", default="", help="Optional Netlify site URL to push live immediately")
+    parser = argparse.ArgumentParser(description="Build Star-Schema Sales + Inventory + Lazy Lookup Shards from data/*.xlsx")
+    parser.add_argument("--push-url", default="", help="Optional Netlify site URL to push report_data.json live")
     parser.add_argument("--key", default=os.environ.get("UPDATE_DATA_KEY", ""), help="Optional UPDATE_DATA_KEY passcode")
     args = parser.parse_args()
     data_str = build()

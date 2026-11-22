@@ -56,6 +56,9 @@
     SALES: 12,
     COGS: 13,
     GP: 14,
+    CAT: 15,
+    COUNT: 16,
+    IS_BULK: 17,
   };
 
   // Compact row column indexes (Inventory Details)
@@ -80,21 +83,22 @@
     MIN_STOCK: 17,
     RANGE: 18,
     AGING_FIRST: 19,
+    CAT: 20,
   };
 
-  // Master Product column indexes
+  // Master Product column indexes (Schema v3: CAT at index 2)
   const MP_C = {
-    SKU: 0, NAME: 1, SUBCAT: 2, SUBCAT3: 3, BRAND: 4, LISTING: 5, STATUS: 6,
-    RANGE: 7, HAS_SERIAL: 8, PROMO: 9, LISTED_PRICE: 10, SR_PROMO: 11,
-    WCOGS: 12, LAST_PUR: 13, LATEST_QUOTE: 14, TEMP_GP: 15, TEMP_GM: 16,
-    INV_QTY: 17, INV_VAL: 18, SALES_30D: 19, WARRANTY_MO: 20, WARRANTY_NOTE: 21,
+    SKU: 0, NAME: 1, CAT: 2, SUBCAT: 3, SUBCAT3: 4, BRAND: 5, LISTING: 6, STATUS: 7,
+    RANGE: 8, HAS_SERIAL: 9, PROMO: 10, LISTED_PRICE: 11, SR_PROMO: 12,
+    WCOGS: 13, LAST_PUR: 14, LATEST_QUOTE: 15, TEMP_GP: 16, TEMP_GM: 17,
+    INV_QTY: 18, INV_VAL: 19, SALES_30D: 20, WARRANTY_MO: 21, WARRANTY_NOTE: 22,
   };
 
   // SKU Level (7D/30D/90D/180D) column indexes
   const SKU_C = {
     SKU: 0, NAME: 1, SUBCAT: 2, BRAND: 3, STATUS: 4, RANGE: 5,
     S7D: 6, S30D: 7, S90D: 8, S180D: 9, GM: 10, SDAYS: 11,
-    INV_QTY: 12, INV_VAL: 13, UNIT_COST: 14, LISTED_PRICE: 15,
+    INV_QTY: 12, INV_VAL: 13, UNIT_COST: 14, LISTED_PRICE: 15, CAT: 16,
   };
 
   // Branch Level (SKU x Site 7D/30D/90D/180D) column indexes
@@ -110,7 +114,14 @@
     FIRST_DATE: 13, LAST_DATE: 14, DAYS_FIRST: 15, DAYS_LAST: 16,
     INV_VAL: 17, NET_VAL: 18, PP_VAL: 19, IN_BAD_FILE: 20,
     AGING_COMP: 21, AGING_SITE: 22, SDAY_COMP: 23, SDAY_SITE: 24,
-    BAD_COMP: 25, BAD_SITE: 26,
+    BAD_COMP: 25, BAD_SITE: 26, CAT: 27,
+  };
+
+  // Serial Cube pre-aggregated column indexes (invSerialCube.rows)
+  const SC_C = {
+    CAT: 0, SUBCAT: 1, SITE: 2, BIN_TYPE: 3, BIN_ZONE: 4, BRAND: 5,
+    STATUS: 6, RANGE: 7, IN_BAD_FILE: 8, BAD_COMP: 9, BAD_SITE: 10,
+    AGING_COMP_B: 11, AGING_SITE_B: 12, COUNT: 13, VAL: 14,
   };
 
   const BIN_TYPE_COLORS = {
@@ -165,6 +176,11 @@
     cloudUpdatedAt: "",
     monthsAll: [],
     activeView: "dashboard",
+    // Tier 1 Global Master Filter (applies to ALL Tabs & Left Sidebar)
+    globalCat: "",
+    globalSubcat: "",
+    shardsLoaded: false,
+    shardsLoading: false,
     // Inventory sub-state
     inv: {
       site: "",
@@ -378,8 +394,139 @@
   const idbSetSourceDir = (handle) => idbSetKey(IDB_DIR_KEY, handle);
   const idbClearSourceDir = () => idbDeleteKey(IDB_DIR_KEY);
 
+  function isValidDataset(json) {
+    return Boolean(
+      json &&
+      ((Array.isArray(json.rows) && json.rows.length > 0) ||
+       (Array.isArray(json.salesCube) && json.salesCube.length > 0))
+    );
+  }
+
+  function normalizePayloadOnLoad(payload) {
+    if (!payload || typeof payload !== "object") return payload;
+    if (!payload.lookups) payload.lookups = {};
+    const lk = payload.lookups;
+    if (!Array.isArray(lk.skus) || lk.skus.length === 0) lk.skus = ["Tổng hợp theo Nhóm/Site"];
+
+    // Ensure taxonomy exists (even for legacy or browser-uploaded datasets)
+    if (!payload.taxonomy || !Array.isArray(payload.taxonomy.categories)) {
+      const subSet = new Set([
+        ...(lk.subcats || []),
+        ...(payload.inventory?.lookups?.subcats || []),
+      ]);
+      const catMap = new Map();
+      const catNames = {
+        NH03: "NH03 — Linh kiện & Thiết bị",
+        NH06: "NH06 — Âm thanh & Gaming Gear",
+        NH07: "NH07 — Thiết bị văn phòng",
+        NH10: "NH10 — Phụ kiện công nghệ",
+        NH11: "NH11 — Phụ kiện lưu trữ & Cáp sạc",
+        NH93: "NH93 — Linh kiện bảo hành & Sửa chữa",
+      };
+      Array.from(subSet).sort().forEach((sc) => {
+        const m = String(sc).match(/^(NH\d{2})/i);
+        const code = m ? m[1].toUpperCase() : "OTHER";
+        if (!catMap.has(code)) catMap.set(code, []);
+        catMap.get(code).push(sc);
+      });
+      payload.taxonomy = {
+        categories: Array.from(catMap.entries()).sort((a, b) => a[0].localeCompare(b[0])).map(([code, subcats]) => ({
+          code,
+          label: catNames[code] || code,
+          subcats,
+        })),
+        allSubcats: Array.from(subSet).sort(),
+      };
+    }
+
+    if (!Array.isArray(lk.categories) || lk.categories.length === 0) {
+      lk.categories = payload.taxonomy.categories.map((c) => c.code);
+    }
+
+    // Unpack Schema v3 salesCube into rows compatible with C
+    if (Array.isArray(payload.salesCube) && (!Array.isArray(payload.rows) || payload.rows.length === 0)) {
+      const monthsL = lk.months || [];
+      const sitesL = lk.sites || [];
+      const storesL = lk.stores || [];
+      const siteDir = payload.siteDirectory || {};
+      const siteToStoreIdx = sitesL.map((sc) => {
+        const stName = siteDir[sc]?.storeName || sc;
+        const idx = storesL.indexOf(stName);
+        return idx >= 0 ? idx : 0;
+      });
+
+      payload.rows = payload.salesCube.map((r) => {
+        const mStr = typeof r[0] === "number" ? (monthsL[r[0]] || "2026-01") : String(r[0]);
+        return [
+          `${mStr}-01`,              // 0: DATE
+          mStr,                      // 1: MONTH
+          mStr,                      // 2: WEEK
+          r[1],                      // 3: SITE
+          siteToStoreIdx[r[1]] || 0, // 4: STORE
+          r[2],                      // 5: REGION
+          r[3],                      // 6: CHANNEL
+          r[5],                      // 7: SUBCAT
+          r[6],                      // 8: BRAND
+          r[7],                      // 9: ORDER_TYPE
+          0,                         // 10: SKU
+          r[9],                      // 11: QTY
+          r[10],                     // 12: SALES
+          r[11],                     // 13: COGS
+          r[12],                     // 14: GP
+          r[4],                      // 15: CAT
+          r[13] || 1,                // 16: COUNT
+          r[8] || 0,                 // 17: IS_BULK
+        ];
+      });
+    }
+    return payload;
+  }
+
+  async function ensureLookupShardsLoaded() {
+    if (!state.raw) return false;
+    if (state.raw.masterProducts?.rows?.length && state.raw.invSerials?.rows?.length) {
+      state.shardsLoaded = true;
+      return true;
+    }
+    if (state.shardsLoading) return false;
+    state.shardsLoading = true;
+    try {
+      const [mpRes, snRes] = await Promise.all([
+        fetch("./data/lookup_master.json", { cache: "no-store" }).catch(() => null),
+        fetch("./data/lookup_serials.json", { cache: "no-store" }).catch(() => null),
+      ]);
+      if (mpRes && mpRes.ok) {
+        const mpJson = await mpRes.json();
+        if (mpJson && Array.isArray(mpJson.rows)) {
+          state.raw.masterProducts = mpJson;
+        }
+      }
+      if (snRes && snRes.ok) {
+        const snJson = await snRes.json();
+        if (snJson && Array.isArray(snJson.rows)) {
+          state.raw.invSerials = snJson;
+        }
+      }
+      state.shardsLoaded = true;
+      buildLookupIndexes();
+      initMeta();
+      populateInventoryFilters();
+      renderLookupQuickPicks();
+      if (state.activeView === "lookup" && state.lookup.selectedSku) {
+        renderLookupProfile(state.lookup.selectedSku, state.lookup.selectedSerial);
+      } else if (state.activeView === "inventory" && (state.inv.tableTab === "serials" || state.inv.tableTab === "master")) {
+        renderInvTable(getFilteredInvRows(), getFilteredSerialRows());
+      }
+      return true;
+    } catch {
+      return false;
+    } finally {
+      state.shardsLoading = false;
+    }
+  }
+
   async function loadBaselineData() {
-    if (window.REPORT_DATA && Array.isArray(window.REPORT_DATA.rows)) {
+    if (window.REPORT_DATA && isValidDataset(window.REPORT_DATA)) {
       return window.REPORT_DATA;
     }
     const res = await fetch("./data/report_data.json", { cache: "no-store" });
@@ -411,7 +558,7 @@
           const ct = res.headers.get("content-type") || "";
           if (ct.includes("application/json")) {
             const json = await res.json();
-            if (json && Array.isArray(json.rows) && json.rows.length > 0) {
+            if (isValidDataset(json)) {
               loaded = json;
               sourceMode = "cloud";
               state.cloudAvailable = true;
@@ -437,7 +584,7 @@
     // 2. Fallback to browser-saved local override (IndexedDB)
     if (!loaded) {
       const localCached = await idbGetLatest();
-      if (localCached && Array.isArray(localCached.rows) && localCached.rows.length > 0) {
+      if (isValidDataset(localCached)) {
         loaded = localCached;
         sourceMode = "local";
       }
@@ -455,11 +602,12 @@
       }
     }
 
-    state.raw = loaded;
+    state.raw = normalizePayloadOnLoad(loaded);
     state.dataSourceMode = sourceMode;
 
     buildLookupIndexes();
     initMeta();
+    populateGlobalMasterFilter();
     populateFilters();
     populateInventoryFilters();
     initCharts();
@@ -469,6 +617,11 @@
     bindUpdateModalEvents();
     renderLookupQuickPicks();
     renderAll();
+
+    // Warm load 17K Master SKUs & 40K Serials shards in the background right after first paint
+    setTimeout(() => {
+      ensureLookupShardsLoaded();
+    }, 350);
   }
 
   function formatIsoVn(isoStr) {
@@ -526,16 +679,18 @@
       invRawTab.textContent = `SKU & BIN (${fmtInt(inventory.meta.rowCount)})`;
     }
     const invSnTab = document.getElementById("invSerialTabBtn");
-    if (invSnTab && state.raw.invSerials?.meta) {
-      invSnTab.textContent = `Serial & Bad Stock (${fmtInt(state.raw.invSerials.meta.rowCount)})`;
+    const snCount = state.raw.invSerials?.meta?.rowCount || state.raw.invSerialCube?.meta?.rowCount || 0;
+    if (invSnTab && snCount) {
+      invSnTab.textContent = `Serial & Bad Stock (${fmtInt(snCount)})`;
     }
     const invVelTab = document.getElementById("invVelocityTabBtn");
     if (invVelTab && state.raw.invSkuLevel?.meta) {
       invVelTab.textContent = `Bán 7D–180D (${fmtInt(state.raw.invSkuLevel.meta.rowCount)})`;
     }
     const invMpTab = document.getElementById("invMasterTabBtn");
-    if (invMpTab && state.raw.masterProducts?.meta) {
-      invMpTab.textContent = `Master (${fmtInt(state.raw.masterProducts.meta.rowCount)})`;
+    const mpCount = state.raw.masterProducts?.meta?.rowCount || state.raw.masterSummary?.meta?.rowCount || 0;
+    if (invMpTab && mpCount) {
+      invMpTab.textContent = `Master (${fmtInt(mpCount)})`;
     }
     const invSiteTag = document.getElementById("invSiteCountTag");
     if (invSiteTag && inventory?.lookups) {
@@ -544,8 +699,10 @@
   }
 
   function applyNewDataset(payload, sourceMode) {
-    state.raw = payload;
+    state.raw = normalizePayloadOnLoad(payload);
     state.dataSourceMode = sourceMode;
+    state.globalCat = "";
+    state.globalSubcat = "";
     state.region = "";
     state.site = "";
     state.channel = "";
@@ -557,6 +714,7 @@
 
     buildLookupIndexes();
     initMeta();
+    populateGlobalMasterFilter();
     populateFilters();
     populateInventoryFilters();
     resetInvFilters(false);
@@ -572,6 +730,91 @@
     document.getElementById("excludeBulkToggle").checked = false;
     document.getElementById("storeRegionsOnlyToggle").checked = false;
 
+    renderAll();
+  }
+
+  // --- TIER 1: GLOBAL MASTER FILTER BAR (CATEGORY CODE BUTTONS + SUBCAT 2) ---
+  function populateGlobalMasterFilter() {
+    const tax = state.raw?.taxonomy || { categories: [], allSubcats: [] };
+    const catWrap = document.getElementById("globalCatBtnGroup");
+    if (catWrap) {
+      const allActive = !state.globalCat ? "active" : "";
+      let html = `<button type="button" class="cat-pill-btn ${allActive}" data-cat="">Tất cả (${tax.categories.length} Cat)</button>`;
+      tax.categories.forEach((c) => {
+        const isAct = state.globalCat === c.code ? "active" : "";
+        const shortDesc = String(c.label || "").replace(new RegExp(`^${c.code}\\s*[—-]\\s*`, "i"), "");
+        const subText = shortDesc && shortDesc !== c.code ? shortDesc : `${c.subcats?.length || 0} nhóm`;
+        html += `
+          <button type="button" class="cat-pill-btn ${isAct}" data-cat="${esc(c.code)}" title="${esc(c.label)} (${c.subcats?.length || 0} Subcat 2)">
+            <span class="cat-code">${esc(c.code)}</span>
+            <span class="cat-name">${esc(subText)}</span>
+          </button>`;
+      });
+      catWrap.innerHTML = html;
+    }
+
+    refreshGlobalSubcatDropdown();
+  }
+
+  function refreshGlobalSubcatDropdown() {
+    const tax = state.raw?.taxonomy || { categories: [], allSubcats: [] };
+    const sel = document.getElementById("globalSubcatSelect");
+    if (!sel) return;
+
+    let subList = tax.allSubcats || [];
+    if (state.globalCat) {
+      const catObj = tax.categories.find((c) => c.code === state.globalCat);
+      subList = catObj ? catObj.subcats : subList.filter((s) => s.startsWith(state.globalCat));
+    }
+
+    if (state.globalSubcat && !subList.includes(state.globalSubcat)) {
+      state.globalSubcat = "";
+    }
+
+    const headText = state.globalCat
+      ? `Tất cả Subcat 2 của ${state.globalCat} (${subList.length} nhóm)`
+      : `Tất cả Subcat 2 (${subList.length} nhóm Code - Name)`;
+    sel.innerHTML = `<option value="">${esc(headText)}</option>`;
+    subList.forEach((sc) => sel.add(new Option(sc, sc)));
+    sel.value = state.globalSubcat;
+
+    const clearBtn = document.getElementById("clearGlobalFilterBtn");
+    if (clearBtn) {
+      clearBtn.classList.toggle("hidden", !state.globalCat && !state.globalSubcat);
+    }
+  }
+
+  function setGlobalCategory(catCode) {
+    state.globalCat = state.globalCat === catCode && catCode !== "" ? "" : catCode;
+    state.tablePage = 1;
+    state.inv.tablePage = 1;
+    populateGlobalMasterFilter();
+    renderLookupQuickPicks();
+    renderAll();
+  }
+
+  function setGlobalSubcat(subcatStr) {
+    state.globalSubcat = subcatStr || "";
+    if (state.globalSubcat) {
+      const m = state.globalSubcat.match(/^(NH\d{2})/i);
+      if (m && state.globalCat && state.globalCat !== m[1].toUpperCase()) {
+        state.globalCat = m[1].toUpperCase();
+      }
+    }
+    state.tablePage = 1;
+    state.inv.tablePage = 1;
+    populateGlobalMasterFilter();
+    renderLookupQuickPicks();
+    renderAll();
+  }
+
+  function clearGlobalMasterFilter() {
+    state.globalCat = "";
+    state.globalSubcat = "";
+    state.tablePage = 1;
+    state.inv.tablePage = 1;
+    populateGlobalMasterFilter();
+    renderLookupQuickPicks();
     renderAll();
   }
 
@@ -748,14 +991,14 @@
     charts.invCat.on("click", (params) => {
       if (!params.name) return;
       if (state.inv.catDim === "subcat") {
-        state.inv.subcat = state.inv.subcat === params.name ? "" : params.name;
-        document.getElementById("invFilterSubcat").value = state.inv.subcat;
+        setGlobalSubcat(state.globalSubcat === params.name ? "" : params.name);
       } else {
         state.inv.brand = state.inv.brand === params.name ? "" : params.name;
-        document.getElementById("invFilterBrand").value = state.inv.brand;
+        const brEl = document.getElementById("invFilterBrand");
+        if (brEl) brEl.value = state.inv.brand;
+        state.inv.tablePage = 1;
+        renderInventoryView();
       }
-      state.inv.tablePage = 1;
-      renderInventoryView();
     });
 
     window.addEventListener("resize", () => {
@@ -801,6 +1044,10 @@
     }
     document.getElementById("jumpToLookupBtn")?.classList.toggle("hidden", view === "lookup");
 
+    if (view === "lookup" && !state.shardsLoaded) {
+      ensureLookupShardsLoaded();
+    }
+
     const filtered = getFilteredRows(false);
     const filteredTime = state.clickedMonth ? getFilteredRows(true) : filtered;
     renderSidebarForView(filtered);
@@ -823,7 +1070,20 @@
       document.getElementById("lookupSearchInput")?.focus();
     });
 
-    // Global filters
+    // Tier 1 Global Master Filter (Category Code buttons + Subcat 2 dropdown)
+    document.getElementById("globalCatBtnGroup")?.addEventListener("click", (e) => {
+      const btn = e.target.closest(".cat-pill-btn[data-cat]");
+      if (!btn) return;
+      setGlobalCategory(btn.dataset.cat || "");
+    });
+    document.getElementById("globalSubcatSelect")?.addEventListener("change", (e) => {
+      setGlobalSubcat(e.target.value || "");
+    });
+    document.getElementById("clearGlobalFilterBtn")?.addEventListener("click", () => {
+      clearGlobalMasterFilter();
+    });
+
+    // Tier 2 Sales Local Filters
     document.getElementById("filterRegion").addEventListener("change", (e) => {
       state.region = e.target.value; state.tablePage = 1; renderAll();
     });
@@ -989,9 +1249,11 @@
     renderAll();
   }
 
-  // --- FILTER ENGINE ---
+  // --- FILTER ENGINE (TIER 1 GLOBAL + TIER 2 LOCAL) ---
   function getFilteredRows(ignoreClickedMonth = false) {
     const { rows, lookups } = state.raw;
+    const catIdx = state.globalCat && lookups.categories ? lookups.categories.indexOf(state.globalCat) : -1;
+    const subIdx = state.globalSubcat && lookups.subcats ? lookups.subcats.indexOf(state.globalSubcat) : -1;
     const regIdx = state.region ? lookups.regions.indexOf(state.region) : -1;
     const siteIdx = state.site ? lookups.sites.indexOf(state.site) : -1;
     const chIdx = state.channel ? lookups.channels.indexOf(state.channel) : -1;
@@ -1005,6 +1267,14 @@
     const out = [];
     for (let i = 0; i < rows.length; i++) {
       const r = rows[i];
+      if (state.globalCat) {
+        if (r.length > C.CAT) {
+          if (catIdx === -1 || r[C.CAT] !== catIdx) continue;
+        } else if (!String(lookups.subcats[r[C.SUBCAT]] || "").startsWith(state.globalCat)) {
+          continue;
+        }
+      }
+      if (state.globalSubcat && (subIdx === -1 || r[C.SUBCAT] !== subIdx)) continue;
       if (state.monthFrom && r[C.MONTH] < state.monthFrom) continue;
       if (state.monthTo && r[C.MONTH] > state.monthTo) continue;
       if (!ignoreClickedMonth && state.clickedMonth && r[C.MONTH] !== state.clickedMonth) continue;
@@ -1012,9 +1282,51 @@
       if (siteIdx !== -1 && r[C.SITE] !== siteIdx) continue;
       if (chIdx !== -1 && r[C.CHANNEL] !== chIdx) continue;
       if (otIdx !== -1 && r[C.ORDER_TYPE] !== otIdx) continue;
-      if (state.excludeBulk && Math.abs(r[C.QTY]) >= 100) continue;
+      if (state.excludeBulk) {
+        const isBulk = r.length > C.IS_BULK ? r[C.IS_BULK] === 1 : Math.abs(r[C.QTY]) >= 100;
+        if (isBulk) continue;
+      }
       if (state.storeRegionsOnly && !storeRegSet.has(r[C.REGION])) continue;
       out.push(r);
+    }
+    return out;
+  }
+
+  function getFilteredDailyRows(ignoreClickedMonth = false) {
+    const daily = state.raw?.salesDaily;
+    if (!Array.isArray(daily) || !daily.length) return getFilteredRows(ignoreClickedMonth);
+    const { lookups } = state.raw;
+    const datesL = lookups.dates || [];
+    const weeksL = lookups.weeks || [];
+    const monthsL = lookups.months || [];
+    const catIdx = state.globalCat && lookups.categories ? lookups.categories.indexOf(state.globalCat) : -1;
+    const subIdx = state.globalSubcat && lookups.subcats ? lookups.subcats.indexOf(state.globalSubcat) : -1;
+    const regIdx = state.region ? lookups.regions.indexOf(state.region) : -1;
+
+    const storeRegSet = new Set();
+    if (state.storeRegionsOnly) {
+      lookups.regions.forEach((n, idx) => { if (!n.startsWith("Non-Store")) storeRegSet.add(idx); });
+    }
+
+    const out = [];
+    for (let i = 0; i < daily.length; i++) {
+      const d = daily[i];
+      // [0:dIdx, 1:wIdx, 2:mIdx, 3:catIdx, 4:subIdx, 5:regIdx, 6:isBulk, 7:qty, 8:sales, 9:cogs, 10:gp, 11:cnt]
+      const mStr = typeof d[2] === "number" ? (monthsL[d[2]] || "") : String(d[2]);
+      if (state.globalCat && (catIdx === -1 || d[3] !== catIdx)) continue;
+      if (state.globalSubcat && (subIdx === -1 || d[4] !== subIdx)) continue;
+      if (state.monthFrom && mStr < state.monthFrom) continue;
+      if (state.monthTo && mStr > state.monthTo) continue;
+      if (!ignoreClickedMonth && state.clickedMonth && mStr !== state.clickedMonth) continue;
+      if (regIdx !== -1 && d[5] !== regIdx) continue;
+      if (state.excludeBulk && d[6] === 1) continue;
+      if (state.storeRegionsOnly && !storeRegSet.has(d[5])) continue;
+      const dStr = typeof d[0] === "number" ? (datesL[d[0]] || mStr) : String(d[0]);
+      const wStr = typeof d[1] === "number" ? (weeksL[d[1]] || mStr) : String(d[1]);
+      out.push([
+        dStr, mStr, wStr, 0, 0, d[5], 0, d[4], 0, 0, 0,
+        d[7], d[8], d[9], d[10], d[3], d[11] || 1, d[6] || 0,
+      ]);
     }
     return out;
   }
@@ -1206,11 +1518,25 @@
       if (d > 365) { age365Val += val; age365Qty += qty; }
     });
 
-    let healthyCnt = 0, clsCnt = 0, badRiskCnt = 0, badRiskVal = 0;
-    if (state.raw.invSerials) {
+    let healthyCnt = 0, clsCnt = 0, badRiskCnt = 0, badRiskVal = 0, totalSnCnt = 0;
+    const cubeRows = getFilteredSerialCubeRows();
+    if (cubeRows && state.raw.invSerialCube) {
+      const snL = state.raw.invSerialCube.lookups;
+      const badCol = state.inv.badScope === "site" ? SC_C.BAD_SITE : SC_C.BAD_COMP;
+      const badL = state.inv.badScope === "site" ? snL.badSite : snL.badComp;
+      cubeRows.forEach((cr) => {
+        const cnt = cr[SC_C.COUNT];
+        totalSnCnt += cnt;
+        if (!cr[SC_C.IN_BAD_FILE]) return;
+        clsCnt += cnt;
+        if (badL[cr[badCol]] === "Tồn thông thường") healthyCnt += cnt;
+        else { badRiskCnt += cnt; badRiskVal += cr[SC_C.VAL]; }
+      });
+    } else if (state.raw.invSerials) {
       const snL = state.raw.invSerials.lookups;
       const badCol = state.inv.badScope === "site" ? SN_C.BAD_SITE : SN_C.BAD_COMP;
       const badL = state.inv.badScope === "site" ? snL.badSite : snL.badComp;
+      totalSnCnt = serialRows.length;
       serialRows.forEach((sr) => {
         if (!sr[SN_C.IN_BAD_FILE]) return;
         clsCnt++;
@@ -1224,7 +1550,7 @@
     const shareAll = inv.meta?.totals?.value ? (totVal / inv.meta.totals.value) * 100 : 100;
     const healthyPct = clsCnt > 0 ? (healthyCnt / clsCnt) * 100 : 0;
     const vel30d = state.raw.invSkuLevel?.meta?.totals?.sales30d || 0;
-    const mpCount = state.raw.masterProducts?.meta?.rowCount || 0;
+    const mpCount = state.raw.masterProducts?.meta?.rowCount || state.raw.masterSummary?.meta?.rowCount || 0;
 
     applySidebarSpec({
       title: "Tồn Kho",
@@ -1246,7 +1572,7 @@
       g2PillNeg: badRiskCnt > 0,
       g2Pct: healthyPct,
       metrics: [
-        { l: "Tổng SL Tồn", v: `${fmtInt(totQty)} qty`, s: `${fmtInt(serialRows.length)} Serial`, cls: "neutral" },
+        { l: "Tổng SL Tồn", v: `${fmtInt(totQty)} qty`, s: `${fmtInt(totalSnCnt)} Serial`, cls: "neutral" },
         { l: "Bad Stock Rủi ro", v: fmtCompactVnd(badRiskVal), s: `${fmtInt(badRiskCnt)} SN chậm/xấu`, cls: "neg" },
         { l: "Tồn > 365 ngày", v: fmtCompactVnd(age365Val), s: `${fmtInt(age365Qty)} units`, cls: "neg" },
         { l: "Discontinued", v: fmtCompactVnd(discVal), s: `${fmtInt(discQty)} units`, cls: "neutral" },
@@ -1263,14 +1589,16 @@
   function renderSidebarMonthly(rows) {
     const byM = new Map(), weeks = new Set(), days = new Set();
     let totSales = 0, totQty = 0, totGp = 0, bulkCnt = 0;
+    const dailyRows = getFilteredDailyRows(false);
+    dailyRows.forEach((d) => { weeks.add(d[C.WEEK]); days.add(d[C.DATE]); });
     rows.forEach((r) => {
       const m = r[C.MONTH];
       const cur = byM.get(m) || { sales: 0, qty: 0 };
       cur.sales += r[C.SALES]; cur.qty += r[C.QTY];
       byM.set(m, cur);
-      weeks.add(r[C.WEEK]); days.add(r[C.DATE]);
       totSales += r[C.SALES]; totQty += r[C.QTY]; totGp += r[C.GP];
-      if (Math.abs(r[C.QTY]) >= 100) bulkCnt++;
+      const isB = r.length > C.IS_BULK ? r[C.IS_BULK] === 1 : Math.abs(r[C.QTY]) >= 100;
+      if (isB) bulkCnt += (r.length > C.COUNT ? r[C.COUNT] : 1);
     });
     const sortedM = Array.from(byM.entries()).sort((a, b) => a[0].localeCompare(b[0]));
     let peak = ["—", { sales: 0 }], low = ["—", { sales: Infinity }], posMom = 0;
@@ -1494,20 +1822,22 @@
     const { meta, lookups } = state.raw;
     const retIdx = lookups.orderTypes.indexOf("don_nhap_hoan_ban");
     let expRows = 0, retRows = 0, expSales = 0, retSales = 0, totSales = 0, totGp = 0, totQty = 0;
-    const sites = new Set(), skus = new Set();
+    const sites = new Set(), subcats = new Set();
     rows.forEach((r) => {
+      const cnt = r.length > C.COUNT ? (r[C.COUNT] || 1) : 1;
       totSales += r[C.SALES]; totGp += r[C.GP]; totQty += r[C.QTY];
-      sites.add(r[C.SITE]); skus.add(r[C.SKU]);
-      if (r[C.ORDER_TYPE] === retIdx) { retRows++; retSales += Math.abs(r[C.SALES]); }
-      else { expRows++; expSales += r[C.SALES]; }
+      sites.add(r[C.SITE]); subcats.add(r[C.SUBCAT]);
+      if (r[C.ORDER_TYPE] === retIdx) { retRows += cnt; retSales += Math.abs(r[C.SALES]); }
+      else { expRows += cnt; expSales += r[C.SALES]; }
     });
-    const expRate = rows.length ? (expRows / rows.length) * 100 : 0;
-    const filterShare = meta.rowCount ? (rows.length / meta.rowCount) * 100 : 0;
+    const totalTx = expRows + retRows;
+    const expRate = totalTx ? (expRows / totalTx) * 100 : 0;
+    const filterShare = meta.rowCount ? (totalTx / meta.rowCount) * 100 : 0;
 
     applySidebarSpec({
       title: "Data Ledger",
       g1Label: "Tỷ lệ Đơn Xuất Bán",
-      g1Tag: `${fmtInt(rows.length)} dòng`,
+      g1Tag: `${fmtInt(totalTx)} đơn`,
       g1Big: fmtPct(expRate),
       g1Pill: `${fmtInt(expRows)} đơn xuất`,
       g1Pct: expRate,
@@ -1523,16 +1853,16 @@
       g2Pill: "Sẵn sàng Export CSV",
       g2Pct: filterShare,
       metrics: [
-        { l: "Tổng dòng lọc", v: fmtInt(rows.length), s: `/ ${fmtInt(meta.rowCount)}`, cls: "pos" },
+        { l: "Tổng đơn lọc", v: fmtInt(totalTx), s: `/ ${fmtInt(meta.rowCount)}`, cls: "pos" },
         { l: "Tổng Sales (Lọc)", v: fmtCompactVnd(totSales), s: "doanh thu thuần", cls: "pos" },
         { l: "Tổng GP (Lọc)", v: fmtCompactVnd(totGp), s: `GM ${totSales ? fmtPct((totGp / totSales) * 100) : "0%"}`, cls: "pos" },
         { l: "Tổng QTY (Lọc)", v: fmtInt(totQty), s: "units thuần", cls: "neutral" },
       ],
       insets: [
         { l: "Đơn Xuất bán", v: fmtInt(expRows), s: fmtPct(expRate), cls: "pos" },
-        { l: "Đơn Hoàn bán", v: fmtInt(retRows), s: rows.length ? fmtPct((retRows / rows.length) * 100) : "0%", cls: "neg" },
+        { l: "Đơn Hoàn bán", v: fmtInt(retRows), s: totalTx ? fmtPct((retRows / totalTx) * 100) : "0%", cls: "neg" },
         { l: "Active Sites", v: fmtInt(sites.size), s: "điểm bán", cls: "pos" },
-        { l: "Unique SKUs", v: fmtInt(skus.size), s: "mã hàng", cls: "neutral" },
+        { l: "Subcat 2", v: fmtInt(subcats.size), s: "nhóm hàng", cls: "neutral" },
       ],
     });
   }
@@ -1545,18 +1875,19 @@
 
     for (let i = 0; i < rows.length; i++) {
       const r = rows[i];
+      const cnt = r.length > C.COUNT ? (r[C.COUNT] || 1) : 1;
       sales += r[C.SALES];
       qty += r[C.QTY];
       cogs += r[C.COGS];
       gp += r[C.GP];
-      if (r[C.ORDER_TYPE] === retIdx) returnRows++;
-      else exportRows++;
+      if (r[C.ORDER_TYPE] === retIdx) returnRows += cnt;
+      else exportRows += cnt;
       sites.add(r[C.SITE]);
       regions.add(r[C.REGION]);
       months.add(r[C.MONTH]);
     }
 
-    const totalRows = rows.length;
+    const totalRows = exportRows + returnRows;
     const gm = sales !== 0 ? (gp / sales) * 100 : 0;
     const fulfillRate = totalRows > 0 ? (exportRows / totalRows) * 100 : 0;
     const salesShare = meta.totals.sales ? (sales / meta.totals.sales) * 100 : 0;
@@ -1606,6 +1937,8 @@
     const chips = [];
     const add = (label, cls, fn) => chips.push({ label, cls, fn });
 
+    if (state.globalCat) add(`Cat: ${state.globalCat}`, "amber", () => setGlobalCategory(""));
+    if (state.globalSubcat) add(`Subcat 2: ${state.globalSubcat}`, "amber", () => setGlobalSubcat(""));
     if (state.clickedMonth) add(`Month: ${state.clickedMonth}`, "", () => { state.clickedMonth = ""; renderAll(); });
     if (state.region) add(`Region: ${state.region}`, "", () => toggleRegionFilter(state.region));
     if (state.site) add(`Site: ${state.site}`, "", () => toggleSiteFilter(state.site));
@@ -1622,9 +1955,10 @@
       state.storeRegionsOnly = false; document.getElementById("storeRegionsOnlyToggle").checked = false; renderAll();
     });
 
+    const totalTx = rows.reduce((acc, r) => acc + (r.length > C.COUNT ? (r[C.COUNT] || 1) : 1), 0);
     wrap.innerHTML = "";
     if (chips.length === 0) {
-      wrap.innerHTML = `<span class="chip muted-chip">Toàn bộ dữ liệu • ${fmtInt(rows.length)} dòng</span>`;
+      wrap.innerHTML = `<span class="chip muted-chip">Toàn bộ dữ liệu • ${fmtInt(totalTx)} giao dịch</span>`;
     } else {
       chips.forEach((c) => {
         const el = document.createElement("span");
@@ -1637,7 +1971,7 @@
 
     const insightEl = document.getElementById("insightText");
     if (rows.length === 0) {
-      insightEl.textContent = "Không có dữ liệu khớp bộ lọc — bấm Reset bên trái.";
+      insightEl.textContent = "Không có dữ liệu khớp bộ lọc — bấm Reset hoặc Bỏ lọc chung.";
       return;
     }
 
@@ -1648,9 +1982,11 @@
 
     let bulkInPeak = 0, bulkQtyInPeak = 0;
     for (let i = 0; i < rows.length; i++) {
-      if (rows[i][C.MONTH] === peakM && Math.abs(rows[i][C.QTY]) >= 100) {
-        bulkInPeak++;
-        bulkQtyInPeak += rows[i][C.QTY];
+      const r = rows[i];
+      const isB = r.length > C.IS_BULK ? r[C.IS_BULK] === 1 : Math.abs(r[C.QTY]) >= 100;
+      if (r[C.MONTH] === peakM && isB) {
+        bulkInPeak += (r.length > C.COUNT ? (r[C.COUNT] || 1) : 1);
+        bulkQtyInPeak += r[C.QTY];
       }
     }
     const note = !state.excludeBulk && bulkInPeak > 0
@@ -1662,8 +1998,11 @@
   // =========================================================================
   // 3. HERO CHART (DIALOGUE VOLUME SLOT — MULTI-COLOR BAR / SALES+QTY COMBO)
   // =========================================================================
-  function renderHeroChart(rows) {
+  function renderHeroChart(rowsInput) {
     if (!charts.hero) return;
+    const rows = state.heroGranularity !== "month" && !state.site && !state.channel && !state.orderType
+      ? getFilteredDailyRows(Boolean(state.clickedMonth))
+      : rowsInput;
     if (rows.length === 0) {
       charts.hero.clear();
       charts.hero.setOption(emptyOption("Không có dữ liệu khớp bộ lọc"));
@@ -2125,8 +2464,11 @@
   // =========================================================================
   // 7. DEEP VIEWS (BLUE RAIL PAGES 2–6)
   // =========================================================================
-  function renderDeepMonthly(rows) {
+  function renderDeepMonthly(rowsInput) {
     if (!charts.deepMonthly) return;
+    const rows = state.deepGranularity !== "month" && !state.site && !state.channel && !state.orderType
+      ? getFilteredDailyRows(Boolean(state.clickedMonth))
+      : rowsInput;
     if (rows.length === 0) {
       charts.deepMonthly.clear();
       charts.deepMonthly.setOption(emptyOption("Không có dữ liệu"));
@@ -2568,21 +2910,23 @@
 
   function renderRawTable(rows) {
     const { lookups } = state.raw;
+    const catsL = lookups.categories || [];
     let filtered = rows;
     if (state.tableSearch) {
       const q = state.tableSearch;
       filtered = rows.filter((r) =>
-        r[C.DATE].includes(q) ||
+        r[C.MONTH].includes(q) ||
         lookups.sites[r[C.SITE]].toLowerCase().includes(q) ||
         lookups.stores[r[C.STORE]].toLowerCase().includes(q) ||
         lookups.regions[r[C.REGION]].toLowerCase().includes(q) ||
-        lookups.skus[r[C.SKU]].toLowerCase().includes(q)
+        (lookups.subcats[r[C.SUBCAT]] || "").toLowerCase().includes(q) ||
+        (lookups.brands[r[C.BRAND]] || "").toLowerCase().includes(q)
       );
     }
 
-    const colIdx = { date: C.DATE, site: C.SITE, region: C.REGION, qty: C.QTY, sales: C.SALES, gp: C.GP }[state.tableSortCol] ?? C.DATE;
+    const colIdx = { date: C.MONTH, site: C.SITE, region: C.REGION, subcat: C.SUBCAT, count: C.COUNT, qty: C.QTY, sales: C.SALES, gp: C.GP }[state.tableSortCol] ?? C.SALES;
     const dir = state.tableSortDir === "asc" ? 1 : -1;
-    const sorted = [...filtered].sort((a, b) => (typeof a[colIdx] === "string" ? a[colIdx].localeCompare(b[colIdx]) * dir : (a[colIdx] - b[colIdx]) * dir));
+    const sorted = [...filtered].sort((a, b) => (typeof a[colIdx] === "string" ? a[colIdx].localeCompare(b[colIdx]) * dir : ((a[colIdx] || 0) - (b[colIdx] || 0)) * dir));
 
     const totalPages = Math.max(1, Math.ceil(sorted.length / state.tablePageSize));
     state.tablePage = Math.min(state.tablePage, totalPages);
@@ -2590,32 +2934,42 @@
     const pageRows = sorted.slice(start, start + state.tablePageSize);
 
     renderHead([
-      { key: "date", label: "Report Date" },
+      { key: "date", label: "Tháng" },
       { key: "site", label: "Site Code" },
       { key: "store", label: "Store", nosort: true },
       { key: "region", label: "Region" },
-      { key: "sku", label: "SKU — Sản phẩm", nosort: true },
+      { key: "subcat", label: "Category / Subcat 2 (Code - Name)" },
+      { key: "brand", label: "Brand", nosort: true },
+      { key: "count", label: "Số đơn", num: true },
       { key: "qty", label: "Qty", num: true },
       { key: "sales", label: "Sales (VND)", num: true },
       { key: "gp", label: "GP (VND)", num: true },
     ]);
 
     document.getElementById("tableBody").innerHTML = pageRows
-      .map((r) => `
+      .map((r) => {
+        const catCode = r.length > C.CAT ? (catsL[r[C.CAT]] || "") : "";
+        const subName = lookups.subcats[r[C.SUBCAT]] || "";
+        const cnt = r.length > C.COUNT ? (r[C.COUNT] || 1) : 1;
+        return `
       <tr>
-        <td class="mono">${r[C.DATE]}</td>
+        <td class="mono">${r[C.MONTH]}</td>
         <td class="mono"><strong>${esc(lookups.sites[r[C.SITE]])}</strong></td>
         <td>${esc(lookups.stores[r[C.STORE]])}</td>
         <td><span class="tag-pill">${esc(lookups.regions[r[C.REGION]])}</span></td>
-        <td class="sku-cell" title="${esc(lookups.skus[r[C.SKU]])}">${esc(lookups.skus[r[C.SKU]])}</td>
+        <td class="sku-cell" title="${esc(subName)}"><span class="tag-pill" style="margin-right:4px">${esc(catCode)}</span>${esc(subName)}</td>
+        <td>${esc(lookups.brands[r[C.BRAND]] || "")}</td>
+        <td class="num mono">${fmtInt(cnt)}</td>
         <td class="num" style="color:#F59E0B">${fmtInt(r[C.QTY])}</td>
         <td class="num">${fmtInt(r[C.SALES])}</td>
         <td class="num" style="color:#12D37A">${fmtInt(r[C.GP])}</td>
-      </tr>`)
+      </tr>`;
+      })
       .join("");
 
+    const totalTx = sorted.reduce((acc, r) => acc + (r.length > C.COUNT ? (r[C.COUNT] || 1) : 1), 0);
     document.getElementById("tableCountInfo").textContent =
-      `Hiển thị ${fmtInt(start + 1)}–${fmtInt(Math.min(start + pageRows.length, sorted.length))} / ${fmtInt(sorted.length)} giao dịch`;
+      `Hiển thị ${fmtInt(start + 1)}–${fmtInt(Math.min(start + pageRows.length, sorted.length))} / ${fmtInt(sorted.length)} nhóm (${fmtInt(totalTx)} giao dịch)`;
 
     const pag = document.getElementById("tablePagination");
     pag.innerHTML = `
@@ -2626,10 +2980,13 @@
     pag.querySelector("#nextP").addEventListener("click", () => { if (state.tablePage < totalPages) { state.tablePage++; renderRawTable(rows); } });
 
     state.lastTableExport = {
-      headers: ["Report Date", "Month", "Sales Site Code", "Store Name", "Region Name", "Channel", "SKU", "Sales QTY", "Sales", "COGS", "GP"],
+      headers: ["Month", "Sales Site Code", "Store Name", "Region Name", "Channel", "Category Code", "Subcat 2 (Code - Name)", "Brand", "Order Count", "Sales QTY", "Sales", "COGS", "GP"],
       rows: sorted.map((r) => [
-        r[C.DATE], r[C.MONTH], lookups.sites[r[C.SITE]], lookups.stores[r[C.STORE]],
-        lookups.regions[r[C.REGION]], lookups.channels[r[C.CHANNEL]], lookups.skus[r[C.SKU]],
+        r[C.MONTH], lookups.sites[r[C.SITE]], lookups.stores[r[C.STORE]],
+        lookups.regions[r[C.REGION]], lookups.channels[r[C.CHANNEL]],
+        r.length > C.CAT ? (catsL[r[C.CAT]] || "") : "",
+        lookups.subcats[r[C.SUBCAT]] || "", lookups.brands[r[C.BRAND]] || "",
+        r.length > C.COUNT ? (r[C.COUNT] || 1) : 1,
         r[C.QTY], r[C.SALES], r[C.COGS], r[C.GP],
       ]),
       filename: "report_transactions_filtered.csv",
@@ -2721,29 +3078,36 @@
   function populateInventoryFilters() {
     const inv = state.raw?.inventory;
     const mp = state.raw?.masterProducts;
+    const ms = state.raw?.masterSummary;
     const sn = state.raw?.invSerials;
+    const sc = state.raw?.invSerialCube;
     const fill = (id, allLabel, items, labelFn = (x) => x) => {
       const el = document.getElementById(id);
       if (!el) return;
+      const prev = el.value;
       el.innerHTML = `<option value="">${allLabel}</option>`;
       items.forEach((v) => el.add(new Option(labelFn(v), v)));
+      if (prev && items.includes(prev)) el.value = prev;
     };
 
     const statusSet = new Set([
       ...(inv?.lookups?.purchaseStatuses || []),
       ...(mp?.lookups?.purchaseStatuses || []),
+      ...(ms?.lookups?.purchaseStatuses || []),
     ]);
     fill("invFilterStatus", `Tất cả TT Mua (${statusSet.size})`, [...statusSet].sort());
 
     const rangeSet = new Set([
       ...(inv?.lookups?.ranges || ["No"]),
       ...(mp?.lookups?.ranges || []),
+      ...(ms?.lookups?.ranges || []),
     ]);
     fill("invFilterRange", `Tất cả Range (${rangeSet.size})`, [...rangeSet].sort());
 
     const badSet = new Set([
       ...BAD_STOCK_ORDER,
       ...(sn?.lookups?.badComp || []),
+      ...(sc?.lookups?.badComp || []),
     ]);
     const badSorted = [...badSet].sort((a, b) => {
       const ia = BAD_STOCK_ORDER.indexOf(a), ib = BAD_STOCK_ORDER.indexOf(b);
@@ -2758,7 +3122,6 @@
       fill("invFilterSite", "Chưa có dữ liệu Kho", []);
       fill("invFilterBinType", "Tất cả BIN Type", []);
       fill("invFilterBinZone", "Tất cả BIN Zone", []);
-      fill("invFilterSubcat", "Tất cả Subcat 2", []);
       fill("invFilterBrand", "Tất cả Brand", []);
       return;
     }
@@ -2775,7 +3138,6 @@
     );
     fill("invFilterBinType", `Tất cả BIN Type (${lookups.binTypes.length})`, [...lookups.binTypes].sort());
     fill("invFilterBinZone", `Tất cả BIN Zone (${lookups.binZones.length})`, [...lookups.binZones].sort());
-    fill("invFilterSubcat", `Tất cả Subcat 2 (${lookups.subcats.length})`, [...lookups.subcats].sort());
     fill("invFilterBrand", `Tất cả Brand (${lookups.brands.length})`, [...lookups.brands].sort());
   }
 
@@ -2800,7 +3162,6 @@
     setVal("invFilterSite", "");
     setVal("invFilterBinType", "");
     setVal("invFilterBinZone", "");
-    setVal("invFilterSubcat", "");
     setVal("invFilterBrand", "");
     setVal("invFilterStatus", "");
     setVal("invFilterRange", "");
@@ -2826,7 +3187,6 @@
     onSelect("invFilterSite", "site");
     onSelect("invFilterBinType", "binType");
     onSelect("invFilterBinZone", "binZone");
-    onSelect("invFilterSubcat", "subcat");
     onSelect("invFilterBrand", "brand");
     onSelect("invFilterStatus", "status");
     onSelect("invFilterRange", "range");
@@ -2887,6 +3247,9 @@
       state.inv.tablePage = 1;
       state.inv.tableSortCol = v === "velocity" ? "s30d" : "value";
       state.inv.tableSortDir = "desc";
+      if ((v === "serials" || v === "master") && !state.shardsLoaded) {
+        ensureLookupShardsLoaded();
+      }
       renderInvTable(getFilteredInvRows(), getFilteredSerialRows());
     });
 
@@ -2902,12 +3265,62 @@
     });
   }
 
+  function getFilteredSerialCubeRows() {
+    const sc = state.raw?.invSerialCube;
+    if (!sc || !Array.isArray(sc.rows)) return null;
+    const { rows, lookups } = sc;
+    const iv = state.inv;
+
+    const catIdx = state.globalCat && lookups.categories ? lookups.categories.indexOf(state.globalCat) : -1;
+    const gSubIdx = state.globalSubcat && lookups.subcats ? lookups.subcats.indexOf(state.globalSubcat) : -1;
+    const siteIdx = iv.site ? lookups.sites.indexOf(iv.site) : -1;
+    const btIdx = iv.binType ? lookups.binTypes.indexOf(iv.binType) : -1;
+    const bzIdx = iv.binZone ? lookups.binZones.indexOf(iv.binZone) : -1;
+    const brIdx = iv.brand ? lookups.brands.indexOf(iv.brand) : -1;
+    const stIdx = iv.status ? lookups.purchaseStatuses.indexOf(iv.status) : -1;
+    const rngIdx = iv.range ? (lookups.ranges || []).indexOf(iv.range) : -1;
+    const badCol = iv.badScope === "site" ? SC_C.BAD_SITE : SC_C.BAD_COMP;
+    const badLookup = iv.badScope === "site" ? lookups.badSite : lookups.badComp;
+    const badIdx = iv.badStock ? badLookup.indexOf(iv.badStock) : -1;
+    const agingBucketIdx = iv.agingBucket ? AGING_BUCKETS.findIndex((b) => b.key === iv.agingBucket) : -1;
+    const agingCol = iv.agingBasis === "last" ? SC_C.AGING_SITE_B : SC_C.AGING_COMP_B;
+
+    const sellableSet = new Set();
+    const damagedSet = new Set();
+    lookups.binTypes.forEach((n, idx) => {
+      const low = n.toLowerCase();
+      if (low.includes("bán mới")) sellableSet.add(idx);
+      if (low.includes("hư hỏng")) damagedSet.add(idx);
+    });
+
+    const out = [];
+    for (let i = 0; i < rows.length; i++) {
+      const r = rows[i];
+      if (state.globalCat && (catIdx === -1 || r[SC_C.CAT] !== catIdx)) continue;
+      if (state.globalSubcat && (gSubIdx === -1 || r[SC_C.SUBCAT] !== gSubIdx)) continue;
+      if (iv.site && r[SC_C.SITE] !== siteIdx) continue;
+      if (iv.binType && r[SC_C.BIN_TYPE] !== btIdx) continue;
+      if (iv.binZone && r[SC_C.BIN_ZONE] !== bzIdx) continue;
+      if (iv.brand && r[SC_C.BRAND] !== brIdx) continue;
+      if (iv.status && r[SC_C.STATUS] !== stIdx) continue;
+      if (iv.range && r[SC_C.RANGE] !== rngIdx) continue;
+      if (iv.badStock && r[badCol] !== badIdx) continue;
+      if (iv.sellableOnly && !sellableSet.has(r[SC_C.BIN_TYPE])) continue;
+      if (iv.damagedOnly && !damagedSet.has(r[SC_C.BIN_TYPE])) continue;
+      if (agingBucketIdx !== -1 && r[agingCol] !== agingBucketIdx) continue;
+      out.push(r);
+    }
+    return out;
+  }
+
   function getFilteredSerialRows() {
     const sn = state.raw?.invSerials;
     if (!sn || !Array.isArray(sn.rows)) return [];
     const { rows, lookups } = sn;
     const iv = state.inv;
 
+    const catIdx = state.globalCat && lookups.categories ? lookups.categories.indexOf(state.globalCat) : -1;
+    const gSubIdx = state.globalSubcat && lookups.subcats ? lookups.subcats.indexOf(state.globalSubcat) : -1;
     const siteIdx = iv.site ? lookups.sites.indexOf(iv.site) : -1;
     const btIdx = iv.binType ? lookups.binTypes.indexOf(iv.binType) : -1;
     const bzIdx = iv.binZone ? lookups.binZones.indexOf(iv.binZone) : -1;
@@ -2932,6 +3345,14 @@
     const out = [];
     for (let i = 0; i < rows.length; i++) {
       const r = rows[i];
+      if (state.globalCat) {
+        if (r.length > SN_C.CAT) {
+          if (catIdx === -1 || r[SN_C.CAT] !== catIdx) continue;
+        } else if (!String(lookups.subcats[r[SN_C.SUBCAT]] || "").startsWith(state.globalCat)) {
+          continue;
+        }
+      }
+      if (state.globalSubcat && (gSubIdx === -1 || r[SN_C.SUBCAT] !== gSubIdx)) continue;
       if (iv.site && r[SN_C.SITE] !== siteIdx) continue;
       if (iv.binType && r[SN_C.BIN_TYPE] !== btIdx) continue;
       if (iv.binZone && r[SN_C.BIN_ZONE] !== bzIdx) continue;
@@ -2954,6 +3375,8 @@
     const { rows, lookups } = inv;
     const iv = state.inv;
 
+    const catIdx = state.globalCat && lookups.categories ? lookups.categories.indexOf(state.globalCat) : -1;
+    const gSubIdx = state.globalSubcat && lookups.subcats ? lookups.subcats.indexOf(state.globalSubcat) : -1;
     const siteIdx = iv.site ? lookups.sites.indexOf(iv.site) : -1;
     const btIdx = iv.binType ? lookups.binTypes.indexOf(iv.binType) : -1;
     const bzIdx = iv.binZone ? lookups.binZones.indexOf(iv.binZone) : -1;
@@ -2983,6 +3406,14 @@
     const out = [];
     for (let i = 0; i < rows.length; i++) {
       const r = rows[i];
+      if (state.globalCat) {
+        if (r.length > INV_C.CAT) {
+          if (catIdx === -1 || r[INV_C.CAT] !== catIdx) continue;
+        } else if (!String(lookups.subcats[r[INV_C.SUBCAT]] || "").startsWith(state.globalCat)) {
+          continue;
+        }
+      }
+      if (state.globalSubcat && (gSubIdx === -1 || r[INV_C.SUBCAT] !== gSubIdx)) continue;
       if (iv.site && r[INV_C.SITE] !== siteIdx) continue;
       if (iv.binType && r[INV_C.BIN_TYPE] !== btIdx) continue;
       if (iv.binZone && r[INV_C.BIN_ZONE] !== bzIdx) continue;
@@ -3060,11 +3491,28 @@
       if (d > 365) { aging365Val += val; aging365Qty += qty; }
     }
 
-    let badRiskVal = 0, badRiskCnt = 0, classifiedCnt = 0;
-    if (state.raw.invSerials) {
+    let badRiskVal = 0, badRiskCnt = 0, classifiedCnt = 0, totalSnCnt = 0;
+    const cubeRows = getFilteredSerialCubeRows();
+    if (cubeRows && state.raw.invSerialCube) {
+      const snL = state.raw.invSerialCube.lookups;
+      const badCol = state.inv.badScope === "site" ? SC_C.BAD_SITE : SC_C.BAD_COMP;
+      const badL = state.inv.badScope === "site" ? snL.badSite : snL.badComp;
+      cubeRows.forEach((cr) => {
+        const cnt = cr[SC_C.COUNT];
+        totalSnCnt += cnt;
+        if (cr[SC_C.IN_BAD_FILE]) {
+          classifiedCnt += cnt;
+          if (badL[cr[badCol]] !== "Tồn thông thường") {
+            badRiskCnt += cnt;
+            badRiskVal += cr[SC_C.VAL];
+          }
+        }
+      });
+    } else if (state.raw.invSerials) {
       const snL = state.raw.invSerials.lookups;
       const badCol = state.inv.badScope === "site" ? SN_C.BAD_SITE : SN_C.BAD_COMP;
       const badL = state.inv.badScope === "site" ? snL.badSite : snL.badComp;
+      totalSnCnt = serialRows.length;
       serialRows.forEach((sr) => {
         if (sr[SN_C.IN_BAD_FILE]) {
           classifiedCnt++;
@@ -3082,7 +3530,7 @@
     document.getElementById("invKpiValue").textContent = fmtCompactVnd(totalVal);
     document.getElementById("invKpiValueSub").textContent = `Net PP: ${fmtCompactVnd(totalNet)} • TB ${fmtCompactVnd(avgCost)}`;
     document.getElementById("invKpiQty").textContent = `${fmtInt(totalQty)} units`;
-    document.getElementById("invKpiQtySub").textContent = `${fmtInt(serialRows.length)} SN • ${fmtInt(skuSet.size)} SKU • ${fmtInt(siteSet.size)} kho`;
+    document.getElementById("invKpiQtySub").textContent = `${fmtInt(totalSnCnt)} SN • ${fmtInt(skuSet.size)} SKU • ${fmtInt(siteSet.size)} kho`;
     document.getElementById("invKpiSellable").textContent = fmtCompactVnd(sellVal);
     document.getElementById("invKpiSellableSub").textContent = `${pct(sellVal)} • ${fmtInt(sellQty)} units`;
     document.getElementById("invKpiBadStock").textContent = fmtCompactVnd(badRiskVal);
@@ -3099,6 +3547,8 @@
     const chips = [];
     const add = (label, cls, fn) => chips.push({ label, cls, fn });
 
+    if (state.globalCat) add(`Cat: ${state.globalCat}`, "amber", () => setGlobalCategory(""));
+    if (state.globalSubcat) add(`Subcat 2: ${state.globalSubcat}`, "amber", () => setGlobalSubcat(""));
     if (iv.status) add(`TT Mua: ${iv.status}`, "amber", () => { iv.status = ""; document.getElementById("invFilterStatus").value = ""; renderInventoryView(); });
     if (iv.range) add(`Range: ${iv.range}`, "", () => { iv.range = ""; document.getElementById("invFilterRange").value = ""; renderInventoryView(); });
     if (iv.badStock) add(`Loại tồn: ${iv.badStock}`, "amber", () => { iv.badStock = ""; document.getElementById("invFilterBadStock").value = ""; renderInventoryView(); });
@@ -3109,14 +3559,16 @@
     if (iv.site) add(`Kho: ${iv.site}`, "", () => { iv.site = ""; document.getElementById("invFilterSite").value = ""; renderInventoryView(); });
     if (iv.binType) add(`BIN Type: ${iv.binType}`, "", () => { iv.binType = ""; document.getElementById("invFilterBinType").value = ""; renderInventoryView(); });
     if (iv.binZone) add(`BIN Zone: ${iv.binZone}`, "", () => { iv.binZone = ""; document.getElementById("invFilterBinZone").value = ""; renderInventoryView(); });
-    if (iv.subcat) add(`Subcat: ${iv.subcat}`, "", () => { iv.subcat = ""; document.getElementById("invFilterSubcat").value = ""; renderInventoryView(); });
     if (iv.brand) add(`Brand: ${iv.brand}`, "", () => { iv.brand = ""; document.getElementById("invFilterBrand").value = ""; renderInventoryView(); });
     if (iv.sellableOnly) add("Chỉ hàng bán mới", "", () => { iv.sellableOnly = false; document.getElementById("invSellableOnlyToggle").checked = false; renderInventoryView(); });
     if (iv.damagedOnly) add("Chỉ hàng hư hỏng", "amber", () => { iv.damagedOnly = false; document.getElementById("invDamagedOnlyToggle").checked = false; renderInventoryView(); });
 
+    const cubeRows = getFilteredSerialCubeRows();
+    const totalSnCnt = cubeRows ? cubeRows.reduce((acc, cr) => acc + cr[SC_C.COUNT], 0) : serialRows.length;
+
     wrap.innerHTML = "";
     if (!chips.length) {
-      wrap.innerHTML = `<span class="chip muted-chip">Toàn bộ tồn kho • ${fmtInt(rows.length)} BIN • ${fmtInt(serialRows.length)} Serial</span>`;
+      wrap.innerHTML = `<span class="chip muted-chip">Toàn bộ tồn kho • ${fmtInt(rows.length)} BIN • ${fmtInt(totalSnCnt)} Serial</span>`;
     } else {
       chips.forEach((c) => {
         const el = document.createElement("span");
@@ -3128,8 +3580,8 @@
     }
 
     const insightEl = document.getElementById("invInsightText");
-    if (!rows.length && !serialRows.length) {
-      insightEl.textContent = "Không có dữ liệu khớp bộ lọc — bấm Reset Kho.";
+    if (!rows.length && !totalSnCnt) {
+      insightEl.textContent = "Không có dữ liệu khớp bộ lọc — bấm Reset Kho hoặc Bỏ lọc chung.";
       return;
     }
     const { lookups } = state.raw.inventory;
@@ -3139,7 +3591,14 @@
       if ((lookups.binTypes[r[INV_C.BIN_TYPE]] || "").toLowerCase().includes("hư hỏng")) dmgVal += r[INV_C.VALUE];
     });
     let veryBadVal = 0, veryBadCnt = 0;
-    if (state.raw.invSerials) {
+    if (cubeRows && state.raw.invSerialCube) {
+      const snL = state.raw.invSerialCube.lookups;
+      const badCol = iv.badScope === "site" ? SC_C.BAD_SITE : SC_C.BAD_COMP;
+      const badL = iv.badScope === "site" ? snL.badSite : snL.badComp;
+      cubeRows.forEach((cr) => {
+        if (badL[cr[badCol]] === "Tồn rất xấu") { veryBadCnt += cr[SC_C.COUNT]; veryBadVal += cr[SC_C.VAL]; }
+      });
+    } else if (state.raw.invSerials) {
       const snL = state.raw.invSerials.lookups;
       const badCol = iv.badScope === "site" ? SN_C.BAD_SITE : SN_C.BAD_COMP;
       const badL = iv.badScope === "site" ? snL.badSite : snL.badComp;
@@ -3153,8 +3612,10 @@
 
   function renderInvBadStockChart(serialRows) {
     if (!charts.invBadStock) return;
+    const cubeRows = getFilteredSerialCubeRows();
     const sn = state.raw?.invSerials;
-    if (!sn || !serialRows.length) {
+    const hasCube = Boolean(cubeRows && cubeRows.length && state.raw?.invSerialCube);
+    if (!hasCube && (!sn || !serialRows.length)) {
       charts.invBadStock.clear();
       charts.invBadStock.setOption(emptyOption("Chưa có dữ liệu Bad Stock / Serial khớp bộ lọc"));
       return;
@@ -3164,22 +3625,36 @@
     const isSite = iv.badScope === "site";
     const isQty = iv.badMetric === "qty";
     const onlyClassified = iv.badFilter === "classified";
-    const badCol = isSite ? SN_C.BAD_SITE : SN_C.BAD_COMP;
-    const badL = isSite ? sn.lookups.badSite : sn.lookups.badComp;
 
     const map = new Map();
     if (onlyClassified) {
       BAD_STOCK_ORDER.forEach((k) => map.set(k, { val: 0, qty: 0 }));
     }
 
-    serialRows.forEach((sr) => {
-      if (onlyClassified && !sr[SN_C.IN_BAD_FILE]) return;
-      const label = badL[sr[badCol]] || "Khác";
-      if (!map.has(label)) map.set(label, { val: 0, qty: 0 });
-      const cur = map.get(label);
-      cur.val += sr[SN_C.INV_VAL];
-      cur.qty += 1;
-    });
+    if (hasCube) {
+      const scL = state.raw.invSerialCube.lookups;
+      const badCol = isSite ? SC_C.BAD_SITE : SC_C.BAD_COMP;
+      const badL = isSite ? scL.badSite : scL.badComp;
+      cubeRows.forEach((cr) => {
+        if (onlyClassified && !cr[SC_C.IN_BAD_FILE]) return;
+        const label = badL[cr[badCol]] || "Khác";
+        if (!map.has(label)) map.set(label, { val: 0, qty: 0 });
+        const cur = map.get(label);
+        cur.val += cr[SC_C.VAL];
+        cur.qty += cr[SC_C.COUNT];
+      });
+    } else {
+      const badCol = isSite ? SN_C.BAD_SITE : SN_C.BAD_COMP;
+      const badL = isSite ? sn.lookups.badSite : sn.lookups.badComp;
+      serialRows.forEach((sr) => {
+        if (onlyClassified && !sr[SN_C.IN_BAD_FILE]) return;
+        const label = badL[sr[badCol]] || "Khác";
+        if (!map.has(label)) map.set(label, { val: 0, qty: 0 });
+        const cur = map.get(label);
+        cur.val += sr[SN_C.INV_VAL];
+        cur.qty += 1;
+      });
+    }
 
     const entries = Array.from(map.entries()).sort((a, b) => {
       const ia = BAD_STOCK_ORDER.indexOf(a[0]), ib = BAD_STOCK_ORDER.indexOf(b[0]);
@@ -3259,17 +3734,40 @@
     const isQty = iv.statusMetric === "qty";
     let entries = [];
 
-    if (iv.statusDim === "status_master" && state.raw.masterProducts) {
-      const mp = state.raw.masterProducts;
+    if (iv.statusDim === "status_master" && (state.raw.masterSummary || state.raw.masterProducts)) {
       const map = new Map();
-      mp.rows.forEach((r) => {
-        const st = mp.lookups.purchaseStatuses[r[MP_C.STATUS]] || "Khác";
-        const cur = map.get(st) || { val: 0, qty: 0, count: 0 };
-        cur.val += r[MP_C.INV_VAL];
-        cur.qty += r[MP_C.INV_QTY];
-        cur.count += 1;
-        map.set(st, cur);
-      });
+      if (state.raw.masterSummary?.rows) {
+        const ms = state.raw.masterSummary;
+        const msL = ms.lookups;
+        const catIdx = state.globalCat && msL.categories ? msL.categories.indexOf(state.globalCat) : -1;
+        const subIdx = state.globalSubcat && msL.subcats ? msL.subcats.indexOf(state.globalSubcat) : -1;
+        ms.rows.forEach((r) => {
+          // [0:catIdx, 1:subIdx, 2:statusIdx, 3:rangeIdx, 4:skuCount, 5:invQty, 6:invVal]
+          if (state.globalCat && (catIdx === -1 || r[0] !== catIdx)) return;
+          if (state.globalSubcat && (subIdx === -1 || r[1] !== subIdx)) return;
+          const st = msL.purchaseStatuses[r[2]] || "Khác";
+          const cur = map.get(st) || { val: 0, qty: 0, count: 0 };
+          cur.count += r[4];
+          cur.qty += r[5];
+          cur.val += r[6];
+          map.set(st, cur);
+        });
+      } else if (state.raw.masterProducts?.rows) {
+        const mp = state.raw.masterProducts;
+        const mpL = mp.lookups;
+        const catIdx = state.globalCat && mpL.categories ? mpL.categories.indexOf(state.globalCat) : -1;
+        const subIdx = state.globalSubcat && mpL.subcats ? mpL.subcats.indexOf(state.globalSubcat) : -1;
+        mp.rows.forEach((r) => {
+          if (state.globalCat && (catIdx === -1 || r[MP_C.CAT] !== catIdx)) return;
+          if (state.globalSubcat && (subIdx === -1 || r[MP_C.SUBCAT] !== subIdx)) return;
+          const st = mpL.purchaseStatuses[r[MP_C.STATUS]] || "Khác";
+          const cur = map.get(st) || { val: 0, qty: 0, count: 0 };
+          cur.val += r[MP_C.INV_VAL];
+          cur.qty += r[MP_C.INV_QTY];
+          cur.count += 1;
+          map.set(st, cur);
+        });
+      }
       entries = Array.from(map.entries()).map(([name, d]) => ({
         name,
         val: d.val,
@@ -3544,7 +4042,9 @@
 
   function renderInvAgingChart(rows, serialRows = []) {
     if (!charts.invAging) return;
-    const useSerials = state.raw?.invSerials && serialRows.length > 0;
+    const cubeRows = getFilteredSerialCubeRows();
+    const hasCube = Boolean(cubeRows && cubeRows.length && state.raw?.invSerialCube);
+    const useSerials = hasCube || (state.raw?.invSerials && serialRows.length > 0);
     if (!useSerials && !rows.length) {
       charts.invAging.clear();
       charts.invAging.setOption(emptyOption("Không có dữ liệu tuổi tồn"));
@@ -3554,7 +4054,18 @@
     const basisFirst = state.inv.agingBasis === "first";
     const agg = AGING_BUCKETS.map((b) => ({ ...b, val: 0, qty: 0, count: 0 }));
 
-    if (useSerials) {
+    if (hasCube) {
+      const bCol = basisFirst ? SC_C.AGING_COMP_B : SC_C.AGING_SITE_B;
+      for (let i = 0; i < cubeRows.length; i++) {
+        const cr = cubeRows[i];
+        const bIdx = cr[bCol];
+        if (agg[bIdx]) {
+          agg[bIdx].val += cr[SC_C.VAL];
+          agg[bIdx].qty += cr[SC_C.COUNT];
+          agg[bIdx].count += cr[SC_C.COUNT];
+        }
+      }
+    } else if (useSerials) {
       const col = basisFirst ? SN_C.AGING_COMP : SN_C.AGING_SITE;
       for (let i = 0; i < serialRows.length; i++) {
         const sr = serialRows[i];
@@ -3797,7 +4308,8 @@
     if (iv.tableTab === "serials") {
       const sn = state.raw?.invSerials;
       if (!sn) {
-        document.getElementById("invTableBody").innerHTML = `<tr><td colspan="10" class="muted">Chưa có dữ liệu Serial / Bad Stock.</td></tr>`;
+        ensureLookupShardsLoaded();
+        document.getElementById("invTableBody").innerHTML = `<tr><td colspan="10" class="muted">Đang tải 40.726 Serial chi tiết... vui lòng chờ 1 giây.</td></tr>`;
         return;
       }
       const snL = sn.lookups;
@@ -3893,9 +4405,10 @@
       }
       const allowedSkus = new Set(rows.map((r) => extractSkuCodeFromLabel(lookups.skus[r[INV_C.SKU]])));
       let list = sv.rows.filter((r) => {
+        if (state.globalCat && (r[SKU_C.CAT] ? r[SKU_C.CAT] !== state.globalCat : !String(r[SKU_C.SUBCAT] || "").startsWith(state.globalCat))) return false;
+        if (state.globalSubcat && r[SKU_C.SUBCAT] !== state.globalSubcat) return false;
         if (iv.status && r[SKU_C.STATUS] !== iv.status) return false;
         if (iv.range && r[SKU_C.RANGE] !== iv.range) return false;
-        if (iv.subcat && r[SKU_C.SUBCAT] !== iv.subcat) return false;
         if (iv.brand && r[SKU_C.BRAND] !== iv.brand) return false;
         if ((iv.site || iv.binType || iv.binZone || iv.badStock || iv.agingBucket || iv.sellableOnly || iv.damagedOnly) && !allowedSkus.has(r[SKU_C.SKU])) return false;
         if (q) {
@@ -3968,18 +4481,22 @@
       return;
     }
 
-    // TAB 5: MASTER PRODUCT CATALOG (4,068 SKUs)
+    // TAB 5: MASTER PRODUCT CATALOG (17,118 SKUs)
     if (iv.tableTab === "master") {
       const mp = state.raw?.masterProducts;
       if (!mp) {
-        document.getElementById("invTableBody").innerHTML = `<tr><td colspan="9" class="muted">Chưa có dữ liệu Master Product.</td></tr>`;
+        ensureLookupShardsLoaded();
+        document.getElementById("invTableBody").innerHTML = `<tr><td colspan="9" class="muted">Đang tải danh mục 17.118 Master SKUs... vui lòng chờ 1 giây.</td></tr>`;
         return;
       }
       const mpL = mp.lookups;
+      const catIdx = state.globalCat && mpL.categories ? mpL.categories.indexOf(state.globalCat) : -1;
+      const subIdx = state.globalSubcat && mpL.subcats ? mpL.subcats.indexOf(state.globalSubcat) : -1;
       let list = mp.rows.filter((r) => {
+        if (state.globalCat && (catIdx === -1 || r[MP_C.CAT] !== catIdx)) return false;
+        if (state.globalSubcat && (subIdx === -1 || r[MP_C.SUBCAT] !== subIdx)) return false;
         if (iv.status && mpL.purchaseStatuses[r[MP_C.STATUS]] !== iv.status) return false;
         if (iv.range && mpL.ranges[r[MP_C.RANGE]] !== iv.range) return false;
-        if (iv.subcat && mpL.subcats[r[MP_C.SUBCAT]] !== iv.subcat) return false;
         if (iv.brand && mpL.brands[r[MP_C.BRAND]] !== iv.brand) return false;
         if (q) {
           return r[MP_C.SKU].toLowerCase().includes(q) || r[MP_C.NAME].toLowerCase().includes(q) || mpL.brands[r[MP_C.BRAND]].toLowerCase().includes(q);
@@ -4269,7 +4786,16 @@
         lk.idxSerialsBySku.get(sku).push(r);
       });
     }
-    if (state.raw.rows && state.raw.lookups) {
+    if (state.raw.masterProducts?.salesBySku) {
+      Object.entries(state.raw.masterProducts.salesBySku).forEach(([sku, arr]) => {
+        lk.idxSalesBySku.set(sku, {
+          sales: arr[0] || 0,
+          qty: arr[1] || 0,
+          gp: arr[2] || 0,
+          orders: arr[3] || 0,
+        });
+      });
+    } else if (state.raw.rows && state.raw.lookups?.skus?.length > 1) {
       const sL = state.raw.lookups;
       state.raw.rows.forEach((r) => {
         const sku = extractSkuCodeFromLabel(sL.skus[r[C.SKU]]);
@@ -4289,23 +4815,41 @@
     if (!wrap || !state.raw) return;
     const picks = [];
 
+    const matchesGlobalSku = (catStr, subStr) => {
+      if (state.globalCat && catStr !== state.globalCat && !String(subStr || "").startsWith(state.globalCat)) return false;
+      if (state.globalSubcat && subStr !== state.globalSubcat) return false;
+      return true;
+    };
+
     // Top 2 SKUs by 30D sales velocity
     if (state.raw.invSkuLevel?.rows?.length) {
-      const byVel = [...state.raw.invSkuLevel.rows].sort((a, b) => b[SKU_C.S30D] - a[SKU_C.S30D]).slice(0, 2);
+      const byVel = [...state.raw.invSkuLevel.rows]
+        .filter((r) => matchesGlobalSku(r[SKU_C.CAT], r[SKU_C.SUBCAT]))
+        .sort((a, b) => b[SKU_C.S30D] - a[SKU_C.S30D])
+        .slice(0, 2);
       byVel.forEach((r) => picks.push({ label: `🔥 SKU ${r[SKU_C.SKU]} (${r[SKU_C.S30D]} bán/30D)`, sku: r[SKU_C.SKU], sn: "" }));
     }
     // 1 Very Bad Stock Serial
     if (state.raw.invSerials?.rows?.length) {
       const snL = state.raw.invSerials.lookups;
-      const veryBad = state.raw.invSerials.rows.find((r) => snL.badComp[r[SN_C.BAD_COMP]] === "Tồn rất xấu");
+      const veryBad = state.raw.invSerials.rows.find((r) =>
+        matchesGlobalSku(snL.categories?.[r[SN_C.CAT]], snL.subcats?.[r[SN_C.SUBCAT]]) &&
+        snL.badComp[r[SN_C.BAD_COMP]] === "Tồn rất xấu"
+      );
       if (veryBad) picks.push({ label: `🚨 Serial Rất xấu: ${veryBad[SN_C.SN]}`, sku: veryBad[SN_C.SKU], sn: veryBad[SN_C.SN] });
-      const normalSn = state.raw.invSerials.rows.find((r) => snL.badComp[r[SN_C.BAD_COMP]] === "Tồn thông thường");
+      const normalSn = state.raw.invSerials.rows.find((r) =>
+        matchesGlobalSku(snL.categories?.[r[SN_C.CAT]], snL.subcats?.[r[SN_C.SUBCAT]]) &&
+        snL.badComp[r[SN_C.BAD_COMP]] === "Tồn thông thường"
+      );
       if (normalSn) picks.push({ label: `🏷️ Serial: ${normalSn[SN_C.SN]}`, sku: normalSn[SN_C.SKU], sn: normalSn[SN_C.SN] });
     }
     // 1 Market Shortage SKU from Master Product
     if (state.raw.masterProducts?.rows?.length) {
       const mpL = state.raw.masterProducts.lookups;
-      const ms = state.raw.masterProducts.rows.find((r) => mpL.purchaseStatuses[r[MP_C.STATUS]] === "Market Shortage");
+      const ms = state.raw.masterProducts.rows.find((r) =>
+        matchesGlobalSku(mpL.categories?.[r[MP_C.CAT]], mpL.subcats?.[r[MP_C.SUBCAT]]) &&
+        mpL.purchaseStatuses[r[MP_C.STATUS]] === "Market Shortage"
+      );
       if (ms) picks.push({ label: `⚠️ Market Shortage: ${ms[MP_C.SKU]}`, sku: ms[MP_C.SKU], sn: "" });
     }
 
@@ -4323,14 +4867,19 @@
   function searchSkuAndSerials(queryRaw) {
     const q = (queryRaw || "").trim().toLowerCase();
     if (!q) return [];
+    if (!state.shardsLoaded) ensureLookupShardsLoaded();
     const results = [];
     const seenKeys = new Set();
 
     // 1. Exact or partial Serial matches first (high precision)
     if (state.raw?.invSerials?.rows) {
       const snL = state.raw.invSerials.lookups;
+      const catIdx = state.globalCat && snL.categories ? snL.categories.indexOf(state.globalCat) : -1;
+      const subIdx = state.globalSubcat && snL.subcats ? snL.subcats.indexOf(state.globalSubcat) : -1;
       for (let i = 0; i < state.raw.invSerials.rows.length; i++) {
         const r = state.raw.invSerials.rows[i];
+        if (state.globalCat && catIdx !== -1 && r[SN_C.CAT] !== catIdx) continue;
+        if (state.globalSubcat && subIdx !== -1 && r[SN_C.SUBCAT] !== subIdx) continue;
         if (r[SN_C.SN].toLowerCase().includes(q)) {
           const k = `sn:${r[SN_C.SN]}`;
           if (seenKeys.has(k)) continue;
@@ -4350,11 +4899,15 @@
       }
     }
 
-    // 2. SKU / Name matches across Master Product (4,068 SKUs)
+    // 2. SKU / Name matches across Master Product (17,118 SKUs)
     if (state.raw?.masterProducts?.rows) {
       const mpL = state.raw.masterProducts.lookups;
+      const catIdx = state.globalCat && mpL.categories ? mpL.categories.indexOf(state.globalCat) : -1;
+      const subIdx = state.globalSubcat && mpL.subcats ? mpL.subcats.indexOf(state.globalSubcat) : -1;
       for (let i = 0; i < state.raw.masterProducts.rows.length; i++) {
         const r = state.raw.masterProducts.rows[i];
+        if (state.globalCat && catIdx !== -1 && r[MP_C.CAT] !== catIdx) continue;
+        if (state.globalSubcat && subIdx !== -1 && r[MP_C.SUBCAT] !== subIdx) continue;
         const skuLow = r[MP_C.SKU].toLowerCase();
         const nameLow = r[MP_C.NAME].toLowerCase();
         if (skuLow.includes(q) || nameLow.includes(q)) {
@@ -4379,6 +4932,8 @@
     } else if (state.raw?.invSkuLevel?.rows) {
       for (let i = 0; i < state.raw.invSkuLevel.rows.length; i++) {
         const r = state.raw.invSkuLevel.rows[i];
+        if (state.globalCat && r[SKU_C.CAT] && r[SKU_C.CAT] !== state.globalCat) continue;
+        if (state.globalSubcat && r[SKU_C.SUBCAT] !== state.globalSubcat) continue;
         if (r[SKU_C.SKU].toLowerCase().includes(q) || r[SKU_C.NAME].toLowerCase().includes(q)) {
           results.push({
             kind: "sku",

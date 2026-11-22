@@ -856,6 +856,8 @@
     populateGlobalMasterFilter();
     populateFilters();
     populateInventoryFilters();
+    initAllMultiSelectDropdowns();
+    syncAllMultiSelectUIs();
     initCharts();
     bindEvents();
     bindInventoryEvents();
@@ -977,8 +979,319 @@
     setValSafe("filterOrderType", "");
     setChkSafe("excludeBulkToggle", false);
     setChkSafe("storeRegionsOnlyToggle", false);
+    initAllMultiSelectDropdowns();
+    syncAllMultiSelectUIs();
 
     renderAll();
+  }
+
+  // --- MULTI-SELECT FILTER ENGINE (CTRL + CLICK SUPPORT) ---
+  const MULTI_SEP = "||";
+  const msRegistry = new Map();
+  let msDocListenerBound = false;
+
+  function splitMulti(val) {
+    if (!val) return [];
+    if (Array.isArray(val)) return val.map((x) => String(x || "").trim()).filter(Boolean);
+    return String(val).split(MULTI_SEP).map((x) => x.trim()).filter(Boolean);
+  }
+
+  function joinMulti(arr) {
+    if (!Array.isArray(arr) || !arr.length) return "";
+    return Array.from(new Set(arr.map((x) => String(x || "").trim()).filter(Boolean))).join(MULTI_SEP);
+  }
+
+  function isMultiMatch(filterVal, candidateVal) {
+    if (!filterVal) return true;
+    const s = String(filterVal);
+    if (!s.includes(MULTI_SEP)) return s === candidateVal;
+    return splitMulti(s).includes(candidateVal);
+  }
+
+  function hasMultiPrefix(filterVal, candidateStr) {
+    if (!filterVal) return true;
+    const cand = String(candidateStr || "");
+    const list = splitMulti(filterVal);
+    return list.some((prefix) => cand.startsWith(prefix));
+  }
+
+  function getLookupIdxSet(filterVal, lookupArr) {
+    if (!filterVal || !Array.isArray(lookupArr)) return null;
+    const list = splitMulti(filterVal);
+    if (!list.length) return null;
+    const set = new Set();
+    for (let i = 0; i < list.length; i++) {
+      const idx = lookupArr.indexOf(list[i]);
+      if (idx !== -1) set.add(idx);
+    }
+    return set;
+  }
+
+  function toggleMultiVal(currentVal, targetVal, isMultiKey = false) {
+    const t = String(targetVal || "").trim();
+    if (!t) return "";
+    const list = splitMulti(currentVal);
+    if (isMultiKey) {
+      const idx = list.indexOf(t);
+      if (idx !== -1) list.splice(idx, 1);
+      else list.push(t);
+      return joinMulti(list);
+    }
+    if (list.length === 1 && list[0] === t) return "";
+    return t;
+  }
+
+  function removeMultiVal(currentVal, targetVal) {
+    const t = String(targetVal || "").trim();
+    if (!t) return "";
+    return joinMulti(splitMulti(currentVal).filter((x) => x !== t));
+  }
+
+  function isCtrlEvent(eOrParams) {
+    if (!eOrParams) return false;
+    const nativeEv = eOrParams.event?.event || eOrParams.event || eOrParams;
+    return Boolean(nativeEv?.ctrlKey || nativeEv?.metaKey);
+  }
+
+  function syncMultiSelectUI(selectId, rawVal) {
+    const entry = msRegistry.get(selectId);
+    if (entry) entry.sync(rawVal);
+  }
+
+  function syncAllMultiSelectUIs() {
+    syncMultiSelectUI("globalSubcatSelect", state.globalSubcat);
+    syncMultiSelectUI("filterChannel", state.channel);
+    syncMultiSelectUI("filterSite", state.site);
+    syncMultiSelectUI("filterRegion", state.region);
+    syncMultiSelectUI("invFilterStatus", state.inv.status);
+    syncMultiSelectUI("invFilterRange", state.inv.range);
+    syncMultiSelectUI("invFilterBadStock", state.inv.badStock);
+    syncMultiSelectUI("invFilterSite", state.inv.site);
+    syncMultiSelectUI("invFilterBinType", state.inv.binType);
+    syncMultiSelectUI("invFilterBinZone", state.inv.binZone);
+    syncMultiSelectUI("invFilterBrand", state.inv.brand);
+  }
+
+  function initMultiSelectDropdown(selectId, getValFn, onChangeFn) {
+    const sel = document.getElementById(selectId);
+    if (!sel) return;
+
+    if (msRegistry.has(selectId)) {
+      msRegistry.get(selectId).rebuild();
+      return;
+    }
+
+    const wrap = document.createElement("div");
+    wrap.className = "ms-dropdown";
+    wrap.dataset.msFor = selectId;
+    sel.parentNode.insertBefore(wrap, sel);
+    wrap.appendChild(sel);
+    sel.style.display = "none";
+
+    const trigger = document.createElement("button");
+    trigger.type = "button";
+    trigger.className = "ms-trigger";
+    trigger.title = (sel.title ? sel.title + " • " : "") + "Giữ phím Ctrl + Click để chọn nhiều Option";
+
+    const popover = document.createElement("div");
+    popover.className = "ms-popover";
+    wrap.appendChild(trigger);
+    wrap.appendChild(popover);
+
+    let searchQuery = "";
+
+    const renderTriggerLabel = (rawVal) => {
+      const selected = splitMulti(rawVal);
+      const opts = Array.from(sel.options);
+      const allOpt = opts.find((o) => o.value === "") || opts[0];
+      const allText = allOpt ? allOpt.textContent : "Tất cả";
+
+      if (selected.length === 0) {
+        trigger.classList.remove("has-value");
+        trigger.innerHTML = `<span class="ms-trigger-text">${esc(allText)}</span><span class="ms-caret">▼</span>`;
+      } else if (selected.length === 1) {
+        const matchOpt = opts.find((o) => o.value === selected[0]);
+        const lbl = matchOpt ? matchOpt.textContent : selected[0];
+        trigger.classList.add("has-value");
+        trigger.innerHTML = `<span class="ms-trigger-text">${esc(lbl)}</span><span class="ms-caret">▼</span>`;
+      } else {
+        const labels = selected.map((v) => {
+          const o = opts.find((opt) => opt.value === v);
+          return o ? o.textContent : v;
+        });
+        trigger.classList.add("has-value");
+        trigger.innerHTML = `
+          <span class="ms-count-badge">${selected.length}</span>
+          <span class="ms-trigger-text" title="${esc(labels.join(", "))}">${esc(labels.join(", "))}</span>
+          <span class="ms-caret">▼</span>`;
+      }
+    };
+
+    const renderOptionsList = () => {
+      const rawVal = getValFn();
+      const selected = splitMulti(rawVal);
+      const opts = Array.from(sel.options);
+      const q = searchQuery.trim().toLowerCase();
+
+      const listEl = popover.querySelector(".ms-list");
+      if (!listEl) return;
+
+      const filteredOpts = opts.filter((o) => {
+        if (o.value === "") return !q;
+        if (!q) return true;
+        return o.textContent.toLowerCase().includes(q) || o.value.toLowerCase().includes(q);
+      });
+
+      if (!filteredOpts.length) {
+        listEl.innerHTML = `<div class="muted" style="padding:10px;font-size:11.5px;text-align:center">Không tìm thấy mục nào khớp "${esc(searchQuery)}"</div>`;
+        return;
+      }
+
+      listEl.innerHTML = filteredOpts.map((o) => {
+        const isAll = o.value === "";
+        const isSel = isAll ? selected.length === 0 : selected.includes(o.value);
+        return `
+          <div class="ms-item ${isSel ? "selected" : ""}" data-ms-val="${esc(o.value)}" title="${isAll ? "Chọn tất cả (Bỏ lọc)" : "Click để chọn 1 • Giữ Ctrl + Click để chọn nhiều"}">
+            <span class="ms-check" data-ms-check="1">${isSel ? "✓" : ""}</span>
+            <span class="ms-item-label">${esc(o.textContent)}</span>
+          </div>`;
+      }).join("");
+
+      const clearBtn = popover.querySelector(".ms-clear-mini");
+      if (clearBtn) clearBtn.style.display = selected.length > 0 ? "inline-block" : "none";
+    };
+
+    const rebuildPopoverStructure = () => {
+      const optsCount = sel.options.length;
+      const showSearch = optsCount > 7;
+      popover.innerHTML = `
+        <div class="ms-hint">
+          <span>💡 Giữ <b>Ctrl + Click</b> để chọn nhiều</span>
+          <button type="button" class="ms-clear-mini" style="display:none">Bỏ chọn</button>
+        </div>
+        ${showSearch ? `<div class="ms-search-wrap"><input type="search" class="ms-search" placeholder="Tìm nhanh trong ${optsCount - 1} mục..." value="${esc(searchQuery)}" /></div>` : ""}
+        <div class="ms-list"></div>`;
+
+      const clearBtn = popover.querySelector(".ms-clear-mini");
+      clearBtn?.addEventListener("click", (e) => {
+        e.stopPropagation();
+        sel.value = "";
+        renderTriggerLabel("");
+        renderOptionsList();
+        onChangeFn("", false);
+      });
+
+      const searchInp = popover.querySelector(".ms-search");
+      searchInp?.addEventListener("input", (e) => {
+        searchQuery = e.target.value;
+        renderOptionsList();
+      });
+      searchInp?.addEventListener("click", (e) => e.stopPropagation());
+
+      const listEl = popover.querySelector(".ms-list");
+      listEl?.addEventListener("click", (e) => {
+        e.stopPropagation();
+        const item = e.target.closest(".ms-item[data-ms-val]");
+        if (!item) return;
+        const val = item.dataset.msVal;
+        const clickedCheckbox = Boolean(e.target.closest("[data-ms-check]"));
+        const isMultiKey = Boolean(e.ctrlKey || e.metaKey || e.shiftKey || clickedCheckbox);
+
+        let nextVal = "";
+        if (val === "") {
+          nextVal = "";
+          wrap.classList.remove("open");
+        } else if (isMultiKey) {
+          nextVal = toggleMultiVal(getValFn(), val, true);
+        } else {
+          nextVal = val;
+          wrap.classList.remove("open");
+        }
+
+        sel.value = splitMulti(nextVal)[0] || "";
+        renderTriggerLabel(nextVal);
+        renderOptionsList();
+        onChangeFn(nextVal, isMultiKey);
+      });
+
+      renderTriggerLabel(getValFn());
+      renderOptionsList();
+    };
+
+    trigger.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const wasOpen = wrap.classList.contains("open");
+      document.querySelectorAll(".ms-dropdown.open").forEach((d) => d.classList.remove("open"));
+      if (!wasOpen) {
+        searchQuery = "";
+        rebuildPopoverStructure();
+        wrap.classList.add("open");
+        setTimeout(() => popover.querySelector(".ms-search")?.focus(), 20);
+      }
+    });
+
+    if (!msDocListenerBound) {
+      msDocListenerBound = true;
+      document.addEventListener("click", (e) => {
+        if (!e.target.closest(".ms-dropdown")) {
+          document.querySelectorAll(".ms-dropdown.open").forEach((d) => d.classList.remove("open"));
+        }
+      });
+    }
+
+    msRegistry.set(selectId, {
+      sync: (rawVal) => {
+        const v = rawVal !== undefined ? rawVal : getValFn();
+        sel.value = splitMulti(v)[0] || "";
+        renderTriggerLabel(v);
+        if (wrap.classList.contains("open")) renderOptionsList();
+      },
+      rebuild: () => {
+        rebuildPopoverStructure();
+      },
+    });
+
+    rebuildPopoverStructure();
+  }
+
+  function initAllMultiSelectDropdowns() {
+    initMultiSelectDropdown(
+      "globalSubcatSelect",
+      () => state.globalSubcat,
+      (val) => setGlobalSubcat(val)
+    );
+    initMultiSelectDropdown(
+      "filterChannel",
+      () => state.channel,
+      (val) => { state.channel = val; state.tablePage = 1; renderAll(); }
+    );
+    initMultiSelectDropdown(
+      "filterSite",
+      () => state.site,
+      (val) => { state.site = val; state.tablePage = 1; renderAll(); }
+    );
+    initMultiSelectDropdown(
+      "filterRegion",
+      () => state.region,
+      (val) => { state.region = val; state.tablePage = 1; renderAll(); }
+    );
+
+    const invProps = [
+      ["invFilterStatus", "status"],
+      ["invFilterRange", "range"],
+      ["invFilterBadStock", "badStock"],
+      ["invFilterSite", "site"],
+      ["invFilterBinType", "binType"],
+      ["invFilterBinZone", "binZone"],
+      ["invFilterBrand", "brand"],
+    ];
+    invProps.forEach(([id, prop]) => {
+      initMultiSelectDropdown(
+        id,
+        () => state.inv[prop],
+        (val) => { state.inv[prop] = val; state.inv.tablePage = 1; renderInventoryView(); }
+      );
+    });
   }
 
   // --- TIER 1: GLOBAL MASTER FILTER BAR (CATEGORY CODE BUTTONS + SUBCAT 2) ---
@@ -991,19 +1304,21 @@
 
   function populateGlobalMasterFilter() {
     const visibleCats = getVisibleGlobalCategories();
-    if (state.globalCat && HIDDEN_GLOBAL_CATS.has(state.globalCat.toUpperCase())) {
-      state.globalCat = "";
+    const validCatCodes = new Set(visibleCats.map((c) => c.code));
+    if (state.globalCat) {
+      state.globalCat = joinMulti(splitMulti(state.globalCat).filter((code) => validCatCodes.has(code)));
     }
+    const selectedCats = splitMulti(state.globalCat);
     const catWrap = document.getElementById("globalCatBtnGroup");
     if (catWrap) {
-      const allActive = !state.globalCat ? "active" : "";
-      let html = `<button type="button" class="cat-pill-btn ${allActive}" data-cat="">Tất cả (${visibleCats.length} NH)</button>`;
+      const allActive = selectedCats.length === 0 ? "active" : "";
+      let html = `<button type="button" class="cat-pill-btn ${allActive}" data-cat="" title="Xem tất cả Ngành hàng">Tất cả (${visibleCats.length} NH)</button>`;
       visibleCats.forEach((c) => {
-        const isAct = state.globalCat === c.code ? "active" : "";
+        const isAct = selectedCats.includes(c.code) ? "active" : "";
         const shortDesc = String(c.label || "").replace(new RegExp(`^${c.code}\\s*[—-]\\s*`, "i"), "");
         const subText = shortDesc && shortDesc !== c.code ? shortDesc : `${c.subcats?.length || 0} nhóm`;
         html += `
-          <button type="button" class="cat-pill-btn ${isAct}" data-cat="${esc(c.code)}" title="${esc(c.label)} (${c.subcats?.length || 0} Subcat 2)">
+          <button type="button" class="cat-pill-btn ${isAct}" data-cat="${esc(c.code)}" title="${esc(c.label)} (${c.subcats?.length || 0} Subcat 2) • Giữ Ctrl + Click để chọn nhiều NH">
             <span class="cat-code">${esc(c.code)}</span>
             <span class="cat-name">${esc(subText)}</span>
           </button>`;
@@ -1019,24 +1334,33 @@
     const sel = document.getElementById("globalSubcatSelect");
     if (!sel) return;
 
+    const selectedCats = splitMulti(state.globalCat);
     let subList = [];
-    if (state.globalCat) {
-      const catObj = visibleCats.find((c) => c.code === state.globalCat);
-      subList = catObj ? (catObj.subcats || []) : [];
+    if (selectedCats.length > 0) {
+      subList = Array.from(
+        new Set(
+          visibleCats
+            .filter((c) => selectedCats.includes(c.code))
+            .flatMap((c) => c.subcats || [])
+        )
+      ).sort();
     } else {
       subList = Array.from(new Set(visibleCats.flatMap((c) => c.subcats || []))).sort();
     }
 
-    if (state.globalSubcat && !subList.includes(state.globalSubcat)) {
-      state.globalSubcat = "";
+    if (state.globalSubcat) {
+      state.globalSubcat = joinMulti(splitMulti(state.globalSubcat).filter((s) => subList.includes(s)));
     }
 
-    const headText = state.globalCat
-      ? `Tất cả Subcat 2 của ${state.globalCat} (${subList.length} nhóm)`
+    const headText = selectedCats.length > 0
+      ? `Tất cả Subcat 2 của ${selectedCats.join("+")} (${subList.length} nhóm)`
       : `Tất cả Subcat 2 (${subList.length} nhóm Code - Name)`;
     sel.innerHTML = `<option value="">${esc(headText)}</option>`;
     subList.forEach((sc) => sel.add(new Option(sc, sc)));
-    sel.value = state.globalSubcat;
+    sel.value = splitMulti(state.globalSubcat)[0] || "";
+    if (msRegistry.has("globalSubcatSelect")) {
+      msRegistry.get("globalSubcatSelect").rebuild();
+    }
 
     const clearBtn = document.getElementById("clearGlobalFilterBtn");
     if (clearBtn) {
@@ -1072,8 +1396,12 @@
     };
   }
 
-  function setGlobalCategory(catCode) {
-    state.globalCat = state.globalCat === catCode && catCode !== "" ? "" : catCode;
+  function setGlobalCategory(catCode, isMulti = false) {
+    if (!catCode) {
+      state.globalCat = "";
+    } else {
+      state.globalCat = toggleMultiVal(state.globalCat, catCode, isMulti);
+    }
     state.tablePage = 1;
     state.inv.tablePage = 1;
     populateGlobalMasterFilter();
@@ -1083,15 +1411,19 @@
 
   function setGlobalSubcat(subcatStr) {
     state.globalSubcat = subcatStr || "";
-    if (state.globalSubcat) {
-      const m = state.globalSubcat.match(/^(NH\d{2})/i);
-      if (m && state.globalCat && state.globalCat !== m[1].toUpperCase()) {
-        state.globalCat = m[1].toUpperCase();
-      }
+    const subs = splitMulti(state.globalSubcat);
+    if (subs.length && state.globalCat) {
+      const currentCats = new Set(splitMulti(state.globalCat));
+      subs.forEach((s) => {
+        const m = s.match(/^(NH\d{2})/i);
+        if (m) currentCats.add(m[1].toUpperCase());
+      });
+      state.globalCat = joinMulti(Array.from(currentCats));
     }
     state.tablePage = 1;
     state.inv.tablePage = 1;
     populateGlobalMasterFilter();
+    syncMultiSelectUI("globalSubcatSelect", state.globalSubcat);
     renderLookupQuickPicks();
     renderAll();
   }
@@ -1112,6 +1444,7 @@
     state.tablePage = 1;
     state.inv.tablePage = 1;
     populateGlobalMasterFilter();
+    syncMultiSelectUI("globalSubcatSelect", "");
     renderLookupQuickPicks();
     renderAll();
   }
@@ -1178,6 +1511,10 @@
       chEl.innerHTML = `<option value="">Tất cả Channel (${lookups.channels.length})</option>`;
       [...lookups.channels].sort().forEach((ch) => chEl.add(new Option(ch, ch)));
     }
+
+    ["filterRegion", "filterSite", "filterChannel"].forEach((id) => {
+      if (msRegistry.has(id)) msRegistry.get(id).rebuild();
+    });
   }
 
   function initCharts() {
@@ -1208,7 +1545,7 @@
     const elMonthlyDaily = document.getElementById("chartMonthlyDaily");
     if (elMonthlyDaily) charts.monthlyDaily = make("chartMonthlyDaily");
 
-    // Cross-filter click listeners
+    // Cross-filter click listeners (with Ctrl + Click multi-select support)
     charts.hero.on("click", (params) => {
       if (state.heroGranularity === "month" && params.name) {
         let m = params.name.startsWith("20") ? params.name : "";
@@ -1217,7 +1554,7 @@
           m = `${curY}-${params.name.slice(1)}`;
         }
         if (m) {
-          state.clickedMonth = state.clickedMonth === m ? "" : m;
+          state.clickedMonth = toggleMultiVal(state.clickedMonth, m, isCtrlEvent(params));
           state.tablePage = 1;
           renderAll();
         }
@@ -1226,7 +1563,7 @@
 
     charts.trend.on("click", (params) => {
       if (params.name && params.name.startsWith("20")) {
-        state.clickedMonth = state.clickedMonth === params.name ? "" : params.name;
+        state.clickedMonth = toggleMultiVal(state.clickedMonth, params.name, isCtrlEvent(params));
         state.tablePage = 1;
         renderAll();
       }
@@ -1234,57 +1571,57 @@
 
     charts.deepMonthly.on("click", (params) => {
       if (state.deepGranularity === "month" && params.name) {
-        state.clickedMonth = state.clickedMonth === params.name ? "" : params.name;
+        state.clickedMonth = toggleMultiVal(state.clickedMonth, params.name, isCtrlEvent(params));
         renderAll();
       }
     });
 
     charts.deepSite.on("click", (params) => {
       const sc = params.data?.siteCode || params.name;
-      if (sc) toggleSiteFilter(sc);
+      if (sc) toggleSiteFilter(sc, isCtrlEvent(params));
     });
 
     charts.deepRegionPie.on("click", (params) => {
-      if (params.name) toggleRegionFilter(params.name);
+      if (params.name) toggleRegionFilter(params.name, isCtrlEvent(params));
     });
 
     charts.deepRegionStack.on("click", (params) => {
-      if (params.seriesName) toggleRegionFilter(params.seriesName);
+      if (params.seriesName) toggleRegionFilter(params.seriesName, isCtrlEvent(params));
     });
 
     charts.deepChannel.on("click", (params) => {
       if (!params.name) return;
+      const isCtrl = isCtrlEvent(params);
       if (state.channelDim === "site") {
         const sc = params.data?.siteCode || params.name.split(" - ")[0];
-        if (sc) toggleSiteFilter(sc);
+        if (sc) toggleSiteFilter(sc, isCtrl);
         return;
       }
-      state.channel = state.channel === params.name ? "" : params.name;
-      const chEl = document.getElementById("filterChannel");
-      if (chEl) chEl.value = state.channel;
-      renderAll();
+      if (state.channelDim === "channel") {
+        state.channel = toggleMultiVal(state.channel, params.name, isCtrl);
+        syncMultiSelectUI("filterChannel", state.channel);
+        renderAll();
+      }
     });
 
     // Inventory cross-filter clicks
     charts.invBadStock.on("click", (params) => {
       if (!params.name) return;
-      state.inv.badStock = state.inv.badStock === params.name ? "" : params.name;
-      const el = document.getElementById("invFilterBadStock");
-      if (el) el.value = state.inv.badStock;
+      state.inv.badStock = toggleMultiVal(state.inv.badStock, params.name, isCtrlEvent(params));
+      syncMultiSelectUI("invFilterBadStock", state.inv.badStock);
       state.inv.tablePage = 1;
       renderInventoryView();
     });
 
     charts.invStatusRange.on("click", (params) => {
       if (!params.name) return;
+      const isCtrl = isCtrlEvent(params);
       if (state.inv.statusDim === "range_inv") {
-        state.inv.range = state.inv.range === params.name ? "" : params.name;
-        const el = document.getElementById("invFilterRange");
-        if (el) el.value = state.inv.range;
+        state.inv.range = toggleMultiVal(state.inv.range, params.name, isCtrl);
+        syncMultiSelectUI("invFilterRange", state.inv.range);
       } else {
-        state.inv.status = state.inv.status === params.name ? "" : params.name;
-        const el = document.getElementById("invFilterStatus");
-        if (el) el.value = state.inv.status;
+        state.inv.status = toggleMultiVal(state.inv.status, params.name, isCtrl);
+        syncMultiSelectUI("invFilterStatus", state.inv.status);
       }
       state.inv.tablePage = 1;
       renderInventoryView();
@@ -1293,20 +1630,21 @@
     charts.invSite.on("click", (params) => {
       const code = params.name;
       if (!code) return;
-      state.inv.site = state.inv.site === code ? "" : code;
-      document.getElementById("invFilterSite").value = state.inv.site;
+      state.inv.site = toggleMultiVal(state.inv.site, code, isCtrlEvent(params));
+      syncMultiSelectUI("invFilterSite", state.inv.site);
       state.inv.tablePage = 1;
       renderInventoryView();
     });
 
     charts.invBin.on("click", (params) => {
       if (!params.name) return;
+      const isCtrl = isCtrlEvent(params);
       if (state.inv.binDim === "binType") {
-        state.inv.binType = state.inv.binType === params.name ? "" : params.name;
-        document.getElementById("invFilterBinType").value = state.inv.binType;
+        state.inv.binType = toggleMultiVal(state.inv.binType, params.name, isCtrl);
+        syncMultiSelectUI("invFilterBinType", state.inv.binType);
       } else {
-        state.inv.binZone = state.inv.binZone === params.name ? "" : params.name;
-        document.getElementById("invFilterBinZone").value = state.inv.binZone;
+        state.inv.binZone = toggleMultiVal(state.inv.binZone, params.name, isCtrl);
+        syncMultiSelectUI("invFilterBinZone", state.inv.binZone);
       }
       state.inv.tablePage = 1;
       renderInventoryView();
@@ -1315,19 +1653,19 @@
     charts.invAging.on("click", (params) => {
       const b = AGING_BUCKETS.find((x) => x.label === params.name);
       if (!b) return;
-      state.inv.agingBucket = state.inv.agingBucket === b.key ? "" : b.key;
+      state.inv.agingBucket = toggleMultiVal(state.inv.agingBucket, b.key, isCtrlEvent(params));
       state.inv.tablePage = 1;
       renderInventoryView();
     });
 
     charts.invCat.on("click", (params) => {
       if (!params.name) return;
+      const isCtrl = isCtrlEvent(params);
       if (state.inv.catDim === "subcat") {
-        setGlobalSubcat(state.globalSubcat === params.name ? "" : params.name);
+        setGlobalSubcat(toggleMultiVal(state.globalSubcat, params.name, isCtrl));
       } else {
-        state.inv.brand = state.inv.brand === params.name ? "" : params.name;
-        const brEl = document.getElementById("invFilterBrand");
-        if (brEl) brEl.value = state.inv.brand;
+        state.inv.brand = toggleMultiVal(state.inv.brand, params.name, isCtrl);
+        syncMultiSelectUI("invFilterBrand", state.inv.brand);
         state.inv.tablePage = 1;
         renderInventoryView();
       }
@@ -1338,16 +1676,16 @@
     });
   }
 
-  function toggleRegionFilter(reg) {
-    state.region = state.region === reg ? "" : reg;
-    document.getElementById("filterRegion").value = state.region;
+  function toggleRegionFilter(reg, isMulti = false) {
+    state.region = toggleMultiVal(state.region, reg, isMulti);
+    syncMultiSelectUI("filterRegion", state.region);
     state.tablePage = 1;
     renderAll();
   }
 
-  function toggleSiteFilter(siteCode) {
-    state.site = state.site === siteCode ? "" : siteCode;
-    document.getElementById("filterSite").value = state.site;
+  function toggleSiteFilter(siteCode, isMulti = false) {
+    state.site = toggleMultiVal(state.site, siteCode, isMulti);
+    syncMultiSelectUI("filterSite", state.site);
     state.tablePage = 1;
     renderAll();
   }
@@ -1405,7 +1743,7 @@
     document.getElementById("globalCatBtnGroup")?.addEventListener("click", (e) => {
       const btn = e.target.closest(".cat-pill-btn[data-cat]");
       if (!btn) return;
-      setGlobalCategory(btn.dataset.cat || "");
+      setGlobalCategory(btn.dataset.cat || "", Boolean(e.ctrlKey || e.metaKey));
     });
     document.getElementById("globalSubcatSelect")?.addEventListener("change", (e) => {
       setGlobalSubcat(e.target.value || "");
@@ -1427,13 +1765,13 @@
 
     // Tier 2 Sales Local Filters (Channel, Sale Site Code - Store name, Region name)
     document.getElementById("filterRegion")?.addEventListener("change", (e) => {
-      state.region = e.target.value; state.tablePage = 1; renderAll();
+      state.region = e.target.value; syncMultiSelectUI("filterRegion", state.region); state.tablePage = 1; renderAll();
     });
     document.getElementById("filterSite")?.addEventListener("change", (e) => {
-      state.site = e.target.value; state.tablePage = 1; renderAll();
+      state.site = e.target.value; syncMultiSelectUI("filterSite", state.site); state.tablePage = 1; renderAll();
     });
     document.getElementById("filterChannel")?.addEventListener("change", (e) => {
-      state.channel = e.target.value; state.tablePage = 1; renderAll();
+      state.channel = e.target.value; syncMultiSelectUI("filterChannel", state.channel); state.tablePage = 1; renderAll();
     });
     document.getElementById("filterOrderType")?.addEventListener("change", (e) => {
       state.orderType = e.target.value; state.tablePage = 1; renderAll();
@@ -1671,18 +2009,20 @@
     setVal("filterMonthTo", state.monthTo);
     setChk("excludeBulkToggle", false);
     setChk("storeRegionsOnlyToggle", false);
+    syncAllMultiSelectUIs();
     renderAll();
   }
 
-  // --- FILTER ENGINE (TIER 1 GLOBAL + TIER 2 LOCAL) ---
+  // --- FILTER ENGINE (TIER 1 GLOBAL + TIER 2 LOCAL — MULTI-SELECT ENABLED) ---
   function getFilteredRows(ignoreClickedMonth = false, ignoreDateRange = false) {
     const { rows, lookups } = state.raw;
-    const catIdx = state.globalCat && lookups.categories ? lookups.categories.indexOf(state.globalCat) : -1;
-    const subIdx = state.globalSubcat && lookups.subcats ? lookups.subcats.indexOf(state.globalSubcat) : -1;
-    const regIdx = state.region ? lookups.regions.indexOf(state.region) : -1;
-    const siteIdx = state.site ? lookups.sites.indexOf(state.site) : -1;
-    const chIdx = state.channel ? lookups.channels.indexOf(state.channel) : -1;
-    const otIdx = state.orderType ? lookups.orderTypes.indexOf(state.orderType) : -1;
+    const catIdxSet = getLookupIdxSet(state.globalCat, lookups.categories);
+    const subIdxSet = getLookupIdxSet(state.globalSubcat, lookups.subcats);
+    const regIdxSet = getLookupIdxSet(state.region, lookups.regions);
+    const siteIdxSet = getLookupIdxSet(state.site, lookups.sites);
+    const chIdxSet = getLookupIdxSet(state.channel, lookups.channels);
+    const otIdxSet = getLookupIdxSet(state.orderType, lookups.orderTypes);
+    const clickedMonthSet = (!ignoreClickedMonth && state.clickedMonth) ? new Set(splitMulti(state.clickedMonth)) : null;
 
     const storeRegSet = new Set();
     if (state.storeRegionsOnly) {
@@ -1694,19 +2034,19 @@
       const r = rows[i];
       if (state.globalCat) {
         if (r.length > C.CAT) {
-          if (catIdx === -1 || r[C.CAT] !== catIdx) continue;
-        } else if (!String(lookups.subcats[r[C.SUBCAT]] || "").startsWith(state.globalCat)) {
+          if (!catIdxSet || !catIdxSet.has(r[C.CAT])) continue;
+        } else if (!hasMultiPrefix(state.globalCat, lookups.subcats[r[C.SUBCAT]])) {
           continue;
         }
       }
-      if (state.globalSubcat && (subIdx === -1 || r[C.SUBCAT] !== subIdx)) continue;
+      if (subIdxSet && !subIdxSet.has(r[C.SUBCAT])) continue;
       if (!ignoreDateRange && state.monthFrom && r[C.MONTH] < state.monthFrom) continue;
       if (!ignoreDateRange && state.monthTo && r[C.MONTH] > state.monthTo) continue;
-      if (!ignoreClickedMonth && state.clickedMonth && r[C.MONTH] !== state.clickedMonth) continue;
-      if (regIdx !== -1 && r[C.REGION] !== regIdx) continue;
-      if (siteIdx !== -1 && r[C.SITE] !== siteIdx) continue;
-      if (chIdx !== -1 && r[C.CHANNEL] !== chIdx) continue;
-      if (otIdx !== -1 && r[C.ORDER_TYPE] !== otIdx) continue;
+      if (clickedMonthSet && !clickedMonthSet.has(r[C.MONTH])) continue;
+      if (regIdxSet && !regIdxSet.has(r[C.REGION])) continue;
+      if (siteIdxSet && !siteIdxSet.has(r[C.SITE])) continue;
+      if (chIdxSet && !chIdxSet.has(r[C.CHANNEL])) continue;
+      if (otIdxSet && !otIdxSet.has(r[C.ORDER_TYPE])) continue;
       if (state.excludeBulk) {
         const isBulk = r.length > C.IS_BULK ? r[C.IS_BULK] === 1 : Math.abs(r[C.QTY]) >= 100;
         if (isBulk) continue;
@@ -1725,9 +2065,10 @@
     const weeksL = lookups.weeks || [];
     const monthsL = lookups.months || [];
     const dateToWeek = lookups.dateToWeek || [];
-    const catIdx = state.globalCat && lookups.categories ? lookups.categories.indexOf(state.globalCat) : -1;
-    const subIdx = state.globalSubcat && lookups.subcats ? lookups.subcats.indexOf(state.globalSubcat) : -1;
-    const regIdx = state.region ? lookups.regions.indexOf(state.region) : -1;
+    const catIdxSet = getLookupIdxSet(state.globalCat, lookups.categories);
+    const subIdxSet = getLookupIdxSet(state.globalSubcat, lookups.subcats);
+    const regIdxSet = getLookupIdxSet(state.region, lookups.regions);
+    const clickedMonthSet = (!ignoreClickedMonth && state.clickedMonth) ? new Set(splitMulti(state.clickedMonth)) : null;
 
     const storeRegSet = new Set();
     if (state.storeRegionsOnly) {
@@ -1740,16 +2081,16 @@
       const d = daily[i];
       if (isCompact8) {
         // Compact 8-col: [0:dIdx, 1:catIdx, 2:subIdx, 3:regIdx, 4:isBulk, 5:qty, 6:sales, 7:gp]
-        if (state.globalCat && (catIdx === -1 || d[1] !== catIdx)) continue;
-        if (state.globalSubcat && (subIdx === -1 || d[2] !== subIdx)) continue;
-        if (regIdx !== -1 && d[3] !== regIdx) continue;
+        if (catIdxSet && !catIdxSet.has(d[1])) continue;
+        if (subIdxSet && !subIdxSet.has(d[2])) continue;
+        if (regIdxSet && !regIdxSet.has(d[3])) continue;
         if (state.excludeBulk && d[4] === 1) continue;
         if (state.storeRegionsOnly && !storeRegSet.has(d[3])) continue;
         const dStr = datesL[d[0]] || "";
         const mStr = dStr.slice(0, 7);
         if (!ignoreDateRange && state.monthFrom && mStr < state.monthFrom) continue;
         if (!ignoreDateRange && state.monthTo && mStr > state.monthTo) continue;
-        if (!ignoreClickedMonth && state.clickedMonth && mStr !== state.clickedMonth) continue;
+        if (clickedMonthSet && !clickedMonthSet.has(mStr)) continue;
         const wStr = weeksL[dateToWeek[d[0]]] || mStr;
         out.push([
           dStr, mStr, wStr, 0, 0, d[3], 0, d[2], 0, 0, 0,
@@ -1758,12 +2099,12 @@
       } else {
         // Legacy 12-col: [0:dIdx, 1:wIdx, 2:mIdx, 3:catIdx, 4:subIdx, 5:regIdx, 6:isBulk, 7:qty, 8:sales, 9:cogs, 10:gp, 11:cnt]
         const mStr = typeof d[2] === "number" ? (monthsL[d[2]] || "") : String(d[2]);
-        if (state.globalCat && (catIdx === -1 || d[3] !== catIdx)) continue;
-        if (state.globalSubcat && (subIdx === -1 || d[4] !== subIdx)) continue;
+        if (catIdxSet && !catIdxSet.has(d[3])) continue;
+        if (subIdxSet && !subIdxSet.has(d[4])) continue;
         if (!ignoreDateRange && state.monthFrom && mStr < state.monthFrom) continue;
         if (!ignoreDateRange && state.monthTo && mStr > state.monthTo) continue;
-        if (!ignoreClickedMonth && state.clickedMonth && mStr !== state.clickedMonth) continue;
-        if (regIdx !== -1 && d[5] !== regIdx) continue;
+        if (clickedMonthSet && !clickedMonthSet.has(mStr)) continue;
+        if (regIdxSet && !regIdxSet.has(d[5])) continue;
         if (state.excludeBulk && d[6] === 1) continue;
         if (state.storeRegionsOnly && !storeRegSet.has(d[5])) continue;
         const dStr = typeof d[0] === "number" ? (datesL[d[0]] || mStr) : String(d[0]);
@@ -2113,17 +2454,23 @@
     const iv = state.inv;
     if (iv.site && state.raw.invBranchLevel?.rows?.length) {
       const brL = state.raw.invBranchLevel.lookups;
-      const brSiteIdx = brL.sites.indexOf(iv.site);
+      const brSiteIdxSet = getLookupIdxSet(iv.site, brL.sites);
       const validSkuSet = new Set();
       rows.forEach((r) => validSkuSet.add(extractSkuCodeFromLabel(lookups.skus[r[INV_C.SKU]])));
+      const seenSkuVel = new Map();
       state.raw.invBranchLevel.rows.forEach((br) => {
-        if (br[1] !== brSiteIdx) return;
+        if (brSiteIdxSet && !brSiteIdxSet.has(br[1])) return;
         if (validSkuSet.size > 0 && !validSkuSet.has(br[0])) return;
+        const prev = seenSkuVel.get(br[0]) || [0, 0, 0, 0];
+        prev[0] += br[3]; prev[1] += br[4]; prev[2] += br[5]; prev[3] += br[6];
+        seenSkuVel.set(br[0], prev);
+      });
+      seenSkuVel.forEach((v) => {
         totVelSkus++;
-        if (br[3] > 0) cnt7d++;
-        if (br[4] > 0) cnt30d++;
-        if (br[5] > 0) cnt90d++;
-        if (br[6] > 0) cnt180d++;
+        if (v[0] > 0) cnt7d++;
+        if (v[1] > 0) cnt30d++;
+        if (v[2] > 0) cnt90d++;
+        if (v[3] > 0) cnt180d++;
       });
     } else if (state.raw.invSkuLevel?.rows?.length) {
       const hasLocalFilter = Boolean(state.globalCat || state.globalSubcat || iv.brand || iv.status || iv.range || iv.binType || iv.binZone || iv.badStock || iv.agingBucket || iv.sellableOnly || iv.damagedOnly);
@@ -2135,11 +2482,11 @@
         // [0:sku, 1:name, 2:subcat2, 3:brand, 4:pstatus, 5:range, 6:s7, 7:s30, 8:s90, 9:s180, 10:gm, 11:sdays, 12:iq, 13:iv, 14:uc, 15:lp, 16:cat]
         const catCode = sr[16] || String(sr[2] || "").slice(0, 4);
         if (HIDDEN_GLOBAL_CATS.has(String(catCode).toUpperCase())) return;
-        if (state.globalCat && catCode !== state.globalCat) return;
-        if (state.globalSubcat && sr[2] !== state.globalSubcat) return;
-        if (iv.brand && sr[3] !== iv.brand) return;
-        if (iv.status && sr[4] !== iv.status) return;
-        if (iv.range && sr[5] !== iv.range) return;
+        if (state.globalCat && !isMultiMatch(state.globalCat, catCode)) return;
+        if (state.globalSubcat && !isMultiMatch(state.globalSubcat, sr[2])) return;
+        if (iv.brand && !isMultiMatch(iv.brand, sr[3])) return;
+        if (iv.status && !isMultiMatch(iv.status, sr[4])) return;
+        if (iv.range && !isMultiMatch(iv.range, sr[5])) return;
         if (hasLocalFilter && validSkuSet.size > 0 && !validSkuSet.has(sr[0])) return;
         totVelSkus++;
         if (sr[6] > 0) cnt7d++;
@@ -2546,10 +2893,10 @@
     let activeTargetLabel = "Kế hoạch 165.9 Tỷ";
     let activeCatTitle = "Toàn bộ 3 NH";
 
-    if (state.globalCat && TARGET_BENCHMARK.categories[state.globalCat]) {
-      const catMeta = TARGET_BENCHMARK.categories[state.globalCat];
-      activeTargetTr = catMeta.target;
-      activeCatTitle = catMeta.code;
+    const selectedCats = splitMulti(state.globalCat).filter((c) => TARGET_BENCHMARK.categories[c]);
+    if (selectedCats.length > 0 && selectedCats.length < 3) {
+      activeTargetTr = selectedCats.reduce((sum, c) => sum + TARGET_BENCHMARK.categories[c].target, 0);
+      activeCatTitle = selectedCats.join("+");
       activeTargetLabel = `Kế hoạch ${fmtCompactVnd(activeTargetTr * 1e6)}`;
     }
 
@@ -2613,7 +2960,8 @@
 
     // MoM Same-Period Growth (e.g. Nov 01..21 vs Oct 01..21)
     const active2026Months = Array.from(byMonthCube.keys()).filter((m) => m.startsWith("2026")).sort();
-    const curM = state.clickedMonth || active2026Months[active2026Months.length - 1] || latestMonthStr;
+    const clickedMonthsList = splitMulti(state.clickedMonth).sort();
+    const curM = clickedMonthsList[clickedMonthsList.length - 1] || active2026Months[active2026Months.length - 1] || latestMonthStr;
     const curY = Number(curM.slice(0, 4)) || 2026;
     const curMM = Number(curM.slice(5, 7)) || 11;
     const prevM = curMM > 1 ? `${curY}-${String(curMM - 1).padStart(2, "0")}` : `${curY - 1}-12`;
@@ -2638,12 +2986,16 @@
     let yoySubLabel = "2026 vs cùng kỳ 2025";
     const hasSubFilter = Boolean(state.region || state.site || state.channel || state.globalSubcat || state.clickedMonth || state.orderType || state.excludeBulk || state.storeRegionsOnly);
     if (!hasSubFilter) {
-      if (state.globalCat && TARGET_BENCHMARK.categories[state.globalCat]) {
-        yoyPct = TARGET_BENCHMARK.categories[state.globalCat].vsLyPct;
+      if (selectedCats.length === 1) {
+        yoyPct = TARGET_BENCHMARK.categories[selectedCats[0]].vsLyPct;
+      } else if (selectedCats.length > 1) {
+        const sumYtd = selectedCats.reduce((s, c) => s + TARGET_BENCHMARK.categories[c].ytdSales, 0);
+        const sumLy = selectedCats.reduce((s, c) => s + TARGET_BENCHMARK.categories[c].lySales, 0);
+        yoyPct = sumLy > 0 ? ((sumYtd - sumLy) / sumLy) * 100 : TARGET_BENCHMARK.total.vsLyPct;
       } else {
         yoyPct = TARGET_BENCHMARK.total.vsLyPct;
       }
-    } else if (state.clickedMonth) {
+    } else if (clickedMonthsList.length === 1) {
       const lyM = `2025-${curM.slice(5, 7)}`;
       let lyMonthSameSales = 0;
       sortedDates.forEach((dt) => {
@@ -2714,17 +3066,47 @@
     const chips = [];
     const add = (label, cls, fn) => chips.push({ label, cls, fn });
 
-    if (state.globalCat) add(`Cat: ${state.globalCat}`, "amber", () => setGlobalCategory(""));
-    if (state.globalSubcat) add(`Subcat 2: ${state.globalSubcat}`, "amber", () => setGlobalSubcat(""));
-    if (state.clickedMonth) add(`Month: ${state.clickedMonth}`, "", () => { state.clickedMonth = ""; renderAll(); });
-    if (state.region) add(`Region: ${state.region}`, "", () => toggleRegionFilter(state.region));
-    if (state.site) {
-      const sInfo = state.raw?.siteDirectory?.[state.site];
-      const sLbl = sInfo && sInfo.storeName && sInfo.storeName !== state.site ? `${state.site} - ${sInfo.storeName}` : state.site;
-      add(`Site: ${sLbl}`, "", () => toggleSiteFilter(state.site));
-    }
-    if (state.channel) add(`Channel: ${state.channel}`, "", () => {
-      state.channel = ""; const el = document.getElementById("filterChannel"); if (el) el.value = ""; renderAll();
+    splitMulti(state.globalCat).forEach((cat) => {
+      add(`Cat: ${cat}`, "amber", () => {
+        state.globalCat = removeMultiVal(state.globalCat, cat);
+        populateGlobalMasterFilter();
+        renderLookupQuickPicks();
+        renderAll();
+      });
+    });
+    splitMulti(state.globalSubcat).forEach((sc) => {
+      add(`Subcat 2: ${sc}`, "amber", () => {
+        setGlobalSubcat(removeMultiVal(state.globalSubcat, sc));
+      });
+    });
+    splitMulti(state.clickedMonth).forEach((m) => {
+      add(`Month: ${m}`, "", () => {
+        state.clickedMonth = removeMultiVal(state.clickedMonth, m);
+        renderAll();
+      });
+    });
+    splitMulti(state.region).forEach((reg) => {
+      add(`Region: ${reg}`, "", () => {
+        state.region = removeMultiVal(state.region, reg);
+        syncMultiSelectUI("filterRegion", state.region);
+        renderAll();
+      });
+    });
+    splitMulti(state.site).forEach((siteCode) => {
+      const sInfo = state.raw?.siteDirectory?.[siteCode];
+      const sLbl = sInfo && sInfo.storeName && sInfo.storeName !== siteCode ? `${siteCode} - ${sInfo.storeName}` : siteCode;
+      add(`Site: ${sLbl}`, "", () => {
+        state.site = removeMultiVal(state.site, siteCode);
+        syncMultiSelectUI("filterSite", state.site);
+        renderAll();
+      });
+    });
+    splitMulti(state.channel).forEach((ch) => {
+      add(`Channel: ${ch}`, "", () => {
+        state.channel = removeMultiVal(state.channel, ch);
+        syncMultiSelectUI("filterChannel", state.channel);
+        renderAll();
+      });
     });
     if (state.orderType) add(state.orderType === "don_xuat_ban" ? "Xuất bán" : "Hoàn bán", "amber", () => {
       state.orderType = ""; const el = document.getElementById("filterOrderType"); if (el) el.value = ""; renderAll();
@@ -2889,7 +3271,7 @@
       const xLabels = units.map(formatUnitLabel);
       const curSalesData = units.map((u) => {
         const monthKey = `${curYear}-${u}`;
-        const sel = state.heroGranularity === "month" && state.clickedMonth === monthKey;
+        const sel = state.heroGranularity === "month" && state.clickedMonth && isMultiMatch(state.clickedMonth, monthKey);
         const dim = state.heroGranularity === "month" && state.clickedMonth && !sel;
         return {
           value: Math.round(curMap.get(u)?.sales || 0),
@@ -3034,7 +3416,7 @@
     const keys = Array.from(map.keys()).sort();
 
     const salesBars = keys.map((k, idx) => {
-      const sel = state.heroGranularity === "month" && state.clickedMonth === k;
+      const sel = state.heroGranularity === "month" && state.clickedMonth && isMultiMatch(state.clickedMonth, k);
       const dim = state.heroGranularity === "month" && state.clickedMonth && !sel;
       const baseColor = sel ? COLORS.cyan : FALLBACK_COLORS[idx % FALLBACK_COLORS.length];
       return {
@@ -3214,7 +3596,7 @@
     const rowsHtml = reportRows
       .map((r) => {
         const isNh11 = r.code === "NH11";
-        const isSelected = state.globalCat === r.code;
+        const isSelected = Boolean(state.globalCat && isMultiMatch(state.globalCat, r.code));
         const trCls = [
           isNh11 ? "row-nh11" : "",
           isSelected ? "active-cat-row" : "",
@@ -3225,7 +3607,7 @@
         const vsTargetClamp = Math.min(100, Math.max(0, r.vsTargetPct));
 
         return `
-        <tr class="${trCls}" data-cat="${r.code}" title="Bấm để lọc theo ${esc(r.label)}">
+        <tr class="${trCls}" data-cat="${r.code}" title="Bấm để lọc theo ${esc(r.label)} • Giữ Ctrl + Click để chọn nhiều NH">
           <td><strong>${esc(r.label)}</strong></td>
           <td class="num">${fmtInt(Math.round(r.ytdSales))}</td>
           <td class="num ${vsLyCls}">${vsLyText}</td>
@@ -3266,9 +3648,9 @@
 
     // Attach click listener on table rows
     tbody.querySelectorAll("tr[data-cat]").forEach((tr) => {
-      tr.addEventListener("click", () => {
+      tr.addEventListener("click", (e) => {
         const cat = tr.dataset.cat;
-        setGlobalCategory(cat);
+        setGlobalCategory(cat, Boolean(e.ctrlKey || e.metaKey));
       });
     });
 
@@ -3502,11 +3884,11 @@
         const sPct = Math.max(3, Math.min(100, (Math.abs(d.sales) / maxSales) * 100));
         const qPct = Math.max(3, Math.min(100, (Math.abs(d.qty) / maxQty) * 100));
         const title = d.storeName !== d.siteCode ? `${d.siteCode} — ${d.storeName}` : d.siteCode;
-        const selectedCls = state.site === d.siteCode ? "selected" : "";
+        const selectedCls = (state.site && isMultiMatch(state.site, d.siteCode)) ? "selected" : "";
         const shareLabel = `${sharePct.toFixed(1)}%`;
 
         return `
-        <div class="rank-row ${selectedCls}" data-site="${esc(d.siteCode)}" title="Click để lọc Site Code: ${esc(d.siteCode)}">
+        <div class="rank-row ${selectedCls}" data-site="${esc(d.siteCode)}" title="Click để lọc Site Code: ${esc(d.siteCode)} • Giữ Ctrl + Click để chọn nhiều">
           <div class="rank-idx">${idx + 1}</div>
           <div class="rank-ring" style="background: conic-gradient(${ringFill} 0deg ${ringDeg}deg, ${ringTrack} ${ringDeg}deg 360deg)" title="Tỷ trọng: ${sharePct.toFixed(1)}% trên tổng ${metricName}">
             <div class="rank-ring-inner">${shareLabel}</div>
@@ -3539,7 +3921,7 @@
       .join("");
 
     container.querySelectorAll(".rank-row").forEach((el) => {
-      el.addEventListener("click", () => toggleSiteFilter(el.dataset.site));
+      el.addEventListener("click", (e) => toggleSiteFilter(el.dataset.site, Boolean(e.ctrlKey || e.metaKey)));
     });
   }
 
@@ -3586,9 +3968,9 @@
     gridEl.innerHTML = list
       .map((d, idx) => {
         const color = REGION_COLORS[d.region] || FALLBACK_COLORS[idx % FALLBACK_COLORS.length];
-        const activeCls = state.region === d.region ? "active" : "";
+        const activeCls = (state.region && isMultiMatch(state.region, d.region)) ? "active" : "";
         return `
-        <div class="reg-mod-item ${activeCls}" data-reg="${esc(d.region)}" title="Click để lọc Region ${esc(d.region)} (Sales: ${fmtVndFull(d.sales)} | Qty: ${fmtInt(d.qty)})">
+        <div class="reg-mod-item ${activeCls}" data-reg="${esc(d.region)}" title="Click để lọc Region ${esc(d.region)} (Sales: ${fmtVndFull(d.sales)} | Qty: ${fmtInt(d.qty)}) • Giữ Ctrl + Click để chọn nhiều">
           <div class="reg-mod-val">${fmtVal(d[metric])}</div>
           <div class="reg-mod-label">
             <span class="reg-dot" style="background:${color}"></span>
@@ -3599,10 +3981,10 @@
       .join("");
 
     barEl.querySelectorAll("[data-reg]").forEach((el) => {
-      el.addEventListener("click", () => toggleRegionFilter(el.dataset.reg));
+      el.addEventListener("click", (e) => toggleRegionFilter(el.dataset.reg, Boolean(e.ctrlKey || e.metaKey)));
     });
     gridEl.querySelectorAll("[data-reg]").forEach((el) => {
-      el.addEventListener("click", () => toggleRegionFilter(el.dataset.reg));
+      el.addEventListener("click", (e) => toggleRegionFilter(el.dataset.reg, Boolean(e.ctrlKey || e.metaKey)));
     });
   }
 
@@ -3720,12 +4102,12 @@
     const metric = state.yearlyCompareMetric || "sales"; // sales | qty | gp
 
     // Filter rows by active category/subcat/region/site/channel/orderType/bulk, ignoring month range so all years compare fairly
-    const catIdx = state.globalCat && lookups.categories ? lookups.categories.indexOf(state.globalCat) : -1;
-    const subIdx = state.globalSubcat ? lookups.subcats.indexOf(state.globalSubcat) : -1;
-    const regIdx = state.region ? lookups.regions.indexOf(state.region) : -1;
-    const siteIdx = state.site ? lookups.sites.indexOf(state.site) : -1;
-    const chIdx = state.channel ? lookups.channels.indexOf(state.channel) : -1;
-    const ordIdx = state.orderType ? lookups.orderTypes.indexOf(state.orderType) : -1;
+    const catIdxSet = getLookupIdxSet(state.globalCat, lookups.categories);
+    const subIdxSet = getLookupIdxSet(state.globalSubcat, lookups.subcats);
+    const regIdxSet = getLookupIdxSet(state.region, lookups.regions);
+    const siteIdxSet = getLookupIdxSet(state.site, lookups.sites);
+    const chIdxSet = getLookupIdxSet(state.channel, lookups.channels);
+    const ordIdxSet = getLookupIdxSet(state.orderType, lookups.orderTypes);
     const catsL = lookups.categories || [];
 
     const storeRegSet = new Set();
@@ -3744,18 +4126,18 @@
       if (r.length > C.CAT) {
         const cCode = String(catsL[r[C.CAT]] || "").toUpperCase();
         if (HIDDEN_GLOBAL_CATS.has(cCode)) continue;
-        if (state.globalCat && (catIdx === -1 || r[C.CAT] !== catIdx)) continue;
+        if (catIdxSet && !catIdxSet.has(r[C.CAT])) continue;
       } else {
         const sc = String(lookups.subcats[r[C.SUBCAT]] || "");
         const cCode = sc.slice(0, 4).toUpperCase();
         if (HIDDEN_GLOBAL_CATS.has(cCode)) continue;
-        if (state.globalCat && !sc.startsWith(state.globalCat)) continue;
+        if (state.globalCat && !hasMultiPrefix(state.globalCat, sc)) continue;
       }
-      if (state.globalSubcat && (subIdx === -1 || r[C.SUBCAT] !== subIdx)) continue;
-      if (regIdx !== -1 && r[C.REGION] !== regIdx) continue;
-      if (siteIdx !== -1 && r[C.SITE] !== siteIdx) continue;
-      if (chIdx !== -1 && r[C.CHANNEL] !== chIdx) continue;
-      if (ordIdx !== -1 && r[C.ORDER_TYPE] !== ordIdx) continue;
+      if (subIdxSet && !subIdxSet.has(r[C.SUBCAT])) continue;
+      if (regIdxSet && !regIdxSet.has(r[C.REGION])) continue;
+      if (siteIdxSet && !siteIdxSet.has(r[C.SITE])) continue;
+      if (chIdxSet && !chIdxSet.has(r[C.CHANNEL])) continue;
+      if (ordIdxSet && !ordIdxSet.has(r[C.ORDER_TYPE])) continue;
       if (state.excludeBulk) {
         const isBulk = r.length > C.IS_BULK ? r[C.IS_BULK] === 1 : Math.abs(r[C.QTY]) >= 100;
         if (isBulk) continue;
@@ -3984,8 +4366,10 @@
     if (!charts.monthlyDaily || !state.raw) return;
 
     const mdSelect = document.getElementById("monthlyDailyMonthSelect");
-    if (state.clickedMonth && state.monthsAll.includes(state.clickedMonth)) {
-      state.monthlyDailyMonth = state.clickedMonth;
+    const clickedMonthsList = splitMulti(state.clickedMonth).sort();
+    const lastClickedM = clickedMonthsList[clickedMonthsList.length - 1] || "";
+    if (lastClickedM && state.monthsAll.includes(lastClickedM)) {
+      state.monthlyDailyMonth = lastClickedM;
     }
     if (!state.monthlyDailyMonth || !state.monthsAll.includes(state.monthlyDailyMonth)) {
       state.monthlyDailyMonth = state.monthsAll[state.monthsAll.length - 1] || "";
@@ -4002,9 +4386,9 @@
     const daily = state.raw.salesDaily || [];
     const { lookups } = state.raw;
     const datesL = lookups.dates || [];
-    const catIdx = state.globalCat && lookups.categories ? lookups.categories.indexOf(state.globalCat) : -1;
-    const subIdx = state.globalSubcat && lookups.subcats ? lookups.subcats.indexOf(state.globalSubcat) : -1;
-    const regIdx = state.region ? lookups.regions.indexOf(state.region) : -1;
+    const catIdxSet = getLookupIdxSet(state.globalCat, lookups.categories);
+    const subIdxSet = getLookupIdxSet(state.globalSubcat, lookups.subcats);
+    const regIdxSet = getLookupIdxSet(state.region, lookups.regions);
     const storeRegSet = new Set();
     if (state.storeRegionsOnly) {
       lookups.regions.forEach((n, idx) => { if (!n.startsWith("Non-Store")) storeRegSet.add(idx); });
@@ -4018,9 +4402,9 @@
       // Compact 8-col: [0:dIdx, 1:catIdx, 2:subIdx, 3:regIdx, 4:isBulk, 5:qty, 6:sales, 7:gp]
       const cCode = String((lookups.categories || [])[d[1]] || "").toUpperCase();
       if (HIDDEN_GLOBAL_CATS.has(cCode)) continue;
-      if (state.globalCat && (catIdx === -1 || d[1] !== catIdx)) continue;
-      if (state.globalSubcat && (subIdx === -1 || d[2] !== subIdx)) continue;
-      if (regIdx !== -1 && d[3] !== regIdx) continue;
+      if (catIdxSet && !catIdxSet.has(d[1])) continue;
+      if (subIdxSet && !subIdxSet.has(d[2])) continue;
+      if (regIdxSet && !regIdxSet.has(d[3])) continue;
       if (state.excludeBulk && d[4] === 1) continue;
       if (state.storeRegionsOnly && !storeRegSet.has(d[3])) continue;
       const dStr = datesL[d[0]] || "";
@@ -4356,9 +4740,9 @@
         .map(([name, val], i) => {
           const color = REGION_COLORS[name] || FALLBACK_COLORS[i % FALLBACK_COLORS.length];
           const pct = totalRegSales > 0 ? ((val / totalRegSales) * 100).toFixed(1) : "0.0";
-          const activeCls = state.region === name ? "active" : "";
+          const activeCls = (state.region && isMultiMatch(state.region, name)) ? "active" : "";
           return `
-            <div class="region-legend-row ${activeCls}" data-reg="${esc(name)}" title="${esc(name)}: ${fmtVndFull(val)} (${pct}%) — Click để lọc">
+            <div class="region-legend-row ${activeCls}" data-reg="${esc(name)}" title="${esc(name)}: ${fmtVndFull(val)} (${pct}%) — Click để lọc • Giữ Ctrl + Click để chọn nhiều">
               <span class="region-legend-dot" style="background:${color}"></span>
               <span class="region-legend-name">${esc(name)}</span>
               <span class="region-legend-val">${fmtCompactVnd(val)}</span>
@@ -4368,7 +4752,7 @@
         .join("");
 
       legendContainer.querySelectorAll(".region-legend-row").forEach((rowEl) => {
-        rowEl.addEventListener("click", () => toggleRegionFilter(rowEl.dataset.reg));
+        rowEl.addEventListener("click", (e) => toggleRegionFilter(rowEl.dataset.reg, Boolean(e.ctrlKey || e.metaKey)));
       });
     }
 
@@ -4593,7 +4977,7 @@
             sales: d.sales,
             qty: d.qty,
             gp: d.gp,
-            itemStyle: { color: d.siteCode === state.site ? COLORS.amber : FALLBACK_COLORS[i % FALLBACK_COLORS.length], borderRadius: [0, 3, 3, 0] },
+            itemStyle: { color: (state.site && isMultiMatch(state.site, d.siteCode)) ? COLORS.amber : FALLBACK_COLORS[i % FALLBACK_COLORS.length], borderRadius: [0, 3, 3, 0] },
           })),
           label: { show: true, position: "right", color: COLORS.textSub, fontFamily: "JetBrains Mono", fontSize: 10, formatter: (p) => fmtCompactVnd(p.value) },
         }],
@@ -4672,7 +5056,7 @@
       charts.storageCap = echarts.init(document.getElementById("chartStorageCap"), null, { renderer: "canvas" });
       charts.storageCap.on("click", (params) => {
         if (!params.name) return;
-        state.storage.cap = state.storage.cap === params.name ? "" : params.name;
+        state.storage.cap = toggleMultiVal(state.storage.cap, params.name, isCtrlEvent(params));
         renderStorageReport();
       });
     }
@@ -4680,7 +5064,7 @@
       charts.storageBrand = echarts.init(document.getElementById("chartStorageBrand"), null, { renderer: "canvas" });
       charts.storageBrand.on("click", (params) => {
         if (!params.name) return;
-        state.storage.brand = state.storage.brand === params.name ? "" : params.name;
+        state.storage.brand = toggleMultiVal(state.storage.brand, params.name, isCtrlEvent(params));
         renderStorageReport();
       });
     }
@@ -4688,7 +5072,7 @@
       charts.storagePrice = echarts.init(document.getElementById("chartStoragePrice"), null, { renderer: "canvas" });
       charts.storagePrice.on("click", (params) => {
         if (!params.name) return;
-        state.storage.priceBand = state.storage.priceBand === params.name ? "" : params.name;
+        state.storage.priceBand = toggleMultiVal(state.storage.priceBand, params.name, isCtrlEvent(params));
         renderStorageReport();
       });
     }
@@ -4720,12 +5104,13 @@
     const fmtVal = (v) => (isQty ? fmtInt(v) : fmtCompactVnd(v));
     const fmtAxis = (v) => (isQty ? fmtInt(v) : fmtAxisVnd(v));
 
-    const regIdx = state.region ? lookups.regions.indexOf(state.region) : -1;
-    const siteIdx = state.site ? lookups.sites.indexOf(state.site) : -1;
-    const chIdx = state.channel ? lookups.channels.indexOf(state.channel) : -1;
-    const capFilterIdx = st.cap ? sL.capacities.indexOf(st.cap) : -1;
-    const brandFilterIdx = st.brand ? lookups.brands.indexOf(st.brand) : -1;
-    const pbFilterIdx = st.priceBand ? sL.priceBands.indexOf(st.priceBand) : -1;
+    const regIdxSet = getLookupIdxSet(state.region, lookups.regions);
+    const siteIdxSet = getLookupIdxSet(state.site, lookups.sites);
+    const chIdxSet = getLookupIdxSet(state.channel, lookups.channels);
+    const capFilterSet = getLookupIdxSet(st.cap, sL.capacities);
+    const brandFilterSet = getLookupIdxSet(st.brand, lookups.brands);
+    const pbFilterSet = getLookupIdxSet(st.priceBand, sL.priceBands);
+    const clickedMonthSet = state.clickedMonth ? new Set(splitMulti(state.clickedMonth)) : null;
 
     // Row shape: [mIdx, si, ri, ci, grpI, stI, capI, bi, pbI, qty, sales, gp, cnt]
     const filtered = [];
@@ -4734,10 +5119,10 @@
       const mStr = months[r[0]] || "";
       if (state.monthFrom && mStr < state.monthFrom) continue;
       if (state.monthTo && mStr > state.monthTo) continue;
-      if (state.clickedMonth && mStr !== state.clickedMonth) continue;
-      if (regIdx !== -1 && r[2] !== regIdx) continue;
-      if (siteIdx !== -1 && r[1] !== siteIdx) continue;
-      if (chIdx !== -1 && r[3] !== chIdx) continue;
+      if (clickedMonthSet && !clickedMonthSet.has(mStr)) continue;
+      if (regIdxSet && !regIdxSet.has(r[2])) continue;
+      if (siteIdxSet && !siteIdxSet.has(r[1])) continue;
+      if (chIdxSet && !chIdxSet.has(r[3])) continue;
 
       if (st.group !== "all") {
         const gCode = sL.groups[r[4]];
@@ -4748,9 +5133,9 @@
           continue;
         }
       }
-      if (capFilterIdx !== -1 && r[6] !== capFilterIdx) continue;
-      if (brandFilterIdx !== -1 && r[7] !== brandFilterIdx) continue;
-      if (pbFilterIdx !== -1 && r[8] !== pbFilterIdx) continue;
+      if (capFilterSet && !capFilterSet.has(r[6])) continue;
+      if (brandFilterSet && !brandFilterSet.has(r[7])) continue;
+      if (pbFilterSet && !pbFilterSet.has(r[8])) continue;
       filtered.push(r);
     }
 
@@ -4758,12 +5143,12 @@
     const chipsWrap = document.getElementById("storageActiveChips");
     if (chipsWrap) {
       const chips = [];
-      if (state.channel) chips.push({ lbl: `Channel: ${state.channel}`, cls: "" });
-      if (state.site) chips.push({ lbl: `Site: ${state.site}`, cls: "" });
-      if (state.region) chips.push({ lbl: `Region: ${state.region}`, cls: "" });
-      if (st.cap) chips.push({ lbl: `Dung lượng: ${st.cap}`, cls: "amber", clear: () => { st.cap = ""; renderStorageReport(); } });
-      if (st.brand) chips.push({ lbl: `Hãng: ${st.brand}`, cls: "amber", clear: () => { st.brand = ""; renderStorageReport(); } });
-      if (st.priceBand) chips.push({ lbl: `Khoảng giá: ${st.priceBand}`, cls: "amber", clear: () => { st.priceBand = ""; renderStorageReport(); } });
+      splitMulti(state.channel).forEach((ch) => chips.push({ lbl: `Channel: ${ch}`, cls: "" }));
+      splitMulti(state.site).forEach((sc) => chips.push({ lbl: `Site: ${sc}`, cls: "" }));
+      splitMulti(state.region).forEach((rg) => chips.push({ lbl: `Region: ${rg}`, cls: "" }));
+      splitMulti(st.cap).forEach((c) => chips.push({ lbl: `Dung lượng: ${c}`, cls: "amber", clear: () => { st.cap = removeMultiVal(st.cap, c); renderStorageReport(); } }));
+      splitMulti(st.brand).forEach((b) => chips.push({ lbl: `Hãng: ${b}`, cls: "amber", clear: () => { st.brand = removeMultiVal(st.brand, b); renderStorageReport(); } }));
+      splitMulti(st.priceBand).forEach((pb) => chips.push({ lbl: `Khoảng giá: ${pb}`, cls: "amber", clear: () => { st.priceBand = removeMultiVal(st.priceBand, pb); renderStorageReport(); } }));
       chipsWrap.innerHTML = "";
       if (!chips.length) {
         chipsWrap.innerHTML = `<span class="chip muted-chip">Toàn bộ kỳ lọc • ${fmtInt(filtered.length)} tổ hợp</span>`;
@@ -4880,7 +5265,7 @@
             value: Math.round(d[mKey]),
             ...d,
             itemStyle: {
-              color: d.name === st.cap ? COLORS.amber : (isQty ? COLORS.cyan : FALLBACK_COLORS[i % FALLBACK_COLORS.length]),
+              color: (st.cap && isMultiMatch(st.cap, d.name)) ? COLORS.amber : (isQty ? COLORS.cyan : FALLBACK_COLORS[i % FALLBACK_COLORS.length]),
               borderRadius: [4, 4, 0, 0],
             },
           })),
@@ -4919,7 +5304,7 @@
           data: priceList.map((d) => ({
             value: Math.round(d[mKey]),
             ...d,
-            itemStyle: { color: d.name === st.priceBand ? COLORS.amber : COLORS.violet, borderRadius: [4, 4, 0, 0] },
+            itemStyle: { color: (st.priceBand && isMultiMatch(st.priceBand, d.name)) ? COLORS.amber : COLORS.violet, borderRadius: [4, 4, 0, 0] },
           })),
           label: { show: true, position: "top", color: COLORS.textSub, fontFamily: "JetBrains Mono", fontSize: 10, formatter: (p) => fmtVal(p.value) },
         }],
@@ -4997,7 +5382,7 @@
           value: Math.round(d[bKey]),
           ...d,
           itemStyle: {
-            color: d.name === st.brand ? COLORS.amber : (isBrandQty ? COLORS.cyan : COLORS.emerald),
+            color: (st.brand && isMultiMatch(st.brand, d.name)) ? COLORS.amber : (isBrandQty ? COLORS.cyan : COLORS.emerald),
             borderRadius: [0, 3, 3, 0],
           },
         })),
@@ -5050,8 +5435,8 @@
     if (thead) {
       let hHtml = `<tr><th class="piv-sticky-col">Hãng (Brand)</th>`;
       activeCaps.forEach((c) => {
-        const isAct = st.cap === c.name ? "style='color:var(--amber)'" : "";
-        hHtml += `<th class="num piv-cap-col" data-cap="${esc(c.name)}" ${isAct} title="Click để lọc Dung lượng ${esc(c.name)}">${esc(c.name)}</th>`;
+        const isAct = (st.cap && isMultiMatch(st.cap, c.name)) ? "style='color:var(--amber)'" : "";
+        hHtml += `<th class="num piv-cap-col" data-cap="${esc(c.name)}" ${isAct} title="Click để lọc Dung lượng ${esc(c.name)} • Giữ Ctrl + Click để chọn nhiều">${esc(c.name)}</th>`;
       });
       hHtml += `<th class="num piv-total-col">TỔNG CỘNG</th></tr>`;
       thead.innerHTML = hHtml;
@@ -5067,7 +5452,7 @@
         let bHtml = "";
         sortedBrands.forEach(([brand, rTot]) => {
           const bMap = pivotMap.get(brand);
-          const isBrandAct = st.brand === brand ? "style='color:var(--amber)'" : "";
+          const isBrandAct = (st.brand && isMultiMatch(st.brand, brand)) ? "style='color:var(--amber)'" : "";
           const rowVal = rTot[tmKey];
           const rowPct = grandTotal[tmKey] ? ((rowVal / grandTotal[tmKey]) * 100).toFixed(1) : "0.0";
           const expRow = [brand];
@@ -5150,16 +5535,16 @@
 
     // Attach click listeners on table
     thead?.querySelectorAll("th[data-cap]").forEach((th) => {
-      th.addEventListener("click", () => {
+      th.addEventListener("click", (e) => {
         const c = th.dataset.cap;
-        st.cap = st.cap === c ? "" : c;
+        st.cap = toggleMultiVal(st.cap, c, Boolean(e.ctrlKey || e.metaKey));
         renderStorageReport();
       });
     });
     tbody?.querySelectorAll("td[data-brand]").forEach((td) => {
-      td.addEventListener("click", () => {
+      td.addEventListener("click", (e) => {
         const b = td.dataset.brand;
-        st.brand = st.brand === b ? "" : b;
+        st.brand = toggleMultiVal(st.brand, b, Boolean(e.ctrlKey || e.metaKey));
         renderStorageReport();
       });
     });
@@ -5242,7 +5627,7 @@
       </tr>`)
       .join("");
 
-    tbody.querySelectorAll("[data-sc]").forEach((tr) => tr.addEventListener("click", () => toggleSiteFilter(tr.dataset.sc)));
+    tbody.querySelectorAll("[data-sc]").forEach((tr) => tr.addEventListener("click", (e) => toggleSiteFilter(tr.dataset.sc, Boolean(e.ctrlKey || e.metaKey))));
     document.getElementById("tableCountInfo").textContent = `Hiển thị ${list.length} Sales Site Codes`;
     document.getElementById("tablePagination").innerHTML = "";
 
@@ -5294,7 +5679,7 @@
     const totTds = months.map((m) => `<td class="num">${fmtCompactVnd(colTot[m].s)} <span style="color:#8492A6;font-size:10px">/ ${fmtInt(colTot[m].q)}</span></td>`).join("");
     const tbody = document.getElementById("tableBody");
     tbody.innerHTML = html + `<tr class="row-total"><td>TỔNG CỘNG</td>${totTds}<td class="num">${fmtCompactVnd(gS)}</td><td class="num" style="color:#F59E0B">${fmtInt(gQ)}</td></tr>`;
-    tbody.querySelectorAll("[data-reg]").forEach((tr) => tr.addEventListener("click", () => toggleRegionFilter(tr.dataset.reg)));
+    tbody.querySelectorAll("[data-reg]").forEach((tr) => tr.addEventListener("click", (e) => toggleRegionFilter(tr.dataset.reg, Boolean(e.ctrlKey || e.metaKey))));
 
     document.getElementById("tableCountInfo").textContent = `Ma trận ${list.length} Regions × ${months.length} Tháng`;
     document.getElementById("tablePagination").innerHTML = "";
@@ -5486,6 +5871,7 @@
       el.innerHTML = `<option value="">${allLabel}</option>`;
       items.forEach((v) => el.add(new Option(labelFn(v), v)));
       if (prev && items.includes(prev)) el.value = prev;
+      if (msRegistry.has(id)) msRegistry.get(id).rebuild();
     };
 
     const statusSet = new Set([
@@ -5567,6 +5953,7 @@
     setVal("invTableSearchInput", "");
     setChk("invSellableOnlyToggle", false);
     setChk("invDamagedOnlyToggle", false);
+    syncAllMultiSelectUIs();
 
     if (shouldRender && state.activeView === "inventory") renderInventoryView();
   }
@@ -5669,18 +6056,20 @@
     const { rows, lookups } = sc;
     const iv = state.inv;
 
-    const catIdx = state.globalCat && lookups.categories ? lookups.categories.indexOf(state.globalCat) : -1;
-    const gSubIdx = state.globalSubcat && lookups.subcats ? lookups.subcats.indexOf(state.globalSubcat) : -1;
-    const siteIdx = iv.site ? lookups.sites.indexOf(iv.site) : -1;
-    const btIdx = iv.binType ? lookups.binTypes.indexOf(iv.binType) : -1;
-    const bzIdx = iv.binZone ? lookups.binZones.indexOf(iv.binZone) : -1;
-    const brIdx = iv.brand ? lookups.brands.indexOf(iv.brand) : -1;
-    const stIdx = iv.status ? lookups.purchaseStatuses.indexOf(iv.status) : -1;
-    const rngIdx = iv.range ? (lookups.ranges || []).indexOf(iv.range) : -1;
+    const catIdxSet = getLookupIdxSet(state.globalCat, lookups.categories);
+    const gSubIdxSet = getLookupIdxSet(state.globalSubcat, lookups.subcats);
+    const siteIdxSet = getLookupIdxSet(iv.site, lookups.sites);
+    const btIdxSet = getLookupIdxSet(iv.binType, lookups.binTypes);
+    const bzIdxSet = getLookupIdxSet(iv.binZone, lookups.binZones);
+    const brIdxSet = getLookupIdxSet(iv.brand, lookups.brands);
+    const stIdxSet = getLookupIdxSet(iv.status, lookups.purchaseStatuses);
+    const rngIdxSet = getLookupIdxSet(iv.range, lookups.ranges || []);
     const badCol = iv.badScope === "site" ? SC_C.BAD_SITE : SC_C.BAD_COMP;
     const badLookup = iv.badScope === "site" ? lookups.badSite : lookups.badComp;
-    const badIdx = iv.badStock ? badLookup.indexOf(iv.badStock) : -1;
-    const agingBucketIdx = iv.agingBucket ? AGING_BUCKETS.findIndex((b) => b.key === iv.agingBucket) : -1;
+    const badIdxSet = getLookupIdxSet(iv.badStock, badLookup);
+    const agingBucketIdxSet = iv.agingBucket
+      ? new Set(splitMulti(iv.agingBucket).map((k) => AGING_BUCKETS.findIndex((b) => b.key === k)).filter((idx) => idx !== -1))
+      : null;
     const agingCol = iv.agingBasis === "last" ? SC_C.AGING_SITE_B : SC_C.AGING_COMP_B;
 
     const sellableSet = new Set();
@@ -5694,18 +6083,18 @@
     const out = [];
     for (let i = 0; i < rows.length; i++) {
       const r = rows[i];
-      if (state.globalCat && (catIdx === -1 || r[SC_C.CAT] !== catIdx)) continue;
-      if (state.globalSubcat && (gSubIdx === -1 || r[SC_C.SUBCAT] !== gSubIdx)) continue;
-      if (iv.site && r[SC_C.SITE] !== siteIdx) continue;
-      if (iv.binType && r[SC_C.BIN_TYPE] !== btIdx) continue;
-      if (iv.binZone && r[SC_C.BIN_ZONE] !== bzIdx) continue;
-      if (iv.brand && r[SC_C.BRAND] !== brIdx) continue;
-      if (iv.status && r[SC_C.STATUS] !== stIdx) continue;
-      if (iv.range && r[SC_C.RANGE] !== rngIdx) continue;
-      if (iv.badStock && r[badCol] !== badIdx) continue;
+      if (catIdxSet && !catIdxSet.has(r[SC_C.CAT])) continue;
+      if (gSubIdxSet && !gSubIdxSet.has(r[SC_C.SUBCAT])) continue;
+      if (siteIdxSet && !siteIdxSet.has(r[SC_C.SITE])) continue;
+      if (btIdxSet && !btIdxSet.has(r[SC_C.BIN_TYPE])) continue;
+      if (bzIdxSet && !bzIdxSet.has(r[SC_C.BIN_ZONE])) continue;
+      if (brIdxSet && !brIdxSet.has(r[SC_C.BRAND])) continue;
+      if (stIdxSet && !stIdxSet.has(r[SC_C.STATUS])) continue;
+      if (rngIdxSet && !rngIdxSet.has(r[SC_C.RANGE])) continue;
+      if (badIdxSet && !badIdxSet.has(r[badCol])) continue;
       if (iv.sellableOnly && !sellableSet.has(r[SC_C.BIN_TYPE])) continue;
       if (iv.damagedOnly && !damagedSet.has(r[SC_C.BIN_TYPE])) continue;
-      if (agingBucketIdx !== -1 && r[agingCol] !== agingBucketIdx) continue;
+      if (agingBucketIdxSet && agingBucketIdxSet.size > 0 && !agingBucketIdxSet.has(r[agingCol])) continue;
       out.push(r);
     }
     return out;
@@ -5717,19 +6106,21 @@
     const { rows, lookups } = sn;
     const iv = state.inv;
 
-    const catIdx = state.globalCat && lookups.categories ? lookups.categories.indexOf(state.globalCat) : -1;
-    const gSubIdx = state.globalSubcat && lookups.subcats ? lookups.subcats.indexOf(state.globalSubcat) : -1;
-    const siteIdx = iv.site ? lookups.sites.indexOf(iv.site) : -1;
-    const btIdx = iv.binType ? lookups.binTypes.indexOf(iv.binType) : -1;
-    const bzIdx = iv.binZone ? lookups.binZones.indexOf(iv.binZone) : -1;
-    const scIdx = iv.subcat ? lookups.subcats.indexOf(iv.subcat) : -1;
-    const brIdx = iv.brand ? lookups.brands.indexOf(iv.brand) : -1;
-    const stIdx = iv.status ? lookups.purchaseStatuses.indexOf(iv.status) : -1;
-    const rngIdx = iv.range ? (lookups.ranges || []).indexOf(iv.range) : -1;
+    const catIdxSet = getLookupIdxSet(state.globalCat, lookups.categories);
+    const gSubIdxSet = getLookupIdxSet(state.globalSubcat, lookups.subcats);
+    const siteIdxSet = getLookupIdxSet(iv.site, lookups.sites);
+    const btIdxSet = getLookupIdxSet(iv.binType, lookups.binTypes);
+    const bzIdxSet = getLookupIdxSet(iv.binZone, lookups.binZones);
+    const scIdxSet = getLookupIdxSet(iv.subcat, lookups.subcats);
+    const brIdxSet = getLookupIdxSet(iv.brand, lookups.brands);
+    const stIdxSet = getLookupIdxSet(iv.status, lookups.purchaseStatuses);
+    const rngIdxSet = getLookupIdxSet(iv.range, lookups.ranges || []);
     const badCol = iv.badScope === "site" ? SN_C.BAD_SITE : SN_C.BAD_COMP;
     const badLookup = iv.badScope === "site" ? lookups.badSite : lookups.badComp;
-    const badIdx = iv.badStock ? badLookup.indexOf(iv.badStock) : -1;
-    const agingObj = iv.agingBucket ? AGING_BUCKETS.find((b) => b.key === iv.agingBucket) : null;
+    const badIdxSet = getLookupIdxSet(iv.badStock, badLookup);
+    const agingObjs = iv.agingBucket
+      ? splitMulti(iv.agingBucket).map((k) => AGING_BUCKETS.find((b) => b.key === k)).filter(Boolean)
+      : [];
     const agingCol = iv.agingBasis === "last" ? SN_C.AGING_SITE : SN_C.AGING_COMP;
 
     const sellableSet = new Set();
@@ -5745,23 +6136,23 @@
       const r = rows[i];
       if (state.globalCat) {
         if (r.length > SN_C.CAT) {
-          if (catIdx === -1 || r[SN_C.CAT] !== catIdx) continue;
-        } else if (!String(lookups.subcats[r[SN_C.SUBCAT]] || "").startsWith(state.globalCat)) {
+          if (!catIdxSet || !catIdxSet.has(r[SN_C.CAT])) continue;
+        } else if (!hasMultiPrefix(state.globalCat, lookups.subcats[r[SN_C.SUBCAT]])) {
           continue;
         }
       }
-      if (state.globalSubcat && (gSubIdx === -1 || r[SN_C.SUBCAT] !== gSubIdx)) continue;
-      if (iv.site && r[SN_C.SITE] !== siteIdx) continue;
-      if (iv.binType && r[SN_C.BIN_TYPE] !== btIdx) continue;
-      if (iv.binZone && r[SN_C.BIN_ZONE] !== bzIdx) continue;
-      if (iv.subcat && r[SN_C.SUBCAT] !== scIdx) continue;
-      if (iv.brand && r[SN_C.BRAND] !== brIdx) continue;
-      if (iv.status && r[SN_C.STATUS] !== stIdx) continue;
-      if (iv.range && r[SN_C.RANGE] !== rngIdx) continue;
-      if (iv.badStock && r[badCol] !== badIdx) continue;
+      if (gSubIdxSet && !gSubIdxSet.has(r[SN_C.SUBCAT])) continue;
+      if (siteIdxSet && !siteIdxSet.has(r[SN_C.SITE])) continue;
+      if (btIdxSet && !btIdxSet.has(r[SN_C.BIN_TYPE])) continue;
+      if (bzIdxSet && !bzIdxSet.has(r[SN_C.BIN_ZONE])) continue;
+      if (scIdxSet && !scIdxSet.has(r[SN_C.SUBCAT])) continue;
+      if (brIdxSet && !brIdxSet.has(r[SN_C.BRAND])) continue;
+      if (stIdxSet && !stIdxSet.has(r[SN_C.STATUS])) continue;
+      if (rngIdxSet && !rngIdxSet.has(r[SN_C.RANGE])) continue;
+      if (badIdxSet && !badIdxSet.has(r[badCol])) continue;
       if (iv.sellableOnly && !sellableSet.has(r[SN_C.BIN_TYPE])) continue;
       if (iv.damagedOnly && !damagedSet.has(r[SN_C.BIN_TYPE])) continue;
-      if (agingObj && !agingObj.test(r[agingCol])) continue;
+      if (agingObjs.length > 0 && !agingObjs.some((ao) => ao.test(r[agingCol]))) continue;
       out.push(r);
     }
     return out;
@@ -5773,16 +6164,18 @@
     const { rows, lookups } = inv;
     const iv = state.inv;
 
-    const catIdx = state.globalCat && lookups.categories ? lookups.categories.indexOf(state.globalCat) : -1;
-    const gSubIdx = state.globalSubcat && lookups.subcats ? lookups.subcats.indexOf(state.globalSubcat) : -1;
-    const siteIdx = iv.site ? lookups.sites.indexOf(iv.site) : -1;
-    const btIdx = iv.binType ? lookups.binTypes.indexOf(iv.binType) : -1;
-    const bzIdx = iv.binZone ? lookups.binZones.indexOf(iv.binZone) : -1;
-    const scIdx = iv.subcat ? lookups.subcats.indexOf(iv.subcat) : -1;
-    const brIdx = iv.brand ? lookups.brands.indexOf(iv.brand) : -1;
-    const stIdx = iv.status ? lookups.purchaseStatuses.indexOf(iv.status) : -1;
-    const rngIdx = iv.range ? (lookups.ranges || []).indexOf(iv.range) : -1;
-    const agingObj = iv.agingBucket ? AGING_BUCKETS.find((b) => b.key === iv.agingBucket) : null;
+    const catIdxSet = getLookupIdxSet(state.globalCat, lookups.categories);
+    const gSubIdxSet = getLookupIdxSet(state.globalSubcat, lookups.subcats);
+    const siteIdxSet = getLookupIdxSet(iv.site, lookups.sites);
+    const btIdxSet = getLookupIdxSet(iv.binType, lookups.binTypes);
+    const bzIdxSet = getLookupIdxSet(iv.binZone, lookups.binZones);
+    const scIdxSet = getLookupIdxSet(iv.subcat, lookups.subcats);
+    const brIdxSet = getLookupIdxSet(iv.brand, lookups.brands);
+    const stIdxSet = getLookupIdxSet(iv.status, lookups.purchaseStatuses);
+    const rngIdxSet = getLookupIdxSet(iv.range, lookups.ranges || []);
+    const agingObjs = iv.agingBucket
+      ? splitMulti(iv.agingBucket).map((k) => AGING_BUCKETS.find((b) => b.key === k)).filter(Boolean)
+      : [];
 
     let badSkuSiteSet = null;
     if (iv.badStock && state.raw.invSerials) {
@@ -5806,24 +6199,24 @@
       const r = rows[i];
       if (state.globalCat) {
         if (r.length > INV_C.CAT) {
-          if (catIdx === -1 || r[INV_C.CAT] !== catIdx) continue;
-        } else if (!String(lookups.subcats[r[INV_C.SUBCAT]] || "").startsWith(state.globalCat)) {
+          if (!catIdxSet || !catIdxSet.has(r[INV_C.CAT])) continue;
+        } else if (!hasMultiPrefix(state.globalCat, lookups.subcats[r[INV_C.SUBCAT]])) {
           continue;
         }
       }
-      if (state.globalSubcat && (gSubIdx === -1 || r[INV_C.SUBCAT] !== gSubIdx)) continue;
-      if (iv.site && r[INV_C.SITE] !== siteIdx) continue;
-      if (iv.binType && r[INV_C.BIN_TYPE] !== btIdx) continue;
-      if (iv.binZone && r[INV_C.BIN_ZONE] !== bzIdx) continue;
-      if (iv.subcat && r[INV_C.SUBCAT] !== scIdx) continue;
-      if (iv.brand && r[INV_C.BRAND] !== brIdx) continue;
-      if (iv.status && r[INV_C.STATUS] !== stIdx) continue;
-      if (iv.range && r[INV_C.RANGE] !== rngIdx) continue;
+      if (gSubIdxSet && !gSubIdxSet.has(r[INV_C.SUBCAT])) continue;
+      if (siteIdxSet && !siteIdxSet.has(r[INV_C.SITE])) continue;
+      if (btIdxSet && !btIdxSet.has(r[INV_C.BIN_TYPE])) continue;
+      if (bzIdxSet && !bzIdxSet.has(r[INV_C.BIN_ZONE])) continue;
+      if (scIdxSet && !scIdxSet.has(r[INV_C.SUBCAT])) continue;
+      if (brIdxSet && !brIdxSet.has(r[INV_C.BRAND])) continue;
+      if (stIdxSet && !stIdxSet.has(r[INV_C.STATUS])) continue;
+      if (rngIdxSet && !rngIdxSet.has(r[INV_C.RANGE])) continue;
       if (iv.sellableOnly && !sellableIdxSet.has(r[INV_C.BIN_TYPE])) continue;
       if (iv.damagedOnly && !damagedIdxSet.has(r[INV_C.BIN_TYPE])) continue;
-      if (agingObj) {
+      if (agingObjs.length > 0) {
         const d = iv.agingBasis === "first" && r.length > INV_C.AGING_FIRST ? r[INV_C.AGING_FIRST] : r[INV_C.AGING];
-        if (!agingObj.test(d)) continue;
+        if (!agingObjs.some((ao) => ao.test(d))) continue;
       }
       if (badSkuSiteSet) {
         const skuCode = extractSkuCodeFromLabel(lookups.skus[r[INV_C.SKU]]);
@@ -5945,19 +6338,44 @@
     const chips = [];
     const add = (label, cls, fn) => chips.push({ label, cls, fn });
 
-    if (state.globalCat) add(`Cat: ${state.globalCat}`, "amber", () => setGlobalCategory(""));
-    if (state.globalSubcat) add(`Subcat 2: ${state.globalSubcat}`, "amber", () => setGlobalSubcat(""));
-    if (iv.status) add(`TT Mua: ${iv.status}`, "amber", () => { iv.status = ""; document.getElementById("invFilterStatus").value = ""; renderInventoryView(); });
-    if (iv.range) add(`Range: ${iv.range}`, "", () => { iv.range = ""; document.getElementById("invFilterRange").value = ""; renderInventoryView(); });
-    if (iv.badStock) add(`Loại tồn: ${iv.badStock}`, "amber", () => { iv.badStock = ""; document.getElementById("invFilterBadStock").value = ""; renderInventoryView(); });
-    if (iv.agingBucket) {
-      const b = AGING_BUCKETS.find((x) => x.key === iv.agingBucket);
-      add(`Tuổi tồn: ${b ? b.label : iv.agingBucket}`, "amber", () => { iv.agingBucket = ""; renderInventoryView(); });
-    }
-    if (iv.site) add(`Kho: ${iv.site}`, "", () => { iv.site = ""; document.getElementById("invFilterSite").value = ""; renderInventoryView(); });
-    if (iv.binType) add(`BIN Type: ${iv.binType}`, "", () => { iv.binType = ""; document.getElementById("invFilterBinType").value = ""; renderInventoryView(); });
-    if (iv.binZone) add(`BIN Zone: ${iv.binZone}`, "", () => { iv.binZone = ""; document.getElementById("invFilterBinZone").value = ""; renderInventoryView(); });
-    if (iv.brand) add(`Brand: ${iv.brand}`, "", () => { iv.brand = ""; document.getElementById("invFilterBrand").value = ""; renderInventoryView(); });
+    splitMulti(state.globalCat).forEach((cat) => {
+      add(`Cat: ${cat}`, "amber", () => {
+        state.globalCat = removeMultiVal(state.globalCat, cat);
+        populateGlobalMasterFilter();
+        renderLookupQuickPicks();
+        renderAll();
+      });
+    });
+    splitMulti(state.globalSubcat).forEach((sc) => {
+      add(`Subcat 2: ${sc}`, "amber", () => {
+        setGlobalSubcat(removeMultiVal(state.globalSubcat, sc));
+      });
+    });
+    splitMulti(iv.status).forEach((v) => {
+      add(`TT Mua: ${v}`, "amber", () => { iv.status = removeMultiVal(iv.status, v); syncMultiSelectUI("invFilterStatus", iv.status); renderInventoryView(); });
+    });
+    splitMulti(iv.range).forEach((v) => {
+      add(`Range: ${v}`, "", () => { iv.range = removeMultiVal(iv.range, v); syncMultiSelectUI("invFilterRange", iv.range); renderInventoryView(); });
+    });
+    splitMulti(iv.badStock).forEach((v) => {
+      add(`Loại tồn: ${v}`, "amber", () => { iv.badStock = removeMultiVal(iv.badStock, v); syncMultiSelectUI("invFilterBadStock", iv.badStock); renderInventoryView(); });
+    });
+    splitMulti(iv.agingBucket).forEach((k) => {
+      const b = AGING_BUCKETS.find((x) => x.key === k);
+      add(`Tuổi tồn: ${b ? b.label : k}`, "amber", () => { iv.agingBucket = removeMultiVal(iv.agingBucket, k); renderInventoryView(); });
+    });
+    splitMulti(iv.site).forEach((v) => {
+      add(`Kho: ${v}`, "", () => { iv.site = removeMultiVal(iv.site, v); syncMultiSelectUI("invFilterSite", iv.site); renderInventoryView(); });
+    });
+    splitMulti(iv.binType).forEach((v) => {
+      add(`BIN Type: ${v}`, "", () => { iv.binType = removeMultiVal(iv.binType, v); syncMultiSelectUI("invFilterBinType", iv.binType); renderInventoryView(); });
+    });
+    splitMulti(iv.binZone).forEach((v) => {
+      add(`BIN Zone: ${v}`, "", () => { iv.binZone = removeMultiVal(iv.binZone, v); syncMultiSelectUI("invFilterBinZone", iv.binZone); renderInventoryView(); });
+    });
+    splitMulti(iv.brand).forEach((v) => {
+      add(`Brand: ${v}`, "", () => { iv.brand = removeMultiVal(iv.brand, v); syncMultiSelectUI("invFilterBrand", iv.brand); renderInventoryView(); });
+    });
     if (iv.sellableOnly) add("Chỉ hàng bán mới", "", () => { iv.sellableOnly = false; document.getElementById("invSellableOnlyToggle").checked = false; renderInventoryView(); });
     if (iv.damagedOnly) add("Chỉ hàng hư hỏng", "amber", () => { iv.damagedOnly = false; document.getElementById("invDamagedOnlyToggle").checked = false; renderInventoryView(); });
 
@@ -6119,7 +6537,7 @@
           itemStyle: {
             color: BAD_STOCK_COLORS[name] || "#64748B",
             borderRadius: [4, 4, 0, 0],
-            opacity: iv.badStock && iv.badStock !== name ? 0.35 : 0.94,
+            opacity: iv.badStock && !isMultiMatch(iv.badStock, name) ? 0.35 : 0.94,
           },
         })),
       }],
@@ -6137,12 +6555,12 @@
       if (state.raw.masterSummary?.rows) {
         const ms = state.raw.masterSummary;
         const msL = ms.lookups;
-        const catIdx = state.globalCat && msL.categories ? msL.categories.indexOf(state.globalCat) : -1;
-        const subIdx = state.globalSubcat && msL.subcats ? msL.subcats.indexOf(state.globalSubcat) : -1;
+        const catIdxSet = getLookupIdxSet(state.globalCat, msL.categories);
+        const subIdxSet = getLookupIdxSet(state.globalSubcat, msL.subcats);
         ms.rows.forEach((r) => {
           // [0:catIdx, 1:subIdx, 2:statusIdx, 3:rangeIdx, 4:skuCount, 5:invQty, 6:invVal]
-          if (state.globalCat && (catIdx === -1 || r[0] !== catIdx)) return;
-          if (state.globalSubcat && (subIdx === -1 || r[1] !== subIdx)) return;
+          if (catIdxSet && !catIdxSet.has(r[0])) return;
+          if (subIdxSet && !subIdxSet.has(r[1])) return;
           const st = msL.purchaseStatuses[r[2]] || "Khác";
           const cur = map.get(st) || { val: 0, qty: 0, count: 0 };
           cur.count += r[4];
@@ -6153,11 +6571,11 @@
       } else if (state.raw.masterProducts?.rows) {
         const mp = state.raw.masterProducts;
         const mpL = mp.lookups;
-        const catIdx = state.globalCat && mpL.categories ? mpL.categories.indexOf(state.globalCat) : -1;
-        const subIdx = state.globalSubcat && mpL.subcats ? mpL.subcats.indexOf(state.globalSubcat) : -1;
+        const catIdxSet = getLookupIdxSet(state.globalCat, mpL.categories);
+        const subIdxSet = getLookupIdxSet(state.globalSubcat, mpL.subcats);
         mp.rows.forEach((r) => {
-          if (state.globalCat && (catIdx === -1 || r[MP_C.CAT] !== catIdx)) return;
-          if (state.globalSubcat && (subIdx === -1 || r[MP_C.SUBCAT] !== subIdx)) return;
+          if (catIdxSet && !catIdxSet.has(r[MP_C.CAT])) return;
+          if (subIdxSet && !subIdxSet.has(r[MP_C.SUBCAT])) return;
           const st = mpL.purchaseStatuses[r[MP_C.STATUS]] || "Khác";
           const cur = map.get(st) || { val: 0, qty: 0, count: 0 };
           cur.val += r[MP_C.INV_VAL];
@@ -6311,7 +6729,7 @@
           barMaxWidth: 28,
           itemStyle: {
             borderRadius: [4, 4, 0, 0],
-            color: (p) => (p.name === state.inv.site ? "#00E5FF" : "#1D7AFC"),
+            color: (p) => ((state.inv.site && isMultiMatch(state.inv.site, p.name)) ? "#00E5FF" : "#1D7AFC"),
           },
           data: sites.map((s) => Math.round((siteTotals.get(s) || 0) * 100) / 100),
         }];
@@ -6507,7 +6925,7 @@
           itemStyle: {
             color: b.color,
             borderRadius: [4, 4, 0, 0],
-            opacity: state.inv.agingBucket && state.inv.agingBucket !== b.key ? 0.35 : 0.92,
+            opacity: state.inv.agingBucket && !isMultiMatch(state.inv.agingBucket, b.key) ? 0.35 : 0.92,
           },
         })),
       });
@@ -6803,11 +7221,11 @@
       }
       const allowedSkus = new Set(rows.map((r) => extractSkuCodeFromLabel(lookups.skus[r[INV_C.SKU]])));
       let list = sv.rows.filter((r) => {
-        if (state.globalCat && (r[SKU_C.CAT] ? r[SKU_C.CAT] !== state.globalCat : !String(r[SKU_C.SUBCAT] || "").startsWith(state.globalCat))) return false;
-        if (state.globalSubcat && r[SKU_C.SUBCAT] !== state.globalSubcat) return false;
-        if (iv.status && r[SKU_C.STATUS] !== iv.status) return false;
-        if (iv.range && r[SKU_C.RANGE] !== iv.range) return false;
-        if (iv.brand && r[SKU_C.BRAND] !== iv.brand) return false;
+        if (state.globalCat && (r[SKU_C.CAT] ? !isMultiMatch(state.globalCat, r[SKU_C.CAT]) : !hasMultiPrefix(state.globalCat, r[SKU_C.SUBCAT]))) return false;
+        if (state.globalSubcat && !isMultiMatch(state.globalSubcat, r[SKU_C.SUBCAT])) return false;
+        if (iv.status && !isMultiMatch(iv.status, r[SKU_C.STATUS])) return false;
+        if (iv.range && !isMultiMatch(iv.range, r[SKU_C.RANGE])) return false;
+        if (iv.brand && !isMultiMatch(iv.brand, r[SKU_C.BRAND])) return false;
         if ((iv.site || iv.binType || iv.binZone || iv.badStock || iv.agingBucket || iv.sellableOnly || iv.damagedOnly) && !allowedSkus.has(r[SKU_C.SKU])) return false;
         if (q) {
           return r[SKU_C.SKU].toLowerCase().includes(q) || r[SKU_C.NAME].toLowerCase().includes(q) || r[SKU_C.BRAND].toLowerCase().includes(q);
@@ -6888,14 +7306,14 @@
         return;
       }
       const mpL = mp.lookups;
-      const catIdx = state.globalCat && mpL.categories ? mpL.categories.indexOf(state.globalCat) : -1;
-      const subIdx = state.globalSubcat && mpL.subcats ? mpL.subcats.indexOf(state.globalSubcat) : -1;
+      const catIdxSet = getLookupIdxSet(state.globalCat, mpL.categories);
+      const subIdxSet = getLookupIdxSet(state.globalSubcat, mpL.subcats);
       let list = mp.rows.filter((r) => {
-        if (state.globalCat && (catIdx === -1 || r[MP_C.CAT] !== catIdx)) return false;
-        if (state.globalSubcat && (subIdx === -1 || r[MP_C.SUBCAT] !== subIdx)) return false;
-        if (iv.status && mpL.purchaseStatuses[r[MP_C.STATUS]] !== iv.status) return false;
-        if (iv.range && mpL.ranges[r[MP_C.RANGE]] !== iv.range) return false;
-        if (iv.brand && mpL.brands[r[MP_C.BRAND]] !== iv.brand) return false;
+        if (catIdxSet && !catIdxSet.has(r[MP_C.CAT])) return false;
+        if (subIdxSet && !subIdxSet.has(r[MP_C.SUBCAT])) return false;
+        if (iv.status && !isMultiMatch(iv.status, mpL.purchaseStatuses[r[MP_C.STATUS]])) return false;
+        if (iv.range && !isMultiMatch(iv.range, mpL.ranges[r[MP_C.RANGE]])) return false;
+        if (iv.brand && !isMultiMatch(iv.brand, mpL.brands[r[MP_C.BRAND]])) return false;
         if (q) {
           return r[MP_C.SKU].toLowerCase().includes(q) || r[MP_C.NAME].toLowerCase().includes(q) || mpL.brands[r[MP_C.BRAND]].toLowerCase().includes(q);
         }
@@ -7021,9 +7439,9 @@
         </tr>`).join("");
 
       document.querySelectorAll("#invTableBody tr[data-inv-site]").forEach((tr) => {
-        tr.addEventListener("click", () => {
-          iv.site = iv.site === tr.dataset.invSite ? "" : tr.dataset.invSite;
-          document.getElementById("invFilterSite").value = iv.site;
+        tr.addEventListener("click", (e) => {
+          iv.site = toggleMultiVal(iv.site, tr.dataset.invSite, Boolean(e.ctrlKey || e.metaKey));
+          syncMultiSelectUI("invFilterSite", iv.site);
           renderInventoryView();
         });
       });
@@ -7214,8 +7632,8 @@
     const picks = [];
 
     const matchesGlobalSku = (catStr, subStr) => {
-      if (state.globalCat && catStr !== state.globalCat && !String(subStr || "").startsWith(state.globalCat)) return false;
-      if (state.globalSubcat && subStr !== state.globalSubcat) return false;
+      if (state.globalCat && !isMultiMatch(state.globalCat, catStr) && !hasMultiPrefix(state.globalCat, subStr)) return false;
+      if (state.globalSubcat && !isMultiMatch(state.globalSubcat, subStr)) return false;
       return true;
     };
 
@@ -7272,12 +7690,12 @@
     // 1. Exact or partial Serial matches first (high precision)
     if (state.raw?.invSerials?.rows) {
       const snL = state.raw.invSerials.lookups;
-      const catIdx = state.globalCat && snL.categories ? snL.categories.indexOf(state.globalCat) : -1;
-      const subIdx = state.globalSubcat && snL.subcats ? snL.subcats.indexOf(state.globalSubcat) : -1;
+      const catIdxSet = getLookupIdxSet(state.globalCat, snL.categories);
+      const subIdxSet = getLookupIdxSet(state.globalSubcat, snL.subcats);
       for (let i = 0; i < state.raw.invSerials.rows.length; i++) {
         const r = state.raw.invSerials.rows[i];
-        if (state.globalCat && catIdx !== -1 && r[SN_C.CAT] !== catIdx) continue;
-        if (state.globalSubcat && subIdx !== -1 && r[SN_C.SUBCAT] !== subIdx) continue;
+        if (catIdxSet && !catIdxSet.has(r[SN_C.CAT])) continue;
+        if (subIdxSet && !subIdxSet.has(r[SN_C.SUBCAT])) continue;
         if (r[SN_C.SN].toLowerCase().includes(q)) {
           const k = `sn:${r[SN_C.SN]}`;
           if (seenKeys.has(k)) continue;
@@ -7300,12 +7718,12 @@
     // 2. SKU / Name matches across Master Product (17,118 SKUs)
     if (state.raw?.masterProducts?.rows) {
       const mpL = state.raw.masterProducts.lookups;
-      const catIdx = state.globalCat && mpL.categories ? mpL.categories.indexOf(state.globalCat) : -1;
-      const subIdx = state.globalSubcat && mpL.subcats ? mpL.subcats.indexOf(state.globalSubcat) : -1;
+      const catIdxSet = getLookupIdxSet(state.globalCat, mpL.categories);
+      const subIdxSet = getLookupIdxSet(state.globalSubcat, mpL.subcats);
       for (let i = 0; i < state.raw.masterProducts.rows.length; i++) {
         const r = state.raw.masterProducts.rows[i];
-        if (state.globalCat && catIdx !== -1 && r[MP_C.CAT] !== catIdx) continue;
-        if (state.globalSubcat && subIdx !== -1 && r[MP_C.SUBCAT] !== subIdx) continue;
+        if (catIdxSet && !catIdxSet.has(r[MP_C.CAT])) continue;
+        if (subIdxSet && !subIdxSet.has(r[MP_C.SUBCAT])) continue;
         const skuLow = r[MP_C.SKU].toLowerCase();
         const nameLow = r[MP_C.NAME].toLowerCase();
         if (skuLow.includes(q) || nameLow.includes(q)) {
@@ -7330,8 +7748,8 @@
     } else if (state.raw?.invSkuLevel?.rows) {
       for (let i = 0; i < state.raw.invSkuLevel.rows.length; i++) {
         const r = state.raw.invSkuLevel.rows[i];
-        if (state.globalCat && r[SKU_C.CAT] && r[SKU_C.CAT] !== state.globalCat) continue;
-        if (state.globalSubcat && r[SKU_C.SUBCAT] !== state.globalSubcat) continue;
+        if (state.globalCat && r[SKU_C.CAT] && !isMultiMatch(state.globalCat, r[SKU_C.CAT])) continue;
+        if (state.globalSubcat && !isMultiMatch(state.globalSubcat, r[SKU_C.SUBCAT])) continue;
         if (r[SKU_C.SKU].toLowerCase().includes(q) || r[SKU_C.NAME].toLowerCase().includes(q)) {
           results.push({
             kind: "sku",

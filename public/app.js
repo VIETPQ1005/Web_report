@@ -1037,8 +1037,36 @@
 
     const clearBtn = document.getElementById("clearGlobalFilterBtn");
     if (clearBtn) {
-      clearBtn.classList.toggle("hidden", !state.globalCat && !state.globalSubcat);
+      const defRange = getDefaultYearMonthRange(state.monthsAll);
+      const isCustomDate = Boolean(
+        state.monthsAll.length &&
+        ((state.monthFrom && state.monthFrom !== defRange.from) ||
+         (state.monthTo && state.monthTo !== defRange.to))
+      );
+      clearBtn.classList.toggle("hidden", !state.globalCat && !state.globalSubcat && !isCustomDate);
     }
+  }
+
+  function getDefaultYearMonthRange(monthsAll) {
+    if (!Array.isArray(monthsAll) || monthsAll.length === 0) {
+      return { from: "", to: "" };
+    }
+    const curYear = String(new Date().getFullYear());
+    const latestMonth = monthsAll[monthsAll.length - 1] || "";
+    const targetYear = monthsAll.some((m) => m.startsWith(curYear))
+      ? curYear
+      : latestMonth.slice(0, 4);
+    const yearMonths = monthsAll.filter((m) => m.startsWith(targetYear));
+    if (yearMonths.length > 0) {
+      return {
+        from: yearMonths[0],
+        to: yearMonths[yearMonths.length - 1],
+      };
+    }
+    return {
+      from: monthsAll[0],
+      to: latestMonth,
+    };
   }
 
   function setGlobalCategory(catCode) {
@@ -1068,6 +1096,16 @@
   function clearGlobalMasterFilter() {
     state.globalCat = "";
     state.globalSubcat = "";
+    const defRange = getDefaultYearMonthRange(state.monthsAll);
+    if (defRange.from) {
+      state.monthFrom = defRange.from;
+      state.monthTo = defRange.to;
+      const mFrom = document.getElementById("filterMonthFrom");
+      const mTo = document.getElementById("filterMonthTo");
+      if (mFrom) mFrom.value = state.monthFrom;
+      if (mTo) mTo.value = state.monthTo;
+    }
+    state.clickedMonth = "";
     state.tablePage = 1;
     state.inv.tablePage = 1;
     populateGlobalMasterFilter();
@@ -1079,8 +1117,10 @@
     const { lookups, rows, siteDirectory } = state.raw;
 
     state.monthsAll = Array.from(new Set(rows.map((r) => r[C.MONTH]))).sort();
-    state.monthFrom = state.monthsAll[0] || "";
-    state.monthTo = state.monthsAll[state.monthsAll.length - 1] || "";
+    const defRange = getDefaultYearMonthRange(state.monthsAll);
+    state.monthFrom = defRange.from;
+    state.monthTo = defRange.to;
+    populateGlobalMasterFilter();
 
     const mFrom = document.getElementById("filterMonthFrom");
     const mTo = document.getElementById("filterMonthTo");
@@ -1321,7 +1361,6 @@
     const isInvOrLookup = view === "inventory" || view === "lookup";
     document.getElementById("appShell")?.classList.toggle("hide-sidebar", view === "lookup");
     document.getElementById("salesTopFilters")?.classList.toggle("hidden", isInvOrLookup);
-    document.getElementById("salesDatePickerBox")?.classList.toggle("hidden", isInvOrLookup);
     document.getElementById("activeChipsBar")?.classList.toggle("hidden", isInvOrLookup);
     document.getElementById("invTopBanner")?.classList.toggle("hidden", !isInvOrLookup);
 
@@ -1402,7 +1441,7 @@
         state.monthTo = state.monthFrom;
         document.getElementById("filterMonthTo").value = state.monthTo;
       }
-      state.clickedMonth = ""; state.tablePage = 1; renderAll();
+      state.clickedMonth = ""; state.tablePage = 1; populateGlobalMasterFilter(); renderAll();
     });
     document.getElementById("filterMonthTo")?.addEventListener("change", (e) => {
       state.monthTo = e.target.value;
@@ -1410,7 +1449,7 @@
         state.monthFrom = state.monthTo;
         document.getElementById("filterMonthFrom").value = state.monthFrom;
       }
-      state.clickedMonth = ""; state.tablePage = 1; renderAll();
+      state.clickedMonth = ""; state.tablePage = 1; populateGlobalMasterFilter(); renderAll();
     });
 
     document.getElementById("excludeBulkToggle")?.addEventListener("change", (e) => {
@@ -1614,8 +1653,9 @@
     state.clickedMonth = "";
     state.excludeBulk = false;
     state.storeRegionsOnly = false;
-    state.monthFrom = state.monthsAll[0] || "";
-    state.monthTo = state.monthsAll[state.monthsAll.length - 1] || "";
+    const defRange = getDefaultYearMonthRange(state.monthsAll);
+    state.monthFrom = defRange.from;
+    state.monthTo = defRange.to;
     state.tablePage = 1;
 
     const setVal = (id, v) => { const el = document.getElementById(id); if (el) el.value = v; };
@@ -1632,7 +1672,7 @@
   }
 
   // --- FILTER ENGINE (TIER 1 GLOBAL + TIER 2 LOCAL) ---
-  function getFilteredRows(ignoreClickedMonth = false) {
+  function getFilteredRows(ignoreClickedMonth = false, ignoreDateRange = false) {
     const { rows, lookups } = state.raw;
     const catIdx = state.globalCat && lookups.categories ? lookups.categories.indexOf(state.globalCat) : -1;
     const subIdx = state.globalSubcat && lookups.subcats ? lookups.subcats.indexOf(state.globalSubcat) : -1;
@@ -1657,8 +1697,8 @@
         }
       }
       if (state.globalSubcat && (subIdx === -1 || r[C.SUBCAT] !== subIdx)) continue;
-      if (state.monthFrom && r[C.MONTH] < state.monthFrom) continue;
-      if (state.monthTo && r[C.MONTH] > state.monthTo) continue;
+      if (!ignoreDateRange && state.monthFrom && r[C.MONTH] < state.monthFrom) continue;
+      if (!ignoreDateRange && state.monthTo && r[C.MONTH] > state.monthTo) continue;
       if (!ignoreClickedMonth && state.clickedMonth && r[C.MONTH] !== state.clickedMonth) continue;
       if (regIdx !== -1 && r[C.REGION] !== regIdx) continue;
       if (siteIdx !== -1 && r[C.SITE] !== siteIdx) continue;
@@ -1674,9 +1714,9 @@
     return out;
   }
 
-  function getFilteredDailyRows(ignoreClickedMonth = false) {
+  function getFilteredDailyRows(ignoreClickedMonth = false, ignoreDateRange = false) {
     const daily = state.raw?.salesDaily;
-    if (!Array.isArray(daily) || !daily.length) return getFilteredRows(ignoreClickedMonth);
+    if (!Array.isArray(daily) || !daily.length) return getFilteredRows(ignoreClickedMonth, ignoreDateRange);
     const { lookups } = state.raw;
     const datesL = lookups.dates || [];
     const weeksL = lookups.weeks || [];
@@ -1704,8 +1744,8 @@
         if (state.storeRegionsOnly && !storeRegSet.has(d[3])) continue;
         const dStr = datesL[d[0]] || "";
         const mStr = dStr.slice(0, 7);
-        if (state.monthFrom && mStr < state.monthFrom) continue;
-        if (state.monthTo && mStr > state.monthTo) continue;
+        if (!ignoreDateRange && state.monthFrom && mStr < state.monthFrom) continue;
+        if (!ignoreDateRange && state.monthTo && mStr > state.monthTo) continue;
         if (!ignoreClickedMonth && state.clickedMonth && mStr !== state.clickedMonth) continue;
         const wStr = weeksL[dateToWeek[d[0]]] || mStr;
         out.push([
@@ -1717,8 +1757,8 @@
         const mStr = typeof d[2] === "number" ? (monthsL[d[2]] || "") : String(d[2]);
         if (state.globalCat && (catIdx === -1 || d[3] !== catIdx)) continue;
         if (state.globalSubcat && (subIdx === -1 || d[4] !== subIdx)) continue;
-        if (state.monthFrom && mStr < state.monthFrom) continue;
-        if (state.monthTo && mStr > state.monthTo) continue;
+        if (!ignoreDateRange && state.monthFrom && mStr < state.monthFrom) continue;
+        if (!ignoreDateRange && state.monthTo && mStr > state.monthTo) continue;
         if (!ignoreClickedMonth && state.clickedMonth && mStr !== state.clickedMonth) continue;
         if (regIdx !== -1 && d[5] !== regIdx) continue;
         if (state.excludeBulk && d[6] === 1) continue;
@@ -2517,8 +2557,9 @@
     const targetGap = targetVnd - effectiveSalesForTarget;
     const targetGapLabel = targetGap > 0 ? `Thiếu -${fmtCompactVnd(targetGap)}` : `Vượt +${fmtCompactVnd(-targetGap)}`;
 
-    // Calculate daily & YoY / MoM same-period telemetry for bottom 4 inset cards
-    const dailyRows = getFilteredDailyRows(false);
+    // Calculate daily & YoY / MoM same-period telemetry for bottom 4 inset cards (use all-year history for YoY baseline)
+    const dailyRows = getFilteredDailyRows(true, true);
+    const allYearCubeRows = (state.site || state.channel || state.orderType) ? getFilteredRows(true, true) : rows;
     const byDate = new Map();
     const byMonthDaily = new Map();
     dailyRows.forEach((d) => {
@@ -2530,7 +2571,7 @@
 
     // Scale factor if site / channel / orderType filter is active
     const byMonthCube = new Map();
-    rows.forEach((r) => {
+    allYearCubeRows.forEach((r) => {
       const m = r[C.MONTH];
       byMonthCube.set(m, (byMonthCube.get(m) || 0) + r[C.SALES]);
     });

@@ -516,21 +516,25 @@ def build():
     d_map = {}
     weeks_list = []
     w_map = {}
+    date_to_week = []
     daily_rows = []
     for k, v in sorted(daily_cube.items(), key=lambda x: x[0][0]):
         dt_s, wk_s, m_s = k[0], k[1], k[2]
-        if dt_s not in d_map:
-            d_map[dt_s] = len(dates_list)
-            dates_list.append(dt_s)
         if wk_s not in w_map:
             w_map[wk_s] = len(weeks_list)
             weeks_list.append(wk_s)
+        if dt_s not in d_map:
+            d_map[dt_s] = len(dates_list)
+            dates_list.append(dt_s)
+            date_to_week.append(w_map[wk_s])
         daily_rows.append([
-            d_map[dt_s], w_map[wk_s], m_map[m_s], k[3], k[4], k[5], k[6],
-            v[0], int(round(v[1])), int(round(v[2])), int(round(v[3])), v[4]
+            d_map[dt_s], k[3], k[4], k[5], k[6],
+            v[0], int(round(v[1])), int(round(v[3]))
         ])
     s_lookups["dates"] = dates_list
     s_lookups["weeks"] = weeks_list
+    s_lookups["dateToWeek"] = date_to_week
+    s_lookups["categories"] = list(s_lookups["cats"])
 
     print(
         f"[2/6 SALES]     Raw: {tot_rows:,} -> MonthlyCube: {len(cube_rows):,} | DailyCube: {len(daily_rows):,} | "
@@ -972,6 +976,12 @@ def build():
         "allSubcats": sorted({s for ss in cat_subcat_map.values() for s in ss}),
     }
 
+    # Ensure both "categories" and "cats" keys are present and identical in every lookup table
+    s_lookups["categories"] = list(s_lookups["cats"])
+    inv_lookups["categories"] = list(inv_lookups["cats"])
+    sn_lookups["categories"] = list(sn_lookups["cats"])
+    mp_lookups["categories"] = list(mp_lookups["cats"])
+
     # Assemble main report_data.json (fast star-schema bundle)
     now_iso = datetime.datetime.now().isoformat(timespec="seconds")
     main_payload = {
@@ -1055,16 +1065,22 @@ def build():
                 "totalValue": round(sn_tot_val, 2),
             },
             "lookups": {
-                k: sn_lookups[k]
-                for k in ("cats", "sites", "subcats", "brands", "binTypes", "binZones", "purchaseStatuses", "ranges", "badComp", "badSite")
+                "categories": list(sn_lookups["cats"]),
+                **{
+                    k: sn_lookups[k]
+                    for k in ("cats", "sites", "subcats", "brands", "binTypes", "binZones", "purchaseStatuses", "ranges", "badComp", "badSite")
+                },
             },
             "rows": serial_cube_rows,
         },
         "masterSummary": {
             "meta": {"sources": mp_sources, "rowCount": len(mp_rows)},
             "lookups": {
-                k: mp_lookups[k]
-                for k in ("cats", "subcats", "purchaseStatuses", "ranges")
+                "categories": list(mp_lookups["cats"]),
+                **{
+                    k: mp_lookups[k]
+                    for k in ("cats", "subcats", "purchaseStatuses", "ranges")
+                },
             },
             "rows": mp_summary_rows,
         },

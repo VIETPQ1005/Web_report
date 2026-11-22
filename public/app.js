@@ -325,7 +325,7 @@
   // --- LOCAL INDEXEDDB CACHE (FALLBACK + SAVED SOURCE DIRECTORY HANDLE) ---
   const IDB_NAME = "cyberpulse_sales_db";
   const IDB_STORE = "datasets";
-  const IDB_KEY = "latest";
+  const IDB_KEY = "latest_v3_6nh";
   const IDB_DIR_KEY = "source_dir_handle";
 
   function openLocalDb() {
@@ -402,17 +402,37 @@
     );
   }
 
+  function syncSectionCategories(sec) {
+    if (!sec || !sec.lookups) return;
+    const lk = sec.lookups;
+    if (Array.isArray(lk.cats) && lk.cats.length > 0) {
+      lk.categories = lk.cats;
+    } else if (Array.isArray(lk.categories) && lk.categories.length > 0) {
+      lk.cats = lk.categories;
+    }
+  }
+
   function normalizePayloadOnLoad(payload) {
     if (!payload || typeof payload !== "object") return payload;
     if (!payload.lookups) payload.lookups = {};
     const lk = payload.lookups;
     if (!Array.isArray(lk.skus) || lk.skus.length === 0) lk.skus = ["Tổng hợp theo Nhóm/Site"];
 
+    // Sync categories <-> cats across all sections BEFORE fallback taxonomy generation
+    syncSectionCategories(payload);
+    syncSectionCategories(payload.inventory);
+    syncSectionCategories(payload.invSerialCube);
+    syncSectionCategories(payload.invSerials);
+    syncSectionCategories(payload.masterSummary);
+    syncSectionCategories(payload.masterProducts);
+
     // Ensure taxonomy exists (even for legacy or browser-uploaded datasets)
-    if (!payload.taxonomy || !Array.isArray(payload.taxonomy.categories)) {
+    if (!payload.taxonomy || !Array.isArray(payload.taxonomy.categories) || payload.taxonomy.categories.length === 0) {
       const subSet = new Set([
         ...(lk.subcats || []),
         ...(payload.inventory?.lookups?.subcats || []),
+        ...(payload.masterSummary?.lookups?.subcats || []),
+        ...(payload.masterProducts?.lookups?.subcats || []),
       ]);
       const catMap = new Map();
       const catNames = {
@@ -423,6 +443,9 @@
         NH11: "NH11 — Phụ kiện lưu trữ & Cáp sạc",
         NH93: "NH93 — Linh kiện bảo hành & Sửa chữa",
       };
+      (lk.categories || []).forEach((c) => {
+        if (c && !catMap.has(c)) catMap.set(c, []);
+      });
       Array.from(subSet).sort().forEach((sc) => {
         const m = String(sc).match(/^(NH\d{2})/i);
         const code = m ? m[1].toUpperCase() : "OTHER";
@@ -441,6 +464,7 @@
 
     if (!Array.isArray(lk.categories) || lk.categories.length === 0) {
       lk.categories = payload.taxonomy.categories.map((c) => c.code);
+      lk.cats = lk.categories;
     }
 
     // Unpack Schema v3 salesCube into rows compatible with C
@@ -485,6 +509,8 @@
   async function ensureLookupShardsLoaded() {
     if (!state.raw) return false;
     if (state.raw.masterProducts?.rows?.length && state.raw.invSerials?.rows?.length) {
+      syncSectionCategories(state.raw.masterProducts);
+      syncSectionCategories(state.raw.invSerials);
       state.shardsLoaded = true;
       return true;
     }
@@ -498,12 +524,14 @@
       if (mpRes && mpRes.ok) {
         const mpJson = await mpRes.json();
         if (mpJson && Array.isArray(mpJson.rows)) {
+          syncSectionCategories(mpJson);
           state.raw.masterProducts = mpJson;
         }
       }
       if (snRes && snRes.ok) {
         const snJson = await snRes.json();
         if (snJson && Array.isArray(snJson.rows)) {
+          syncSectionCategories(snJson);
           state.raw.invSerials = snJson;
         }
       }
@@ -544,62 +572,100 @@
     }
   }
 
+  function countDatasetCategories(d) {
+    if (!d || typeof d !== "object") return 0;
+    if (Array.isArray(d.taxonomy?.categories) && d.taxonomy.categories.length) return d.taxonomy.categories.length;
+    if (Array.isArray(d.lookups?.cats) && d.lookups.cats.length) return d.lookups.cats.length;
+    if (Array.isArray(d.lookups?.categories) && d.lookups.categories.length) return d.lookups.categories.length;
+    return 0;
+  }
+
+  function shouldPreferOverride(candidate, baseline) {
+    if (!isValidDataset(candidate)) return false;
+    if (!isValidDataset(baseline)) return true;
+    // Never let an old 1-NH dataset override a multi-NH baseline dataset
+    const candCats = countDatasetCategories(candidate);
+    const baseCats = countDatasetCategories(baseline);
+    if (candCats < baseCats) return false;
+    const candRows = candidate.meta?.rowCount || 0;
+    const baseRows = baseline.meta?.rowCount || 0;
+    if (candRows < baseRows * 0.5) return false;
+    const candTime = Date.parse(candidate.meta?.updatedAt || candidate.meta?.generatedAt || "") || 0;
+    const baseTime = Date.parse(baseline.meta?.updatedAt || baseline.meta?.generatedAt || "") || 0;
+    return candTime >= baseTime;
+  }
+
   // --- INIT ---
   async function init() {
+    // Purge legacy v1/v2 IndexedDB cache key so stale 1-NH data never persists
+    idbDeleteKey("latest");
+
     const isHttp = location.protocol === "http:" || location.protocol === "https:";
+    let baseline = null;
+    let cloudData = null;
     let loaded = null;
     let sourceMode = "default";
 
-    // 1. Prefer live cloud dataset on Netlify Blobs when served over HTTP/HTTPS
-    if (isHttp) {
-      try {
-        const res = await fetchWithTimeout("/api/report-data", { cache: "no-store" }, 4500);
-        if (res.ok) {
-          const ct = res.headers.get("content-type") || "";
-          if (ct.includes("application/json")) {
-            const json = await res.json();
-            if (isValidDataset(json)) {
-              loaded = json;
-              sourceMode = "cloud";
-              state.cloudAvailable = true;
-              state.cloudAuthRequired = res.headers.get("x-auth-required") === "1";
-              state.cloudUpdatedAt = res.headers.get("x-data-updated-at") || json.meta?.updatedAt || "";
-            }
-          }
-        } else if (res.status === 404) {
-          // API is live, just no cloud upload yet
-          try {
-            const body = await res.json();
+    // Fetch baseline report_data.json and optional cloud override in parallel
+    const [baseResult, cloudResult] = await Promise.all([
+      loadBaselineData().catch(() => null),
+      isHttp ? fetchWithTimeout("/api/report-data", { cache: "no-store" }, 4500).catch(() => null) : Promise.resolve(null),
+    ]);
+
+    if (isValidDataset(baseResult)) {
+      baseline = baseResult;
+    }
+
+    if (cloudResult) {
+      if (cloudResult.ok) {
+        const ct = cloudResult.headers.get("content-type") || "";
+        if (ct.includes("application/json")) {
+          const json = await cloudResult.json().catch(() => null);
+          if (isValidDataset(json)) {
+            cloudData = json;
             state.cloudAvailable = true;
-            state.cloudAuthRequired = Boolean(body?.authRequired);
-          } catch {
-            // Static host returning HTML 404
+            state.cloudAuthRequired = cloudResult.headers.get("x-auth-required") === "1";
+            state.cloudUpdatedAt = cloudResult.headers.get("x-data-updated-at") || json.meta?.updatedAt || "";
           }
         }
-      } catch {
-        // Offline or local dev without Netlify Functions
+      } else if (cloudResult.status === 404) {
+        try {
+          const body = await cloudResult.json();
+          state.cloudAvailable = true;
+          state.cloudAuthRequired = Boolean(body?.authRequired);
+        } catch {
+          // Static host returning HTML 404
+        }
       }
     }
 
-    // 2. Fallback to browser-saved local override (IndexedDB)
+    // 1. Use Cloud override only if it is at least as complete & newer than Baseline
+    if (cloudData && shouldPreferOverride(cloudData, baseline)) {
+      loaded = cloudData;
+      sourceMode = "cloud";
+    }
+
+    // 2. Check IndexedDB override only if it is at least as complete & newer than Baseline
     if (!loaded) {
       const localCached = await idbGetLatest();
-      if (isValidDataset(localCached)) {
+      if (localCached && shouldPreferOverride(localCached, baseline)) {
         loaded = localCached;
         sourceMode = "local";
+      } else if (localCached) {
+        idbClearLatest();
       }
     }
 
-    // 3. Fallback to bundled baseline dataset
+    // 3. Default to bundled Repo Baseline (full 6-NH dataset)
+    if (!loaded && baseline) {
+      loaded = baseline;
+      sourceMode = "default";
+    }
+
     if (!loaded) {
-      try {
-        loaded = await loadBaselineData();
-        sourceMode = "default";
-      } catch (err) {
-        document.getElementById("insightText").textContent =
-          `Lỗi tải dữ liệu (${err.message}). Hãy chạy lại python scripts/build_data.py hoặc bấm Update Data.`;
-        return;
-      }
+      document.getElementById("insightText").textContent =
+        "Lỗi tải dữ liệu. Hãy chạy lại python scripts/build_data.py hoặc bấm Update Data.";
+      return;
     }
 
     state.raw = normalizePayloadOnLoad(loaded);
@@ -1299,6 +1365,7 @@
     const datesL = lookups.dates || [];
     const weeksL = lookups.weeks || [];
     const monthsL = lookups.months || [];
+    const dateToWeek = lookups.dateToWeek || [];
     const catIdx = state.globalCat && lookups.categories ? lookups.categories.indexOf(state.globalCat) : -1;
     const subIdx = state.globalSubcat && lookups.subcats ? lookups.subcats.indexOf(state.globalSubcat) : -1;
     const regIdx = state.region ? lookups.regions.indexOf(state.region) : -1;
@@ -1309,24 +1376,44 @@
     }
 
     const out = [];
+    const isCompact8 = daily[0].length === 8;
     for (let i = 0; i < daily.length; i++) {
       const d = daily[i];
-      // [0:dIdx, 1:wIdx, 2:mIdx, 3:catIdx, 4:subIdx, 5:regIdx, 6:isBulk, 7:qty, 8:sales, 9:cogs, 10:gp, 11:cnt]
-      const mStr = typeof d[2] === "number" ? (monthsL[d[2]] || "") : String(d[2]);
-      if (state.globalCat && (catIdx === -1 || d[3] !== catIdx)) continue;
-      if (state.globalSubcat && (subIdx === -1 || d[4] !== subIdx)) continue;
-      if (state.monthFrom && mStr < state.monthFrom) continue;
-      if (state.monthTo && mStr > state.monthTo) continue;
-      if (!ignoreClickedMonth && state.clickedMonth && mStr !== state.clickedMonth) continue;
-      if (regIdx !== -1 && d[5] !== regIdx) continue;
-      if (state.excludeBulk && d[6] === 1) continue;
-      if (state.storeRegionsOnly && !storeRegSet.has(d[5])) continue;
-      const dStr = typeof d[0] === "number" ? (datesL[d[0]] || mStr) : String(d[0]);
-      const wStr = typeof d[1] === "number" ? (weeksL[d[1]] || mStr) : String(d[1]);
-      out.push([
-        dStr, mStr, wStr, 0, 0, d[5], 0, d[4], 0, 0, 0,
-        d[7], d[8], d[9], d[10], d[3], d[11] || 1, d[6] || 0,
-      ]);
+      if (isCompact8) {
+        // Compact 8-col: [0:dIdx, 1:catIdx, 2:subIdx, 3:regIdx, 4:isBulk, 5:qty, 6:sales, 7:gp]
+        if (state.globalCat && (catIdx === -1 || d[1] !== catIdx)) continue;
+        if (state.globalSubcat && (subIdx === -1 || d[2] !== subIdx)) continue;
+        if (regIdx !== -1 && d[3] !== regIdx) continue;
+        if (state.excludeBulk && d[4] === 1) continue;
+        if (state.storeRegionsOnly && !storeRegSet.has(d[3])) continue;
+        const dStr = datesL[d[0]] || "";
+        const mStr = dStr.slice(0, 7);
+        if (state.monthFrom && mStr < state.monthFrom) continue;
+        if (state.monthTo && mStr > state.monthTo) continue;
+        if (!ignoreClickedMonth && state.clickedMonth && mStr !== state.clickedMonth) continue;
+        const wStr = weeksL[dateToWeek[d[0]]] || mStr;
+        out.push([
+          dStr, mStr, wStr, 0, 0, d[3], 0, d[2], 0, 0, 0,
+          d[5], d[6], d[6] - d[7], d[7], d[1], 1, d[4] || 0,
+        ]);
+      } else {
+        // Legacy 12-col: [0:dIdx, 1:wIdx, 2:mIdx, 3:catIdx, 4:subIdx, 5:regIdx, 6:isBulk, 7:qty, 8:sales, 9:cogs, 10:gp, 11:cnt]
+        const mStr = typeof d[2] === "number" ? (monthsL[d[2]] || "") : String(d[2]);
+        if (state.globalCat && (catIdx === -1 || d[3] !== catIdx)) continue;
+        if (state.globalSubcat && (subIdx === -1 || d[4] !== subIdx)) continue;
+        if (state.monthFrom && mStr < state.monthFrom) continue;
+        if (state.monthTo && mStr > state.monthTo) continue;
+        if (!ignoreClickedMonth && state.clickedMonth && mStr !== state.clickedMonth) continue;
+        if (regIdx !== -1 && d[5] !== regIdx) continue;
+        if (state.excludeBulk && d[6] === 1) continue;
+        if (state.storeRegionsOnly && !storeRegSet.has(d[5])) continue;
+        const dStr = typeof d[0] === "number" ? (datesL[d[0]] || mStr) : String(d[0]);
+        const wStr = typeof d[1] === "number" ? (weeksL[d[1]] || mStr) : String(d[1]);
+        out.push([
+          dStr, mStr, wStr, 0, 0, d[5], 0, d[4], 0, 0, 0,
+          d[7], d[8], d[9], d[10], d[3], d[11] || 1, d[6] || 0,
+        ]);
+      }
     }
     return out;
   }
@@ -5409,11 +5496,27 @@
     return `${dt.getUTCFullYear()}-W${String(weekNo).padStart(2, "0")}`;
   }
 
-  function cleanSubcatJs(val) {
+  function extractCatCodeJs(rawVal) {
+    const s = String(rawVal ?? "").trim();
+    const m = s.match(/^(NH\d+)/i);
+    return m ? m[1].toUpperCase() : (s ? s.split("-")[0].trim().toUpperCase() : "KHÁC");
+  }
+
+  function cleanSubcatJs(val, code = "", name = "", cat3Code = "") {
     const s = String(val ?? "").trim();
-    if (!s) return "Khác";
-    const m = s.match(/^NH\d+(?:-\d+)+-(.+)$/);
-    return m ? m[1].trim() : s;
+    if (s) {
+      const m = s.match(/^(NH\d+(?:-\d+)+)\s*-\s*(.+)$/i);
+      if (m) return `${m[1].toUpperCase()}-${m[2].trim()}`;
+      return s;
+    }
+    let c = String(code ?? "").trim().toUpperCase();
+    const n = String(name ?? "").trim();
+    if (!c && cat3Code) {
+      const parts = String(cat3Code).trim().toUpperCase().split("-");
+      if (parts.length >= 3) c = parts.slice(0, 3).join("-");
+    }
+    if (c && n) return `${c}-${n}`;
+    return c || n || "Khác";
   }
 
   function parseNumericVal(v) {
@@ -5467,6 +5570,8 @@
 
   function buildPayloadFromRecords(rawRecords, sourceMeta) {
     const lookups = {
+      categories: [],
+      cats: [],
       sites: [],
       stores: [],
       regions: [],
@@ -5474,7 +5579,8 @@
       subcats: [],
       brands: [],
       orderTypes: [],
-      skus: [],
+      skus: ["Tổng hợp theo Nhóm/Site"],
+      months: [],
     };
     const lookupMaps = {};
     Object.keys(lookups).forEach((k) => { lookupMaps[k] = new Map(); });
@@ -5488,9 +5594,9 @@
       return m.get(val);
     };
 
-    const compactRows = [];
+    const cubeMap = new Map();
     const siteDirectory = {};
-    let totSales = 0, totQty = 0, totCogs = 0, totGp = 0;
+    let totSales = 0, totQty = 0, totCogs = 0, totGp = 0, validRows = 0;
     let minDate = null, maxDate = null;
     let bulkCount = 0, bulkSales = 0, bulkQty = 0;
 
@@ -5499,23 +5605,22 @@
       const rawDate = findHeaderValue(rec, ["report date", "report_date", "date", "ngày báo cáo"]);
       const dp = parseExcelDateJs(rawDate);
       if (!dp) continue;
+      validRows++;
 
       const { iso: dateIso, month: monthStr } = formatDateParts(dp);
       if (!minDate || dateIso < minDate) minDate = dateIso;
       if (!maxDate || dateIso > maxDate) maxDate = dateIso;
-      const weekStr = getIsoWeekJs(dp.y, dp.m, dp.d);
 
       const site = String(findHeaderValue(rec, ["sales site code", "site code", "site"]) || "UNKNOWN").trim();
       const store = String(findHeaderValue(rec, ["store name", "store"]) || "").trim() || site;
       const rawRegion = String(findHeaderValue(rec, ["region name", "region"]) || "").trim();
       const channel = String(findHeaderValue(rec, ["sales channel", "channel"]) || "Other").trim();
       const region = rawRegion || `Non-Store (${channel})`;
+      const rawCat = String(findHeaderValue(rec, ["cat name", "category"]) || "").trim();
       const subcat = cleanSubcatJs(findHeaderValue(rec, ["subcat 2 (code - name)", "subcat 2", "subcat"]) || "");
+      const cat = extractCatCodeJs(rawCat || subcat);
       const brand = String(findHeaderValue(rec, ["brand name", "brand"]) || "Khác").trim();
       const orderType = String(findHeaderValue(rec, ["order type", "order_type"]) || "don_xuat_ban").trim();
-      const skuCode = String(findHeaderValue(rec, ["sku", "sku code"]) || "").trim();
-      const skuName = String(findHeaderValue(rec, ["sku name", "product name"]) || "").trim();
-      const skuLabel = skuCode ? (skuName ? `${skuCode} — ${skuName}` : skuCode) : skuName;
 
       const qty = Math.round(parseNumericVal(findHeaderValue(rec, ["sales qty", "qty", "quantity"])));
       const sales = Math.round(parseNumericVal(findHeaderValue(rec, ["sales", "revenue", "doanh thu"])) * 100) / 100;
@@ -5527,7 +5632,8 @@
       totCogs += cogs;
       totGp += gp;
 
-      if (Math.abs(qty) >= 100) {
+      const isBulk = Math.abs(qty) >= 100 ? 1 : 0;
+      if (isBulk) {
         bulkCount++;
         bulkSales += sales;
         bulkQty += qty;
@@ -5543,33 +5649,45 @@
         };
       }
 
-      compactRows.push([
-        dateIso,
-        monthStr,
-        weekStr,
-        getIdx("sites", site),
-        getIdx("stores", store),
-        getIdx("regions", region),
-        getIdx("channels", channel),
-        getIdx("subcats", subcat),
-        getIdx("brands", brand),
-        getIdx("orderTypes", orderType),
-        getIdx("skus", skuLabel),
-        qty,
-        sales,
-        cogs,
-        gp,
-      ]);
+      const mIdx = getIdx("months", monthStr);
+      const sIdx = getIdx("sites", site);
+      getIdx("stores", store);
+      const rIdx = getIdx("regions", region);
+      const chIdx = getIdx("channels", channel);
+      const catIdx = getIdx("categories", cat);
+      const subIdx = getIdx("subcats", subcat);
+      const bIdx = getIdx("brands", brand);
+      const oIdx = getIdx("orderTypes", orderType);
+
+      const cKey = `${mIdx}|${sIdx}|${rIdx}|${chIdx}|${catIdx}|${subIdx}|${bIdx}|${oIdx}|${isBulk}`;
+      let agg = cubeMap.get(cKey);
+      if (!agg) {
+        agg = [mIdx, sIdx, rIdx, chIdx, catIdx, subIdx, bIdx, oIdx, isBulk, 0, 0, 0, 0, 0];
+        cubeMap.set(cKey, agg);
+      }
+      agg[9] += qty;
+      agg[10] += sales;
+      agg[11] += cogs;
+      agg[12] += gp;
+      agg[13] += 1;
     }
 
-    compactRows.sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0));
+    lookups.cats = lookups.categories;
+    const salesCube = Array.from(cubeMap.values()).map((r) => {
+      r[10] = Math.round(r[10]);
+      r[11] = Math.round(r[11]);
+      r[12] = Math.round(r[12]);
+      return r;
+    });
 
-    return {
+    const payload = {
+      schemaVersion: 3,
       meta: {
         generatedAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
         sources: sourceMeta,
-        rowCount: compactRows.length,
+        rowCount: validRows,
+        cubeRowCount: salesCube.length,
         dateMin: minDate,
         dateMax: maxDate,
         totals: {
@@ -5585,16 +5703,12 @@
           sales: Math.round(bulkSales * 100) / 100,
           qty: bulkQty,
         },
-        columns: [
-          "date", "month", "week", "siteIdx", "storeIdx", "regionIdx",
-          "channelIdx", "subcatIdx", "brandIdx", "orderTypeIdx", "skuIdx",
-          "qty", "sales", "cogs", "gp",
-        ],
       },
       lookups,
       siteDirectory,
-      rows: compactRows,
+      salesCube,
     };
+    return normalizePayloadOnLoad(payload);
   }
 
   function extractExistingInvRecords(invSection) {
@@ -5657,7 +5771,7 @@
 
   function buildMasterProductsJs(rawRecords, sourceMeta) {
     if (!rawRecords.length) return { section: null, masterMap: new Map() };
-    const lookups = { subcats: [], subcat3s: [], brands: [], listings: [], purchaseStatuses: [], ranges: [], promoAlerts: [] };
+    const lookups = { categories: [], cats: [], subcats: [], subcat3s: [], brands: [], listings: [], purchaseStatuses: [], ranges: [], promoAlerts: [] };
     const maps = {};
     Object.keys(lookups).forEach((k) => { maps[k] = new Map(); });
     const getIdx = (k, v) => { const m = maps[k]; if (!m.has(v)) { m.set(v, lookups[k].length); lookups[k].push(v); } return m.get(v); };
@@ -5670,7 +5784,9 @@
       const sku = String(findHeaderValue(rec, ["sku"]) || "").trim();
       if (!sku) continue;
       const name = String(findHeaderValue(rec, ["sku name"]) || "").trim();
+      const rawCat = String(findHeaderValue(rec, ["category"]) || "").trim();
       const subcat = cleanSubcatJs(findHeaderValue(rec, ["subcat 2 (code - name)", "subcat 2"]) || "");
+      const cat = extractCatCodeJs(rawCat || subcat);
       const subcat3 = String(findHeaderValue(rec, ["subcat 3 (code - name)"]) || "").trim();
       const brand = String(findHeaderValue(rec, ["brand name"]) || "Khác").trim();
       const listing = String(findHeaderValue(rec, ["product listing"]) || "active").trim();
@@ -5694,15 +5810,16 @@
 
       statusCounts[pstatus] = (statusCounts[pstatus] || 0) + 1;
       rangeCounts[rng] = (rangeCounts[rng] || 0) + 1;
-      masterMap.set(sku, { sku, name, subcat, brand, listing, purchaseStatus: pstatus, range: rng });
+      masterMap.set(sku, { sku, name, cat, subcat, brand, listing, purchaseStatus: pstatus, range: rng });
 
       rows.push([
-        sku, name, getIdx("subcats", subcat), getIdx("subcat3s", subcat3), getIdx("brands", brand),
+        sku, name, getIdx("categories", cat), getIdx("subcats", subcat), getIdx("subcat3s", subcat3), getIdx("brands", brand),
         getIdx("listings", listing), getIdx("purchaseStatuses", pstatus), getIdx("ranges", rng),
         hasSerial, getIdx("promoAlerts", promo), listed, srPromo, wcogs, lastPur, latestQuote,
         tempGp, tempGm, invQty, invVal, sales30d, warrantyMo, warrantyNote,
       ]);
     }
+    lookups.cats = lookups.categories;
     return { section: { meta: { sources: sourceMeta, rowCount: rows.length, statusCounts, rangeCounts }, lookups, rows }, masterMap };
   }
 
@@ -5715,6 +5832,8 @@
       const sku = String(findHeaderValue(rec, ["sku"]) || "").trim();
       if (!sku) continue;
       const mp = masterMap.get(sku) || {};
+      const subcat = cleanSubcatJs(findHeaderValue(rec, ["subcat 2 (code - name)"]) || "") || mp.subcat || "Khác";
+      const cat = extractCatCodeJs(subcat !== "Khác" ? subcat : (mp.cat || "KHÁC"));
       const s7 = Math.round(parseNumericVal(findHeaderValue(rec, ["7d sales qty"])));
       const s30 = Math.round(parseNumericVal(findHeaderValue(rec, ["30d sales qty"])));
       const s90 = Math.round(parseNumericVal(findHeaderValue(rec, ["90d sales qty"])));
@@ -5731,9 +5850,9 @@
       s7t += s7; s30t += s30; s90t += s90; s180t += s180; qT += invQty; vT += invVal;
       rows.push([
         sku, String(findHeaderValue(rec, ["sku name"]) || mp.name || "").trim(),
-        cleanSubcatJs(findHeaderValue(rec, ["subcat 2 (code - name)"]) || ""),
+        subcat,
         String(findHeaderValue(rec, ["brand name"]) || "Khác").trim(),
-        pstatus, rng, s7, s30, s90, s180, gm, sdays, invQty, invVal, unitCost, listed,
+        pstatus, rng, s7, s30, s90, s180, gm, sdays, invQty, invVal, unitCost, listed, cat,
       ]);
     }
     rows.sort((a, b) => b[SKU_C.INV_VAL] - a[SKU_C.INV_VAL]);
@@ -5780,11 +5899,14 @@
       if (!sn) continue;
       const dc = parseExcelDateJs(findHeaderValue(rec, ["date import company"]));
       const ds = parseExcelDateJs(findHeaderValue(rec, ["date import site"]));
+      const sub2 = cleanSubcatJs("", findHeaderValue(rec, ["subcat 2 code"]), findHeaderValue(rec, ["subcat 2 name"]));
+      const cat = extractCatCodeJs(findHeaderValue(rec, ["category code"]) || sub2);
       badBySn.set(sn, {
         sku: String(findHeaderValue(rec, ["sku"]) || "").trim(),
         skuName: String(findHeaderValue(rec, ["sku name"]) || "").trim(),
         site: String(findHeaderValue(rec, ["site code"]) || "UNKNOWN").trim(),
-        subcat: String(findHeaderValue(rec, ["subcat 2 name"]) || "Khác").trim(),
+        cat,
+        subcat: sub2,
         brand: String(findHeaderValue(rec, ["brand name"]) || "Khác").trim(),
         purchaseStatus: String(findHeaderValue(rec, ["purchase status"]) || "Normal").trim(),
         loc: String(findHeaderValue(rec, ["location code"]) || "N/A").trim(),
@@ -5803,7 +5925,7 @@
     }
 
     const lookups = {
-      sites: [], subcats: [], brands: [], suppliers: [], locations: [], binTypes: [],
+      categories: [], cats: [], sites: [], subcats: [], brands: [], suppliers: [], locations: [], binTypes: [],
       binZones: [], importTypes: [], purchaseStatuses: [], ranges: [], badComp: [], badSite: [],
     };
     const maps = {};
@@ -5824,7 +5946,10 @@
       const mp = masterMap.get(sku) || {};
       const bs = badBySn.get(sn) || null;
       const site = String(findHeaderValue(rec, ["site code"]) || (bs ? bs.site : "UNKNOWN")).trim();
-      const subcat = String(findHeaderValue(rec, ["subcat 2 name"]) || mp.subcat || "Khác").trim();
+      const cat3 = String(findHeaderValue(rec, ["category code"]) || "").trim();
+      const sub2Name = String(findHeaderValue(rec, ["subcat 2 name"]) || "").trim();
+      const subcat = (bs ? bs.subcat : "") || mp.subcat || cleanSubcatJs("", "", sub2Name, cat3);
+      const cat = (bs ? bs.cat : "") || mp.cat || extractCatCodeJs(cat3 || subcat);
       const brand = String(findHeaderValue(rec, ["brand name"]) || mp.brand || "Khác").trim();
       const supplier = String(findHeaderValue(rec, ["supplier short name"]) || "").trim() || "Không rõ NCC";
       const loc = String(findHeaderValue(rec, ["location code"]) || "N/A").trim();
@@ -5861,6 +5986,7 @@
         daysFirst, daysLast, invVal, netVal, ppVal, bs ? 1 : 0,
         bs ? bs.agingComp : daysFirst, bs ? bs.agingSite : daysLast,
         bs ? bs.sdayComp : 0, bs ? bs.sdaySite : 0, getIdx("badComp", badComp), getIdx("badSite", badSite),
+        getIdx("categories", cat),
       ]);
     }
 
@@ -5877,9 +6003,11 @@
         getIdx("ranges", rng), bs.dateComp, bs.dateSite, bs.agingComp, bs.agingSite,
         bs.invVal, bs.invVal, 0, 1, bs.agingComp, bs.agingSite, bs.sdayComp, bs.sdaySite,
         getIdx("badComp", bs.badComp), getIdx("badSite", bs.badSite),
+        getIdx("categories", bs.cat || mp.cat || extractCatCodeJs(bs.subcat)),
       ]);
     });
 
+    lookups.cats = lookups.categories;
     rows.sort((a, b) => b[SN_C.INV_VAL] - a[SN_C.INV_VAL]);
     return {
       meta: {
@@ -5899,6 +6027,8 @@
 
   function buildInventoryPayloadFromRecords(rawRecords, sourceMeta, masterMap = new Map()) {
     const lookups = {
+      categories: [],
+      cats: [],
       sites: [],
       siteNames: [],
       subcats: [],
@@ -5950,7 +6080,9 @@
 
       const site = String(findHeaderValue(rec, ["site code", "sales site code", "site"]) || "UNKNOWN").trim();
       const siteName = String(findHeaderValue(rec, ["site name", "store name"]) || "").trim() || site;
-      const subcat = cleanSubcatJs(findHeaderValue(rec, ["subcat 2 (code - name)", "subcat 2", "subcat"]) || "");
+      const rawSub = findHeaderValue(rec, ["subcat 2 (code - name)", "subcat 2", "subcat"]);
+      const subcat = rawSub ? cleanSubcatJs(rawSub) : (mp.subcat || "Khác");
+      const cat = subcat !== "Khác" ? extractCatCodeJs(subcat) : (mp.cat || "KHÁC");
       const brand = String(findHeaderValue(rec, ["brand name", "brand"]) || "Khác").trim();
       const binCode = String(findHeaderValue(rec, ["bin code"]) || "N/A").trim();
       const binType = String(findHeaderValue(rec, ["bin type"]) || "Khác").trim();
@@ -5990,10 +6122,11 @@
         getIdx("subcats", subcat), getIdx("brands", brand), getIdx("binCodes", binCode),
         getIdx("binTypes", binType), getIdx("binZones", binZone), getIdx("purchaseStatuses", status),
         lastIso, firstIso, agingDays, qty, invVal, netVal, unitCost, listedPrice, minStock,
-        getIdx("ranges", rng), agingFirst,
+        getIdx("ranges", rng), agingFirst, getIdx("categories", cat),
       ]);
     }
 
+    lookups.cats = lookups.categories;
     compactRows.sort((a, b) => b[INV_C.VALUE] - a[INV_C.VALUE]);
     return {
       meta: {
@@ -6228,6 +6361,27 @@
     return files;
   }
 
+  function makeCloudSafePayload(payload) {
+    // Strip heavy in-memory arrays (unpacked rows, 17K masterProducts, 40K invSerials) when POSTing to Netlify Function (<5.8 MB limit)
+    const slim = {
+      schemaVersion: 3,
+      taxonomy: payload.taxonomy,
+      meta: payload.meta,
+      lookups: payload.lookups,
+      siteDirectory: payload.siteDirectory,
+      salesCube: payload.salesCube,
+      inventory: payload.inventory,
+      invSkuLevel: payload.invSkuLevel,
+      invBranchLevel: payload.invBranchLevel,
+      invSerialCube: payload.invSerialCube,
+      masterSummary: payload.masterSummary,
+    };
+    if (!slim.salesCube && payload.rows) {
+      slim.rows = payload.rows;
+    }
+    return slim;
+  }
+
   async function publishPayloadDirectly(payload) {
     // Re-check cloud availability if unknown
     if (!state.cloudAvailable && (location.protocol === "http:" || location.protocol === "https:")) {
@@ -6252,10 +6406,11 @@
         sessionStorage.setItem("cyberpulse_update_key", pass);
       }
 
+      const slimPayload = makeCloudSafePayload(payload);
       const res = await fetch("/api/report-data", {
         method: "POST",
         headers,
-        body: JSON.stringify(payload),
+        body: JSON.stringify(slimPayload),
       });
       const body = await res.json().catch(() => ({}));
 
@@ -6431,7 +6586,7 @@
           const res = await fetchWithTimeout(`/api/report-data?t=${Date.now()}`, { cache: "no-store" }, 5000);
           if (res.ok && (res.headers.get("content-type") || "").includes("application/json")) {
             const json = await res.json();
-            if (json && Array.isArray(json.rows) && json.rows.length > 0) {
+            if (isValidDataset(json)) {
               fresh = json;
               mode = "cloud";
             }
@@ -6439,10 +6594,11 @@
         } catch {
           // fallback to static JSON
         }
-        if (!fresh) {
-          const res2 = await fetchWithTimeout(`./data/report_data.json?t=${Date.now()}`, { cache: "no-store" }, 5000);
-          if (res2.ok) {
-            fresh = await res2.json();
+        const res2 = await fetchWithTimeout(`./data/report_data.json?t=${Date.now()}`, { cache: "no-store" }, 5000).catch(() => null);
+        if (res2 && res2.ok) {
+          const baseJson = await res2.json().catch(() => null);
+          if (isValidDataset(baseJson) && (!fresh || !shouldPreferOverride(fresh, baseJson))) {
+            fresh = baseJson;
             mode = "default";
           }
         }
@@ -6450,7 +6606,7 @@
         fresh = await loadBaselineData();
       }
 
-      if (!fresh || !Array.isArray(fresh.rows)) {
+      if (!isValidDataset(fresh)) {
         throw new Error("Không tải được dữ liệu mới từ máy chủ.");
       }
 

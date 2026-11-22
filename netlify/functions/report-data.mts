@@ -1,8 +1,8 @@
 import { getStore } from "@netlify/blobs";
 import type { Config, Context } from "@netlify/functions";
 
-const BLOB_KEY = "latest";
-const MAX_PAYLOAD_BYTES = 5_500_000; // Keep safely under Netlify 6 MB buffered payload limit
+const BLOB_KEY = "latest-v3-6nh";
+const MAX_PAYLOAD_BYTES = 5_800_000; // Keep safely under Netlify 6 MB buffered payload limit
 
 interface ReportPayload {
   meta: {

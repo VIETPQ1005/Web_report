@@ -526,10 +526,16 @@
         <div class="two-col-deep">
           <div class="panel-block">
             <div class="panel-header">
-              <h2 class="panel-title">Tỷ trọng theo Region Name</h2>
+              <div class="panel-title-group">
+                <h2 class="panel-title">Tỷ trọng theo Region Name</h2>
+                <span class="panel-hint">Click từng vùng trên biểu đồ hoặc danh sách bên phải để lọc</span>
+              </div>
               <button class="btn-mini" data-export-chart="deepRegionPie">PNG</button>
             </div>
-            <div id="chartDeepRegionPie" class="chart-canvas medium-canvas"></div>
+            <div class="region-pie-split">
+              <div id="chartDeepRegionPie" class="chart-canvas region-pie-canvas"></div>
+              <div class="region-pie-legend" id="regionPieLegendList"></div>
+            </div>
           </div>
           <div class="panel-block">
             <div class="panel-header">

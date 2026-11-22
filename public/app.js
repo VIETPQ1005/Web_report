@@ -4058,28 +4058,13 @@
         textStyle: { color: "#F1F5F9" },
         formatter: (p) => `<strong>${esc(p.name)}</strong><br/>Doanh số: <b>${fmtVndFull(p.value)}</b> (${p.percent}%)`,
       },
-      legend: {
-        orient: "vertical",
-        right: 8,
-        top: "middle",
-        itemWidth: 10,
-        itemHeight: 10,
-        itemGap: 10,
-        textStyle: { color: "#E2E8F0", fontSize: 11, fontFamily: "JetBrains Mono" },
-        formatter: (name) => {
-          const found = regs.find(([n]) => n === name);
-          const val = found ? found[1] : 0;
-          const pct = totalRegSales > 0 ? ((val / totalRegSales) * 100).toFixed(1) : "0.0";
-          const shortN = shortRegionLabel(name);
-          return `${shortN.padEnd(13, " ")} ${fmtCompactVnd(val)} (${pct}%)`;
-        },
-      },
+      legend: { show: false },
       series: [{
         type: "pie",
-        radius: ["40%", "66%"],
-        center: ["28%", "50%"],
+        radius: ["42%", "70%"],
+        center: ["50%", "50%"],
         avoidLabelOverlap: true,
-        minShowLabelAngle: 6,
+        minShowLabelAngle: 10,
         label: {
           color: "#E2E8F0",
           fontSize: 11,
@@ -4088,7 +4073,7 @@
         },
         labelLine: {
           length: 8,
-          length2: 8,
+          length2: 6,
           smooth: true,
         },
         data: regs.map(([name, val], i) => ({
@@ -4098,6 +4083,28 @@
         })),
       }],
     }, true);
+
+    const legendContainer = document.getElementById("regionPieLegendList");
+    if (legendContainer) {
+      legendContainer.innerHTML = regs
+        .map(([name, val], i) => {
+          const color = REGION_COLORS[name] || FALLBACK_COLORS[i % FALLBACK_COLORS.length];
+          const pct = totalRegSales > 0 ? ((val / totalRegSales) * 100).toFixed(1) : "0.0";
+          const activeCls = state.region === name ? "active" : "";
+          return `
+            <div class="region-legend-row ${activeCls}" data-reg="${esc(name)}" title="${esc(name)}: ${fmtVndFull(val)} (${pct}%) — Click để lọc">
+              <span class="region-legend-dot" style="background:${color}"></span>
+              <span class="region-legend-name">${esc(name)}</span>
+              <span class="region-legend-val">${fmtCompactVnd(val)}</span>
+              <span class="region-legend-pct">${pct}%</span>
+            </div>`;
+        })
+        .join("");
+
+      legendContainer.querySelectorAll(".region-legend-row").forEach((rowEl) => {
+        rowEl.addEventListener("click", () => toggleRegionFilter(rowEl.dataset.reg));
+      });
+    }
 
     charts.deepRegionStack.setOption({
       tooltip: { trigger: "axis", axisPointer: { type: "shadow" }, backgroundColor: COLORS.tooltipBg, borderColor: COLORS.tooltipBorder, textStyle: { color: "#F1F5F9" }, valueFormatter: fmtVndFull },

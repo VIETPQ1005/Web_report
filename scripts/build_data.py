@@ -50,7 +50,84 @@ FROZEN_SALES_FILENAME = "Sale_Revenue_Detail.xlsx"
 FROZEN_SALES_START_ROW = 2
 FROZEN_SALES_END_ROW = 407593
 FROZEN_SALES_CACHE = DATA_DIR / ".sales_frozen_cache.json.gz"
+FROZEN_CACHE_VERSION = 2
 EXCLUDED_GLOBAL_CATS = {"NH07", "NH10", "NH03"}
+
+STORAGE_GROUPS = ["OCGN", "PK_LUU_TRU"]
+STORAGE_GROUP_LABELS = ["Ổ cứng gắn ngoài (OCGN)", "Phụ kiện lưu trữ (USB & Thẻ nhớ)"]
+STORAGE_SUBTYPES = ["SSD", "HDD", "OCGN Khác", "USB", "Thẻ nhớ"]
+STORAGE_CAPACITIES = [
+    "8GB", "16GB", "32GB", "64GB", "128GB", "256GB", "500GB", "512GB",
+    "1TB", "2TB", "4TB", "5TB", "6TB", "8TB", "10TB+", "Khác",
+]
+STORAGE_CAP_MAP = {c: i for i, c in enumerate(STORAGE_CAPACITIES)}
+STORAGE_PRICE_BANDS = [
+    "< 150K", "150K - 300K", "300K - 500K", "500K - 1M",
+    "1M - 2M", "2M - 3M", "3M - 5M", "> 5M",
+]
+_CAP_RE = re.compile(r"\b(\d+(?:\.\d+)?)\s*(TB|GB)\b", re.IGNORECASE)
+
+
+def extract_storage_capacity_idx(sku_name: str) -> int:
+    m = _CAP_RE.search(sku_name or "")
+    if not m:
+        return STORAGE_CAP_MAP["Khác"]
+    num = float(m.group(1))
+    unit = m.group(2).upper()
+    if unit == "TB":
+        if num >= 10:
+            return STORAGE_CAP_MAP["10TB+"]
+        key = f"{int(num) if num.is_integer() else num}TB"
+        return STORAGE_CAP_MAP.get(key, STORAGE_CAP_MAP["Khác"])
+    key = f"{int(num) if num.is_integer() else num}GB"
+    if key in STORAGE_CAP_MAP:
+        return STORAGE_CAP_MAP[key]
+    if num >= 900:
+        return STORAGE_CAP_MAP["1TB"]
+    return STORAGE_CAP_MAP["Khác"]
+
+
+def storage_price_band_idx(unit_price: float) -> int:
+    p = abs(unit_price)
+    if p < 150_000:
+        return 0
+    if p < 300_000:
+        return 1
+    if p < 500_000:
+        return 2
+    if p < 1_000_000:
+        return 3
+    if p < 2_000_000:
+        return 4
+    if p < 3_000_000:
+        return 5
+    if p < 5_000_000:
+        return 6
+    return 7
+
+
+def classify_storage_item(subcat2: str, subcat3: str, sku_name: str):
+    s2 = (subcat2 or "").strip().lower()
+    s3 = (subcat3 or "").strip().lower()
+    nm = (sku_name or "").strip().lower()
+    if "nh11-01-07" in s2 or "ổ cứng gắn ngoài" in s2:
+        if "ssd" in s3 or "ssd" in nm:
+            return (0, 0)  # OCGN / SSD
+        if "hdd" in s3 or "hdd" in nm:
+            return (0, 1)  # OCGN / HDD
+        return (0, 2)      # OCGN / OCGN Khác
+    if "nh11-01-01" in s2 or "phụ kiện lưu trữ" in s2:
+        if "nh11-01-01-02" in s3 or "thẻ nhớ" in s3:
+            return (1, 4)  # PK_LUU_TRU / Thẻ nhớ
+        if "nh11-01-01-01" in s3 or s3.endswith("usb") or " - usb" in s3:
+            return (1, 3)  # PK_LUU_TRU / USB
+        # Fallback if SKU not in Master Product
+        if not s3:
+            if "thẻ nhớ" in nm or "microsd" in nm or "sdxc" in nm or "sdhc" in nm:
+                return (1, 4)
+            if "usb" in nm and "đầu đọc" not in nm and "reader" not in nm and "hộp" not in nm:
+                return (1, 3)
+    return None
 
 CAT_LABELS = {
     "NH11": "Phụ kiện",
@@ -377,8 +454,8 @@ def build(rebuild_sales_cache: bool = False):
             w_note = str(get("warranty period note") or "").strip()
 
             master_map[sku] = {
-                "cat": cat, "subcat2": subcat2, "brand": brand,
-                "purchaseStatus": pstatus, "range": rng, "name": name,
+                "cat": cat, "subcat2": subcat2, "subcat3": subcat3, "brand": brand,
+                "purchaseStatus": pstatus, "range": rng, "name": name, "listed": listed,
             }
             c_i, s_i, b_i, st_i, r_i = (
                 mp_idx("cats", cat), mp_idx("subcats", subcat2),
@@ -423,6 +500,9 @@ def build(rebuild_sales_cache: bool = False):
     # Wait: keep daily cube lean: (dateIso, weekStr, monthStr, catIdx, subcatIdx, regionIdx, channelIdx, orderTypeIdx, isBulk)
     # Actually let's aggregate by (dateIso, weekStr, monthStr, catIdx, subcatIdx, regionIdx, isBulk) -> compact & fast!
     daily_cube: dict[tuple, list] = defaultdict(lambda: [0, 0.0, 0.0, 0.0, 0])
+    # Storage Specialist Cube (OCGN + PK Lưu trữ USB/Thẻ nhớ):
+    # key: (month_str, si, ri, ci, grp_i, st_i, cap_i, bi, pb_i) -> [qty, sales, gp, rowCount]
+    storage_cube: dict[tuple, list] = defaultdict(lambda: [0, 0.0, 0.0, 0])
     sku_ytd_sales: dict[str, list] = defaultdict(lambda: [0.0, 0, 0.0, 0])  # sku -> [sales, qty, gp, orders]
     top_sku_sales: dict[tuple, list] = defaultdict(lambda: [0, 0.0, 0.0, 0.0, 0])  # (sku, skuName, catIdx, subcatIdx, brandIdx) -> [qty, sales, cogs, gp, orders]
     site_directory: dict[str, dict] = {}
@@ -538,6 +618,20 @@ def build(rebuild_sales_cache: bool = False):
                 sy[1] += qty
                 sy[2] += gp
                 sy[3] += 1
+
+            # Storage Specialist Cube (OCGN + PK Lưu trữ USB/Thẻ nhớ)
+            mp_info = master_map.get(sku, {})
+            st_cls = classify_storage_item(subcat2, mp_info.get("subcat3", ""), mp_info.get("name", ""))
+            if st_cls is not None:
+                grp_i, st_i = st_cls
+                cap_i = extract_storage_capacity_idx(mp_info.get("name", ""))
+                unit_p = (abs(sales / qty) if qty != 0 else mp_info.get("listed", 0.0))
+                pb_i = storage_price_band_idx(unit_p)
+                sc_v = storage_cube[(month_str, si, ri, ci, grp_i, st_i, cap_i, bi, pb_i)]
+                sc_v[0] += qty
+                sc_v[1] += sales
+                sc_v[2] += gp
+                sc_v[3] += 1
         if snapshot_at_row is not None and not snap_taken:
             if on_snapshot is not None:
                 on_snapshot(rc)
@@ -551,8 +645,8 @@ def build(rebuild_sales_cache: bool = False):
         t_cache = time.time()
         with gzip.open(FROZEN_SALES_CACHE, "rt", encoding="utf-8") as cf:
             fc = json.load(cf)
-        if fc.get("frozenEndRow") != FROZEN_SALES_END_ROW:
-            print(f"[2/6 SALES]     Cache range changed ({fc.get('frozenEndRow')} -> {FROZEN_SALES_END_ROW}), rebuilding cache...")
+        if fc.get("frozenEndRow") != FROZEN_SALES_END_ROW or fc.get("version", 1) < FROZEN_CACHE_VERSION:
+            print(f"[2/6 SALES]     Cache version/range updated (v{fc.get('version', 1)}/{fc.get('frozenEndRow')} -> v{FROZEN_CACHE_VERSION}/{FROZEN_SALES_END_ROW}), rebuilding cache...")
             rebuild_sales_cache = True
         else:
             for k in s_lookups:
@@ -562,6 +656,8 @@ def build(rebuild_sales_cache: bool = False):
                 monthly_cube[tuple(row[:9])] = list(row[9:])
             for row in fc["dailyCube"]:
                 daily_cube[tuple(row[:7])] = list(row[7:])
+            for row in fc.get("storageCube", []):
+                storage_cube[tuple(row[:9])] = list(row[9:])
             for sku, vals in fc["skuYtdSales"].items():
                 sku_ytd_sales[sku] = list(vals)
             site_directory.update(fc["siteDirectory"])
@@ -617,7 +713,7 @@ def build(rebuild_sales_cache: bool = False):
         def _capture_snapshot(rc_so_far: int):
             frozen_rc_box[0] = rc_so_far
             frozen_payload_box[0] = {
-                "version": 1,
+                "version": FROZEN_CACHE_VERSION,
                 "frozenAt": datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00", "Z"),
                 "frozenStartRow": FROZEN_SALES_START_ROW,
                 "frozenEndRow": FROZEN_SALES_END_ROW,
@@ -630,6 +726,7 @@ def build(rebuild_sales_cache: bool = False):
                 "lookups": {k: list(v) for k, v in s_lookups.items()},
                 "monthlyCube": [list(k) + list(v) for k, v in monthly_cube.items()],
                 "dailyCube": [list(k) + list(v) for k, v in daily_cube.items()],
+                "storageCube": [list(k) + list(v) for k, v in storage_cube.items()],
                 "skuYtdSales": {sku: list(v) for sku, v in sku_ytd_sales.items()},
                 "siteDirectory": dict(site_directory),
                 "totals": {
@@ -717,8 +814,15 @@ def build(rebuild_sales_cache: bool = False):
     s_lookups["dateToWeek"] = date_to_week
     s_lookups["categories"] = list(s_lookups["cats"])
 
+    storage_rows = [
+        [m_map[k[0]], k[1], k[2], k[3], k[4], k[5], k[6], k[7], k[8], v[0], int(round(v[1])), int(round(v[2])), v[3]]
+        for k, v in storage_cube.items()
+        if k[0] in m_map
+    ]
+    storage_rows.sort(key=lambda x: x[0])
+
     print(
-        f"[2/6 SALES]     Raw: {tot_rows:,} -> MonthlyCube: {len(cube_rows):,} | DailyCube: {len(daily_rows):,} | "
+        f"[2/6 SALES]     Raw: {tot_rows:,} -> MonthlyCube: {len(cube_rows):,} | DailyCube: {len(daily_rows):,} | StorageCube: {len(storage_rows):,} | "
         f"Sales: {tot_sales:,.0f} VND | Qty: {tot_qty:,} | Cats: {s_lookups['cats']}"
     )
 
@@ -1197,6 +1301,16 @@ def build(rebuild_sales_cache: bool = False):
         "siteDirectory": site_directory,
         "salesCube": cube_rows,
         "salesDaily": daily_rows,
+        "storageReport": {
+            "lookups": {
+                "groups": STORAGE_GROUPS,
+                "groupLabels": STORAGE_GROUP_LABELS,
+                "subTypes": STORAGE_SUBTYPES,
+                "capacities": STORAGE_CAPACITIES,
+                "priceBands": STORAGE_PRICE_BANDS,
+            },
+            "rows": storage_rows,
+        },
         "inventory": {
             "meta": {
                 "generatedAt": now_iso,

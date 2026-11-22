@@ -250,7 +250,17 @@
     deepMode: "sales_qty",
     siteChartView: "bar",         // bar | treemap | scatter
     siteChartSort: "sales",       // sales | qty | gm
+    channelDim: "channel",        // channel | site
     driverDim: "subcat",          // subcat | brand
+    storage: {
+      open: false,
+      group: "all",               // all | OCGN | SSD | HDD | PK_LUU_TRU | USB | Thẻ nhớ
+      metric: "sales",            // sales | qty
+      cap: "",
+      brand: "",
+      priceBand: "",
+      lastExport: { headers: [], rows: [], filename: "storage_ocgn_pk_report.csv" },
+    },
     // Table controls
     tableTab: "sites",            // sites | matrix | raw
     tableSearch: "",
@@ -272,6 +282,9 @@
     deepRegionStack: null,
     deepChannel: null,
     deepDriver: null,
+    storageCap: null,
+    storageBrand: null,
+    storagePrice: null,
     invBadStock: null,
     invStatusRange: null,
     invSite: null,
@@ -960,6 +973,9 @@
     charts.deepRegionStack = make("chartDeepRegionStack");
     charts.deepChannel = make("chartDeepChannel");
     charts.deepDriver = make("chartDeepDriver");
+    charts.storageCap = document.getElementById("chartStorageCap") ? make("chartStorageCap") : null;
+    charts.storageBrand = document.getElementById("chartStorageBrand") ? make("chartStorageBrand") : null;
+    charts.storagePrice = document.getElementById("chartStoragePrice") ? make("chartStoragePrice") : null;
     charts.invBadStock = make("chartInvBadStock");
     charts.invStatusRange = make("chartInvStatusRange");
     charts.invSite = make("chartInvSite");
@@ -1014,10 +1030,38 @@
 
     charts.deepChannel.on("click", (params) => {
       if (!params.name) return;
+      if (state.channelDim === "site") {
+        const sc = params.data?.siteCode || params.name.split(" - ")[0];
+        if (sc) toggleSiteFilter(sc);
+        return;
+      }
       state.channel = state.channel === params.name ? "" : params.name;
-      document.getElementById("filterChannel").value = state.channel;
+      const chEl = document.getElementById("filterChannel");
+      if (chEl) chEl.value = state.channel;
       renderAll();
     });
+
+    if (charts.storageCap) {
+      charts.storageCap.on("click", (params) => {
+        if (!params.name) return;
+        state.storage.cap = state.storage.cap === params.name ? "" : params.name;
+        renderStorageReport();
+      });
+    }
+    if (charts.storageBrand) {
+      charts.storageBrand.on("click", (params) => {
+        if (!params.name) return;
+        state.storage.brand = state.storage.brand === params.name ? "" : params.name;
+        renderStorageReport();
+      });
+    }
+    if (charts.storagePrice) {
+      charts.storagePrice.on("click", (params) => {
+        if (!params.name) return;
+        state.storage.priceBand = state.storage.priceBand === params.name ? "" : params.name;
+        renderStorageReport();
+      });
+    }
 
     // Inventory cross-filter clicks
     charts.invBadStock.on("click", (params) => {
@@ -1273,9 +1317,41 @@
       state.siteChartSort = v;
       renderDeepSite(getFilteredRows(false));
     });
+    bindSeg("channelDimGroup", (v) => {
+      state.channelDim = v;
+      renderDeepChannelAndDriver(getFilteredRows(false));
+    });
     bindSeg("driverDimGroup", (v) => {
       state.driverDim = v;
       renderDeepChannelAndDriver(getFilteredRows(false));
+    });
+
+    // Special Storage Report Modal (OCGN & PK Lưu trữ)
+    document.getElementById("openStorageReportBtn")?.addEventListener("click", () => openStorageReportModal());
+    document.getElementById("closeStorageReportModal")?.addEventListener("click", () => closeStorageReportModal());
+    document.getElementById("storageReportModal")?.addEventListener("click", (e) => {
+      if (e.target.id === "storageReportModal") closeStorageReportModal();
+    });
+    document.addEventListener("keydown", (e) => {
+      if (e.key === "Escape" && state.storage.open) closeStorageReportModal();
+    });
+    bindSeg("storageGroupTabs", (v) => {
+      state.storage.group = v;
+      renderStorageReport();
+    });
+    bindSeg("storageMetricTabs", (v) => {
+      state.storage.metric = v;
+      renderStorageReport();
+    });
+    document.getElementById("storageResetBtn")?.addEventListener("click", () => {
+      state.storage.cap = "";
+      state.storage.brand = "";
+      state.storage.priceBand = "";
+      renderStorageReport();
+    });
+    document.getElementById("storageExportCsvBtn")?.addEventListener("click", () => {
+      const { headers, rows, filename } = state.storage.lastExport;
+      if (rows.length) downloadCsv(headers, rows, filename);
     });
     bindSeg("tableTabGroup", (v) => {
       state.tableTab = v;
@@ -2832,35 +2908,93 @@
 
   function renderDeepChannelAndDriver(rows) {
     if (!charts.deepChannel || !charts.deepDriver) return;
-    const { lookups } = state.raw;
+    const { lookups, siteDirectory } = state.raw;
 
-    const chAgg = new Map();
-    rows.forEach((r) => {
-      const ch = lookups.channels[r[C.CHANNEL]];
-      let o = chAgg.get(ch);
-      if (!o) { o = { name: ch, sales: 0, qty: 0 }; chAgg.set(ch, o); }
-      o.sales += r[C.SALES]; o.qty += r[C.QTY];
-    });
-    const chList = Array.from(chAgg.values()).sort((a, b) => b.sales - a.sales);
+    const titleEl = document.getElementById("channelPanelTitle");
+    if (state.channelDim === "site") {
+      if (titleEl) titleEl.textContent = "Cơ cấu theo Site - Store (Top 15)";
+      const sAgg = new Map();
+      rows.forEach((r) => {
+        const sc = lookups.sites[r[C.SITE]];
+        let o = sAgg.get(sc);
+        if (!o) {
+          const info = siteDirectory?.[sc];
+          const lbl = info && info.storeName && info.storeName !== sc ? `${sc} - ${info.storeName}` : sc;
+          o = { siteCode: sc, name: lbl, sales: 0, qty: 0, gp: 0 };
+          sAgg.set(sc, o);
+        }
+        o.sales += r[C.SALES];
+        o.qty += r[C.QTY];
+        o.gp += r[C.GP];
+      });
+      const siteList = Array.from(sAgg.values()).sort((a, b) => b.sales - a.sales).slice(0, 15).reverse();
 
-    charts.deepChannel.setOption({
-      tooltip: { trigger: "axis", axisPointer: { type: "shadow" }, backgroundColor: COLORS.tooltipBg, borderColor: COLORS.tooltipBorder, textStyle: { color: "#F1F5F9" } },
-      grid: { left: 58, right: 54, top: 24, bottom: 34 },
-      xAxis: { type: "category", data: chList.map((d) => d.name), axisLabel: { color: "#E2E8F0", fontFamily: "JetBrains Mono" } },
-      yAxis: [
-        { type: "value", axisLabel: { color: COLORS.axisLabel, formatter: fmtAxisVnd }, splitLine: { lineStyle: { color: COLORS.gridLine } } },
-        { type: "value", axisLabel: { color: COLORS.amber }, splitLine: { show: false } },
-      ],
-      series: [
-        {
+      charts.deepChannel.setOption({
+        tooltip: {
+          trigger: "axis",
+          axisPointer: { type: "shadow" },
+          backgroundColor: COLORS.tooltipBg,
+          borderColor: COLORS.tooltipBorder,
+          textStyle: { color: "#F1F5F9" },
+          formatter: (params) => {
+            const p = params[0];
+            if (!p || !p.data) return "";
+            const d = p.data;
+            const gm = d.sales ? ((d.gp / d.sales) * 100).toFixed(1) : "0.0";
+            return `<div style="font-weight:600;margin-bottom:4px">${esc(d.fullName)}</div>`
+              + `<div>Sales: <b class="mono">${fmtVndFull(d.sales)}</b></div>`
+              + `<div>Qty: <b class="mono">${fmtInt(d.qty)}</b> • GM: <b class="mono">${gm}%</b></div>`;
+          },
+        },
+        grid: { left: 190, right: 76, top: 14, bottom: 26 },
+        xAxis: { type: "value", axisLabel: { color: COLORS.axisLabel, formatter: fmtAxisVnd }, splitLine: { lineStyle: { color: COLORS.gridLine } } },
+        yAxis: { type: "category", data: siteList.map((d) => d.name), axisLabel: { color: "#E2E8F0", width: 178, overflow: "truncate", fontSize: 11 } },
+        series: [{
           name: "Sales",
           type: "bar",
-          barMaxWidth: 48,
-          data: chList.map((d, i) => ({ value: Math.round(d.sales), itemStyle: { color: FALLBACK_COLORS[i % FALLBACK_COLORS.length], borderRadius: [3, 3, 0, 0] } })),
-        },
-        { name: "Qty", type: "line", yAxisIndex: 1, data: chList.map((d) => d.qty), lineStyle: { color: COLORS.amber, width: 2.5 }, itemStyle: { color: COLORS.amber } },
-      ],
-    }, true);
+          barMaxWidth: 18,
+          data: siteList.map((d, i) => ({
+            value: Math.round(d.sales),
+            siteCode: d.siteCode,
+            fullName: d.name,
+            sales: d.sales,
+            qty: d.qty,
+            gp: d.gp,
+            itemStyle: { color: d.siteCode === state.site ? COLORS.amber : FALLBACK_COLORS[i % FALLBACK_COLORS.length], borderRadius: [0, 3, 3, 0] },
+          })),
+          label: { show: true, position: "right", color: "#CBD5E1", fontFamily: "JetBrains Mono", fontSize: 10, formatter: (p) => fmtCompactVnd(p.value) },
+        }],
+      }, true);
+    } else {
+      if (titleEl) titleEl.textContent = "Cơ cấu Sales Channel";
+      const chAgg = new Map();
+      rows.forEach((r) => {
+        const ch = lookups.channels[r[C.CHANNEL]];
+        let o = chAgg.get(ch);
+        if (!o) { o = { name: ch, sales: 0, qty: 0 }; chAgg.set(ch, o); }
+        o.sales += r[C.SALES]; o.qty += r[C.QTY];
+      });
+      const chList = Array.from(chAgg.values()).sort((a, b) => b.sales - a.sales);
+
+      charts.deepChannel.setOption({
+        tooltip: { trigger: "axis", axisPointer: { type: "shadow" }, backgroundColor: COLORS.tooltipBg, borderColor: COLORS.tooltipBorder, textStyle: { color: "#F1F5F9" } },
+        grid: { left: 58, right: 54, top: 24, bottom: 34 },
+        xAxis: { type: "category", data: chList.map((d) => d.name), axisLabel: { color: "#E2E8F0", fontFamily: "JetBrains Mono" } },
+        yAxis: [
+          { type: "value", axisLabel: { color: COLORS.axisLabel, formatter: fmtAxisVnd }, splitLine: { lineStyle: { color: COLORS.gridLine } } },
+          { type: "value", axisLabel: { color: COLORS.amber }, splitLine: { show: false } },
+        ],
+        series: [
+          {
+            name: "Sales",
+            type: "bar",
+            barMaxWidth: 48,
+            data: chList.map((d, i) => ({ value: Math.round(d.sales), itemStyle: { color: FALLBACK_COLORS[i % FALLBACK_COLORS.length], borderRadius: [3, 3, 0, 0] } })),
+          },
+          { name: "Qty", type: "line", yAxisIndex: 1, data: chList.map((d) => d.qty), lineStyle: { color: COLORS.amber, width: 2.5 }, itemStyle: { color: COLORS.amber } },
+        ],
+      }, true);
+    }
 
     const dimCol = state.driverDim === "subcat" ? C.SUBCAT : C.BRAND;
     const dict = state.driverDim === "subcat" ? lookups.subcats : lookups.brands;
@@ -2884,6 +3018,311 @@
         label: { show: true, position: "right", color: "#CBD5E1", fontFamily: "JetBrains Mono", fontSize: 10, formatter: (p) => fmtCompactVnd(p.value) },
       }],
     }, true);
+
+    if (state.storage.open) {
+      renderStorageReport();
+    }
+  }
+
+  // =========================================================================
+  // 7B. SPECIALIST STORAGE REPORT: OCGN & PK LƯU TRỮ (USB, THẺ NHỚ)
+  //     Dung lượng • Hãng (Brand) • Khoảng giá (Sales ⇄ Qty)
+  // =========================================================================
+  function openStorageReportModal() {
+    const modal = document.getElementById("storageReportModal");
+    if (!modal) return;
+    state.storage.open = true;
+    modal.classList.add("open");
+    renderStorageReport();
+    setTimeout(() => {
+      charts.storageCap?.resize();
+      charts.storageBrand?.resize();
+      charts.storagePrice?.resize();
+    }, 45);
+  }
+
+  function closeStorageReportModal() {
+    const modal = document.getElementById("storageReportModal");
+    if (modal) modal.classList.remove("open");
+    state.storage.open = false;
+  }
+
+  function renderStorageReport() {
+    const sr = state.raw?.storageReport;
+    const lookups = state.raw?.lookups;
+    if (!sr || !Array.isArray(sr.rows) || !lookups) return;
+
+    const sL = sr.lookups;
+    const months = lookups.months || [];
+    const st = state.storage;
+    const isQty = st.metric === "qty";
+    const mKey = isQty ? "qty" : "sales";
+    const fmtVal = (v) => (isQty ? fmtInt(v) : fmtCompactVnd(v));
+    const fmtAxis = (v) => (isQty ? fmtInt(v) : fmtAxisVnd(v));
+
+    const regIdx = state.region ? lookups.regions.indexOf(state.region) : -1;
+    const siteIdx = state.site ? lookups.sites.indexOf(state.site) : -1;
+    const chIdx = state.channel ? lookups.channels.indexOf(state.channel) : -1;
+    const capFilterIdx = st.cap ? sL.capacities.indexOf(st.cap) : -1;
+    const brandFilterIdx = st.brand ? lookups.brands.indexOf(st.brand) : -1;
+    const pbFilterIdx = st.priceBand ? sL.priceBands.indexOf(st.priceBand) : -1;
+
+    // Row shape: [mIdx, si, ri, ci, grpI, stI, capI, bi, pbI, qty, sales, gp, cnt]
+    const filtered = [];
+    for (let i = 0; i < sr.rows.length; i++) {
+      const r = sr.rows[i];
+      const mStr = months[r[0]] || "";
+      if (state.monthFrom && mStr < state.monthFrom) continue;
+      if (state.monthTo && mStr > state.monthTo) continue;
+      if (state.clickedMonth && mStr !== state.clickedMonth) continue;
+      if (regIdx !== -1 && r[2] !== regIdx) continue;
+      if (siteIdx !== -1 && r[1] !== siteIdx) continue;
+      if (chIdx !== -1 && r[3] !== chIdx) continue;
+
+      if (st.group !== "all") {
+        const gCode = sL.groups[r[4]];
+        const stCode = sL.subTypes[r[5]];
+        if (st.group === "OCGN" || st.group === "PK_LUU_TRU") {
+          if (gCode !== st.group) continue;
+        } else if (stCode !== st.group) {
+          continue;
+        }
+      }
+      if (capFilterIdx !== -1 && r[6] !== capFilterIdx) continue;
+      if (brandFilterIdx !== -1 && r[7] !== brandFilterIdx) continue;
+      if (pbFilterIdx !== -1 && r[8] !== pbFilterIdx) continue;
+      filtered.push(r);
+    }
+
+    // Active chips
+    const chipsWrap = document.getElementById("storageActiveChips");
+    if (chipsWrap) {
+      const chips = [];
+      if (state.channel) chips.push({ lbl: `Channel: ${state.channel}`, cls: "" });
+      if (state.site) chips.push({ lbl: `Site: ${state.site}`, cls: "" });
+      if (state.region) chips.push({ lbl: `Region: ${state.region}`, cls: "" });
+      if (st.cap) chips.push({ lbl: `Dung lượng: ${st.cap}`, cls: "amber", clear: () => { st.cap = ""; renderStorageReport(); } });
+      if (st.brand) chips.push({ lbl: `Hãng: ${st.brand}`, cls: "amber", clear: () => { st.brand = ""; renderStorageReport(); } });
+      if (st.priceBand) chips.push({ lbl: `Khoảng giá: ${st.priceBand}`, cls: "amber", clear: () => { st.priceBand = ""; renderStorageReport(); } });
+      chipsWrap.innerHTML = "";
+      if (!chips.length) {
+        chipsWrap.innerHTML = `<span class="chip muted-chip">Toàn bộ kỳ lọc • ${fmtInt(filtered.length)} tổ hợp</span>`;
+      } else {
+        chips.forEach((c) => {
+          const el = document.createElement("span");
+          el.className = `chip ${c.cls}`;
+          el.innerHTML = c.clear ? `<span>${esc(c.lbl)}</span><button type="button" aria-label="Xóa">×</button>` : `<span>${esc(c.lbl)}</span>`;
+          if (c.clear) el.querySelector("button").addEventListener("click", c.clear);
+          chipsWrap.appendChild(el);
+        });
+      }
+    }
+
+    // Aggregations
+    let totSales = 0, totQty = 0, totGp = 0, totTx = 0;
+    const capMap = new Map();
+    const brandMap = new Map();
+    const priceMap = new Map();
+    const matrixMap = new Map();
+
+    for (let i = 0; i < filtered.length; i++) {
+      const r = filtered[i];
+      const qty = r[9], sal = r[10], gp = r[11], cnt = r[12] || 1;
+      totQty += qty; totSales += sal; totGp += gp; totTx += cnt;
+
+      const capI = r[6], brI = r[7], pbI = r[8], stI = r[5];
+      let cObj = capMap.get(capI);
+      if (!cObj) { cObj = { idx: capI, name: sL.capacities[capI], sales: 0, qty: 0, gp: 0 }; capMap.set(capI, cObj); }
+      cObj.sales += sal; cObj.qty += qty; cObj.gp += gp;
+
+      const brName = lookups.brands[brI] || "Khác";
+      let bObj = brandMap.get(brName);
+      if (!bObj) { bObj = { name: brName, sales: 0, qty: 0, gp: 0 }; brandMap.set(brName, bObj); }
+      bObj.sales += sal; bObj.qty += qty; bObj.gp += gp;
+
+      let pObj = priceMap.get(pbI);
+      if (!pObj) { pObj = { idx: pbI, name: sL.priceBands[pbI], sales: 0, qty: 0, gp: 0 }; priceMap.set(pbI, pObj); }
+      pObj.sales += sal; pObj.qty += qty; pObj.gp += gp;
+
+      const mk = `${stI}|${capI}|${brName}`;
+      let mObj = matrixMap.get(mk);
+      if (!mObj) {
+        mObj = { subType: sL.subTypes[stI], cap: sL.capacities[capI], capIdx: capI, brand: brName, sales: 0, qty: 0, gp: 0 };
+        matrixMap.set(mk, mObj);
+      }
+      mObj.sales += sal; mObj.qty += qty; mObj.gp += gp;
+    }
+
+    const totalMetric = isQty ? totQty : totSales;
+    const capList = Array.from(capMap.values()).filter((d) => d.sales !== 0 || d.qty !== 0).sort((a, b) => a.idx - b.idx);
+    const brandList = Array.from(brandMap.values()).filter((d) => d.sales !== 0 || d.qty !== 0).sort((a, b) => b[mKey] - a[mKey]);
+    const priceList = sL.priceBands.map((lbl, idx) => priceMap.get(idx) || { idx, name: lbl, sales: 0, qty: 0, gp: 0 }).filter((d) => d.sales !== 0 || d.qty !== 0);
+
+    // Update KPI Cards
+    const asp = totQty ? totSales / totQty : 0;
+    const gmPct = totSales ? (totGp / totSales) * 100 : 0;
+    const topCap = [...capList].sort((a, b) => b[mKey] - a[mKey])[0];
+    const topBrand = brandList[0];
+
+    const setTxt = (id, t) => { const el = document.getElementById(id); if (el) el.textContent = t; };
+    setTxt("stKpiSales", fmtCompactVnd(totSales));
+    setTxt("stKpiSalesSub", `GP: ${fmtCompactVnd(totGp)} • ${fmtInt(totTx)} dòng GD`);
+    setTxt("stKpiQty", fmtInt(totQty));
+    setTxt("stKpiQtySub", `${capList.length} mức dung lượng • ${brandList.length} hãng`);
+    setTxt("stKpiAsp", fmtCompactVnd(asp));
+    setTxt("stKpiGmSub", `Biên LN (GM): ${gmPct.toFixed(1)}%`);
+    setTxt("stKpiTop", topCap ? `${topCap.name} • ${topBrand ? topBrand.name : "--"}` : "--");
+    setTxt("stKpiTopSub", topCap ? `${topCap.name}: ${fmtVal(topCap[mKey])} (${totalMetric ? ((topCap[mKey] / totalMetric) * 100).toFixed(1) : "0.0"}%)` : "Không có dữ liệu");
+    setTxt("stCapMetricBadge", isQty ? "SỐ LƯỢNG (QTY)" : "DOANH SỐ (VND)");
+
+    // Chart 1: Capacity
+    if (charts.storageCap) {
+      charts.storageCap.setOption({
+        tooltip: {
+          trigger: "axis",
+          axisPointer: { type: "shadow" },
+          backgroundColor: COLORS.tooltipBg,
+          borderColor: COLORS.tooltipBorder,
+          textStyle: { color: "#F1F5F9" },
+          formatter: (params) => {
+            const d = params[0]?.data;
+            if (!d) return "";
+            const share = totalMetric ? ((d[mKey] / totalMetric) * 100).toFixed(1) : "0.0";
+            const dAsp = d.qty ? d.sales / d.qty : 0;
+            return `<div style="font-weight:700;margin-bottom:4px">Dung lượng: ${esc(d.name)} (${share}%)</div>`
+              + `<div>Doanh số: <b class="mono">${fmtVndFull(d.sales)}</b></div>`
+              + `<div>Số lượng: <b class="mono">${fmtInt(d.qty)}</b> • ASP: <b class="mono">${fmtCompactVnd(dAsp)}</b></div>`;
+          },
+        },
+        grid: { left: 62, right: 20, top: 28, bottom: 32 },
+        xAxis: { type: "category", data: capList.map((d) => d.name), axisLabel: { color: "#E2E8F0", fontFamily: "JetBrains Mono", fontSize: 11 } },
+        yAxis: { type: "value", axisLabel: { color: COLORS.axisLabel, formatter: fmtAxis }, splitLine: { lineStyle: { color: COLORS.gridLine } } },
+        series: [{
+          name: isQty ? "Qty" : "Sales",
+          type: "bar",
+          barMaxWidth: 42,
+          data: capList.map((d, i) => ({
+            value: Math.round(d[mKey]),
+            ...d,
+            itemStyle: {
+              color: d.name === st.cap ? COLORS.amber : (isQty ? COLORS.cyan : FALLBACK_COLORS[i % FALLBACK_COLORS.length]),
+              borderRadius: [4, 4, 0, 0],
+            },
+          })),
+          label: { show: true, position: "top", color: "#CBD5E1", fontFamily: "JetBrains Mono", fontSize: 10, formatter: (p) => fmtVal(p.value) },
+        }],
+      }, true);
+    }
+
+    // Chart 2: Brand (Top 12 Horizontal)
+    if (charts.storageBrand) {
+      const topBrands = brandList.slice(0, 12).reverse();
+      charts.storageBrand.setOption({
+        tooltip: {
+          trigger: "axis",
+          axisPointer: { type: "shadow" },
+          backgroundColor: COLORS.tooltipBg,
+          borderColor: COLORS.tooltipBorder,
+          textStyle: { color: "#F1F5F9" },
+          formatter: (params) => {
+            const d = params[0]?.data;
+            if (!d) return "";
+            const share = totalMetric ? ((d[mKey] / totalMetric) * 100).toFixed(1) : "0.0";
+            return `<div style="font-weight:700;margin-bottom:4px">Hãng: ${esc(d.name)} (${share}%)</div>`
+              + `<div>Doanh số: <b class="mono">${fmtVndFull(d.sales)}</b></div>`
+              + `<div>Số lượng: <b class="mono">${fmtInt(d.qty)}</b></div>`;
+          },
+        },
+        grid: { left: 108, right: 74, top: 12, bottom: 24 },
+        xAxis: { type: "value", axisLabel: { color: COLORS.axisLabel, formatter: fmtAxis }, splitLine: { lineStyle: { color: COLORS.gridLine } } },
+        yAxis: { type: "category", data: topBrands.map((d) => d.name), axisLabel: { color: "#E2E8F0", width: 98, overflow: "truncate", fontSize: 11 } },
+        series: [{
+          type: "bar",
+          barMaxWidth: 18,
+          data: topBrands.map((d) => ({
+            value: Math.round(d[mKey]),
+            ...d,
+            itemStyle: { color: d.name === st.brand ? COLORS.amber : COLORS.emerald, borderRadius: [0, 3, 3, 0] },
+          })),
+          label: { show: true, position: "right", color: "#CBD5E1", fontFamily: "JetBrains Mono", fontSize: 10, formatter: (p) => fmtVal(p.value) },
+        }],
+      }, true);
+    }
+
+    // Chart 3: Price Range
+    if (charts.storagePrice) {
+      charts.storagePrice.setOption({
+        tooltip: {
+          trigger: "axis",
+          axisPointer: { type: "shadow" },
+          backgroundColor: COLORS.tooltipBg,
+          borderColor: COLORS.tooltipBorder,
+          textStyle: { color: "#F1F5F9" },
+          formatter: (params) => {
+            const d = params[0]?.data;
+            if (!d) return "";
+            const share = totalMetric ? ((d[mKey] / totalMetric) * 100).toFixed(1) : "0.0";
+            return `<div style="font-weight:700;margin-bottom:4px">Khoảng giá: ${esc(d.name)} (${share}%)</div>`
+              + `<div>Doanh số: <b class="mono">${fmtVndFull(d.sales)}</b></div>`
+              + `<div>Số lượng: <b class="mono">${fmtInt(d.qty)}</b></div>`;
+          },
+        },
+        grid: { left: 58, right: 16, top: 26, bottom: 44 },
+        xAxis: { type: "category", data: priceList.map((d) => d.name), axisLabel: { color: "#E2E8F0", fontFamily: "JetBrains Mono", fontSize: 10.5, rotate: 18 } },
+        yAxis: { type: "value", axisLabel: { color: COLORS.axisLabel, formatter: fmtAxis }, splitLine: { lineStyle: { color: COLORS.gridLine } } },
+        series: [{
+          type: "bar",
+          barMaxWidth: 38,
+          data: priceList.map((d) => ({
+            value: Math.round(d[mKey]),
+            ...d,
+            itemStyle: { color: d.name === st.priceBand ? COLORS.amber : COLORS.violet, borderRadius: [4, 4, 0, 0] },
+          })),
+          label: { show: true, position: "top", color: "#CBD5E1", fontFamily: "JetBrains Mono", fontSize: 10, formatter: (p) => fmtVal(p.value) },
+        }],
+      }, true);
+    }
+
+    // Matrix Detail Table (Capacity x Brand)
+    const matList = Array.from(matrixMap.values()).sort((a, b) => b[mKey] - a[mKey]);
+    setTxt("storageTableInfo", `Hiển thị ${fmtInt(Math.min(matList.length, 80))} / ${fmtInt(matList.length)} tổ hợp (sắp xếp theo ${isQty ? "Số lượng" : "Doanh số"})`);
+    const tbody = document.getElementById("storageMatrixBody");
+    if (tbody) {
+      if (!matList.length) {
+        tbody.innerHTML = `<tr><td colspan="8" style="text-align:center;padding:20px" class="muted">Không có dữ liệu khớp bộ lọc.</td></tr>`;
+      } else {
+        tbody.innerHTML = matList.slice(0, 80).map((d) => {
+          const share = totalMetric ? ((d[mKey] / totalMetric) * 100).toFixed(1) : "0.0";
+          const dAsp = d.qty ? d.sales / d.qty : 0;
+          const dGm = d.sales ? (d.gp / d.sales) * 100 : 0;
+          return `<tr>
+            <td><span class="badge-blue">${esc(d.subType)}</span></td>
+            <td class="mono"><strong>${esc(d.cap)}</strong></td>
+            <td>${esc(d.brand)}</td>
+            <td class="num mono">${fmtInt(d.qty)}</td>
+            <td class="num mono">${fmtVndFull(d.sales)}</td>
+            <td class="num mono">${share}%</td>
+            <td class="num mono">${fmtCompactVnd(dAsp)}</td>
+            <td class="num mono">${dGm.toFixed(1)}%</td>
+          </tr>`;
+        }).join("");
+      }
+    }
+
+    st.lastExport = {
+      headers: ["Nhóm", "Dung lượng", "Hãng", "Số lượng (Qty)", "Doanh số (VND)", "Tỷ trọng (%)", "ASP (VND/sp)", "GM (%)"],
+      rows: matList.map((d) => [
+        d.subType,
+        d.cap,
+        d.brand,
+        d.qty,
+        Math.round(d.sales),
+        totalMetric ? ((d[mKey] / totalMetric) * 100).toFixed(2) : "0.00",
+        d.qty ? Math.round(d.sales / d.qty) : 0,
+        d.sales ? ((d.gp / d.sales) * 100).toFixed(2) : "0.00",
+      ]),
+      filename: `bao_cao_dung_luong_brand_${st.group}_${st.metric}.csv`,
+    };
   }
 
   // =========================================================================

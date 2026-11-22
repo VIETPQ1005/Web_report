@@ -428,11 +428,29 @@
            VIEW 5: CHANNEL & PRODUCT DRIVERS
            ================================================================ -->
       <section class="view-pane" id="view-channel">
+        <div class="channel-special-bar">
+          <div class="channel-special-info">
+            <span class="badge-blue">CHUYÊN ĐỀ LƯU TRỮ</span>
+            <span>Báo cáo riêng theo <strong>Dung lượng • Hãng • Khoảng giá</strong> (Doanh số &amp; Qty) cho <strong>Ổ cứng gắn ngoài</strong> &amp; <strong>Phụ kiện lưu trữ (USB, Thẻ nhớ)</strong></span>
+          </div>
+          <button type="button" class="btn-storage-special" id="openStorageReportBtn" title="Mở báo cáo chuyên sâu Dung lượng / Brand / Khoảng giá cho OCGN &amp; PK Lưu trữ">
+            <span>💾</span>
+            <span>Báo cáo Dung lượng / Brand (OCGN &amp; PK Lưu trữ)</span>
+            <span class="btn-arrow">↗</span>
+          </button>
+        </div>
+
         <div class="two-col-deep">
           <div class="panel-block">
             <div class="panel-header">
-              <h2 class="panel-title">Cơ cấu Sales Channel</h2>
-              <button class="btn-mini" data-export-chart="deepChannel">PNG</button>
+              <h2 class="panel-title" id="channelPanelTitle">Cơ cấu Sales Channel</h2>
+              <div class="panel-controls">
+                <div class="seg-tabs" id="channelDimGroup">
+                  <button class="seg-btn active" data-val="channel">Sales Channel</button>
+                  <button class="seg-btn" data-val="site">Site - Store</button>
+                </div>
+                <button class="btn-mini" data-export-chart="deepChannel">PNG</button>
+              </div>
             </div>
             <div id="chartDeepChannel" class="chart-canvas medium-canvas"></div>
           </div>
@@ -982,6 +1000,133 @@
         </div>
         <div class="modal-footer-right">
           <button type="button" class="btn-mini" id="cancelUpdateModalBtn">Đóng</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ================================================================
+       MODAL: BÁO CÁO DUNG LƯỢNG / BRAND / KHOẢNG GIÁ (OCGN & PK LƯU TRỮ)
+       ================================================================ -->
+  <div class="modal-backdrop" id="storageReportModal" role="dialog" aria-modal="true" aria-labelledby="storageModalTitle">
+    <div class="modal-dialog storage-modal-dialog">
+      <div class="modal-header storage-modal-header">
+        <div>
+          <h3 class="modal-title" id="storageModalTitle">💾 Báo cáo Dung lượng / Brand / Khoảng giá — OCGN &amp; PK Lưu trữ</h3>
+          <p class="modal-subtitle" id="storageModalSub">Áp dụng cho Ổ cứng gắn ngoài (SSD, HDD) và Phụ kiện lưu trữ (USB, Thẻ nhớ) • Click từng cột để lọc chéo</p>
+        </div>
+        <div class="storage-header-actions">
+          <div class="seg-tabs" id="storageMetricTabs">
+            <button type="button" class="seg-btn active" data-val="sales">Doanh số (VND)</button>
+            <button type="button" class="seg-btn" data-val="qty">Số lượng (Qty)</button>
+          </div>
+          <button type="button" class="btn-mini" id="storageResetBtn" title="Xóa lọc chéo Dung lượng / Hãng / Khoảng giá">↺ Reset</button>
+          <button type="button" class="btn-primary-blue" id="storageExportCsvBtn">⬇ Export CSV</button>
+          <button type="button" class="modal-close-btn" id="closeStorageReportModal" aria-label="Đóng">×</button>
+        </div>
+      </div>
+
+      <div class="modal-body storage-modal-body">
+        <!-- Group selector + Active cross-filter chips -->
+        <div class="storage-toolbar">
+          <div class="seg-tabs storage-group-tabs" id="storageGroupTabs">
+            <button type="button" class="seg-btn active" data-val="all">Tất cả (OCGN + USB/Thẻ)</button>
+            <button type="button" class="seg-btn" data-val="OCGN">Ổ cứng gắn ngoài</button>
+            <button type="button" class="seg-btn" data-val="SSD">OCGN — SSD</button>
+            <button type="button" class="seg-btn" data-val="HDD">OCGN — HDD</button>
+            <button type="button" class="seg-btn" data-val="PK_LUU_TRU">PK Lưu trữ (USB &amp; Thẻ)</button>
+            <button type="button" class="seg-btn" data-val="USB">USB</button>
+            <button type="button" class="seg-btn" data-val="Thẻ nhớ">Thẻ nhớ</button>
+          </div>
+          <div class="chips-list" id="storageActiveChips"></div>
+        </div>
+
+        <!-- 4 KPI Cards -->
+        <div class="storage-kpi-grid">
+          <div class="inv-kpi-card accent-blue">
+            <div class="inv-kpi-lbl">Tổng Doanh số (Sales)</div>
+            <div class="inv-kpi-val mono" id="stKpiSales">--</div>
+            <div class="inv-kpi-sub mono" id="stKpiSalesSub">--</div>
+          </div>
+          <div class="inv-kpi-card accent-amber">
+            <div class="inv-kpi-lbl">Tổng Số lượng (Qty)</div>
+            <div class="inv-kpi-val mono" id="stKpiQty">--</div>
+            <div class="inv-kpi-sub mono" id="stKpiQtySub">--</div>
+          </div>
+          <div class="inv-kpi-card accent-emerald">
+            <div class="inv-kpi-lbl">Đơn giá TB (ASP) &amp; GM%</div>
+            <div class="inv-kpi-val mono" id="stKpiAsp">--</div>
+            <div class="inv-kpi-sub mono pos" id="stKpiGmSub">GM --%</div>
+          </div>
+          <div class="inv-kpi-card accent-cyan">
+            <div class="inv-kpi-lbl">Dẫn đầu (Dung lượng / Hãng)</div>
+            <div class="inv-kpi-val mono" id="stKpiTop">--</div>
+            <div class="inv-kpi-sub mono" id="stKpiTopSub">--</div>
+          </div>
+        </div>
+
+        <!-- Chart 1: Capacity (Full Width) -->
+        <div class="panel-block">
+          <div class="panel-header">
+            <div class="panel-title-group">
+              <h4 class="panel-title">Phân bổ theo Dung lượng (Capacity) <span class="badge-blue" id="stCapMetricBadge">DOANH SỐ</span></h4>
+              <span class="panel-hint">Click cột dung lượng để lọc chéo Hãng &amp; Khoảng giá</span>
+            </div>
+            <button type="button" class="btn-mini" data-export-chart="storageCap">PNG</button>
+          </div>
+          <div id="chartStorageCap" class="chart-canvas storage-chart-lg"></div>
+        </div>
+
+        <!-- Chart 2 & 3: Brand + Price Band -->
+        <div class="two-col-deep">
+          <div class="panel-block">
+            <div class="panel-header">
+              <div class="panel-title-group">
+                <h4 class="panel-title">Phân bổ theo Hãng (Brand)</h4>
+                <span class="panel-hint">Top 12 hãng — Click để lọc chéo</span>
+              </div>
+              <button type="button" class="btn-mini" data-export-chart="storageBrand">PNG</button>
+            </div>
+            <div id="chartStorageBrand" class="chart-canvas storage-chart-md"></div>
+          </div>
+
+          <div class="panel-block">
+            <div class="panel-header">
+              <div class="panel-title-group">
+                <h4 class="panel-title">Phân bổ theo Khoảng giá (Price Range)</h4>
+                <span class="panel-hint">Phân tầng đơn giá bán — Click để lọc chéo</span>
+              </div>
+              <button type="button" class="btn-mini" data-export-chart="storagePrice">PNG</button>
+            </div>
+            <div id="chartStoragePrice" class="chart-canvas storage-chart-md"></div>
+          </div>
+        </div>
+
+        <!-- Matrix Detail Table: Capacity x Brand -->
+        <div class="panel-block">
+          <div class="panel-header">
+            <div class="panel-title-group">
+              <h4 class="panel-title">Bảng chi tiết Dung lượng × Hãng</h4>
+              <span class="panel-hint" id="storageTableInfo">-- tổ hợp</span>
+            </div>
+          </div>
+          <div class="table-wrap storage-table-wrap">
+            <table class="dark-table">
+              <thead>
+                <tr>
+                  <th>Nhóm</th>
+                  <th>Dung lượng</th>
+                  <th>Hãng (Brand)</th>
+                  <th class="num">Số lượng (Qty)</th>
+                  <th class="num">Doanh số (VND)</th>
+                  <th class="num">Tỷ trọng</th>
+                  <th class="num">ASP (VND/sp)</th>
+                  <th class="num">GM%</th>
+                </tr>
+              </thead>
+              <tbody id="storageMatrixBody"></tbody>
+            </table>
+          </div>
         </div>
       </div>
     </div>

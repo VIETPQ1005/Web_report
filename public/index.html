@@ -62,6 +62,10 @@
       </nav>
 
       <div class="rail-bottom">
+        <button class="rail-item" id="themeToggleRailBtn" title="Chuyển đổi giao diện Dark Mode / Light Mode">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/></svg>
+          <span id="railThemeLabel">Light<br/>Mode</span>
+        </button>
         <button class="rail-item rail-update-btn" id="updateDataRailBtn" title="Tự động đồng bộ dữ liệu mới từ thư mục gốc D:\Project_AI\Website\data lên Web">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/><path d="M16 16h5v5"/></svg>
           <span>Update<br/>Data</span>
@@ -199,6 +203,11 @@
             </div>
 
             <button type="button" class="btn-clear-global hidden" id="clearGlobalFilterBtn" title="Xóa bộ lọc Category & Subcat 2 toàn cục">✕ Bỏ lọc chung</button>
+
+            <div class="theme-switch-group" id="themeSwitchGroup" role="group" aria-label="Chuyển đổi giao diện Dark Mode và Light Mode">
+              <button type="button" class="theme-switch-btn active" data-theme-val="dark" title="Giao diện tối (Dark Mode)">🌙 Dark Mode</button>
+              <button type="button" class="theme-switch-btn" data-theme-val="light" title="Giao diện sáng (Light Mode)">☀️ Light Mode</button>
+            </div>
 
             <div class="update-split-btn">
               <button type="button" class="btn-update-data" id="autoSyncDataBtn" title="Bấm 1 lần để tự động đọc tất cả file Excel trong thư mục gốc và cập nhật lên Web">

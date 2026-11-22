@@ -2818,3 +2818,581 @@ html, body {
     height: 300px;
   }
 }
+
+/* ==========================================================================
+   THEME SWITCHER BUTTONS (DARK MODE ⇄ LIGHT MODE)
+   ========================================================================== */
+.theme-switch-group {
+  display: inline-flex;
+  align-items: center;
+  background: #0D0F13;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 999px;
+  padding: 2px;
+  gap: 2px;
+}
+
+.theme-switch-btn {
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  font-family: var(--font-ui);
+  font-size: 11px;
+  font-weight: 600;
+  padding: 5px 11px;
+  border-radius: 999px;
+  cursor: pointer;
+  transition: all 0.18s ease;
+  white-space: nowrap;
+}
+
+.theme-switch-btn:hover {
+  color: #fff;
+}
+
+.theme-switch-btn.active {
+  background: linear-gradient(135deg, #1068DF 0%, #1D7AFC 100%);
+  color: #fff;
+  box-shadow: 0 2px 8px rgba(29, 122, 252, 0.35);
+}
+
+/* ==========================================================================
+   LIGHT MODE THEME (REFERENCE-INSPIRED PASTEL INDIGO / CORAL / WHITE UI)
+   ========================================================================== */
+body.theme-light {
+  --rail-blue: #FFFFFF;
+  --rail-blue-active: #F43F5E;
+  --rail-blue-hover: rgba(99, 102, 241, 0.08);
+
+  --bg-canvas: #F4F6FB;
+  --bg-sidebar: #FFFFFF;
+  --bg-panel: #FFFFFF;
+  --bg-card: #F8FAFC;
+  --bg-inset: #F1F5F9;
+  --border-subtle: #E2E8F0;
+  --border-color: #E2E8F0;
+  --border-hover: rgba(99, 102, 241, 0.45);
+
+  --emerald: #059669;
+  --teal: #0D9488;
+  --blue: #4F46E5;
+  --sky: #0284C7;
+  --violet: #7C3AED;
+  --crimson: #E11D48;
+  --amber: #D97706;
+  --orange: #EA580C;
+  --cyan: #4F46E5;
+
+  --text-main: #1E1B4B;
+  --text-secondary: #334155;
+  --text-muted: #64748B;
+  --text-dim: #94A3B8;
+
+  background: var(--bg-canvas);
+  color: var(--text-main);
+}
+
+/* 1. Left Navigation Rail in Light Mode */
+body.theme-light .nav-rail {
+  background: #FFFFFF;
+  border-right: 1px solid #E2E8F0;
+  box-shadow: 4px 0 20px rgba(99, 102, 241, 0.06);
+}
+
+body.theme-light .rail-bottom {
+  border-top: 1px solid #E2E8F0;
+}
+
+body.theme-light .rail-item {
+  color: #475569;
+}
+
+body.theme-light .rail-item:hover {
+  background: #F1F5F9;
+  color: #1E1B4B;
+}
+
+body.theme-light .rail-item.active {
+  background: linear-gradient(135deg, #F43F5E 0%, #EC4899 65%, #8B5CF6 100%);
+  color: #FFFFFF;
+  box-shadow: 0 4px 14px rgba(244, 63, 94, 0.32);
+}
+
+body.theme-light .rail-update-btn {
+  color: #059669;
+}
+
+/* 2. Left KPI Sidebar in Light Mode */
+body.theme-light .kpi-sidebar {
+  background: #FFFFFF;
+  border-right: 1px solid #E2E8F0;
+  box-shadow: 2px 0 16px rgba(99, 102, 241, 0.04);
+}
+
+body.theme-light .sidebar-title,
+body.theme-light .gauge-big-num,
+body.theme-light .semi-big-num,
+body.theme-light .bar-stat-head strong,
+body.theme-light .metric-val,
+body.theme-light .inset-val {
+  color: #1E1B4B;
+}
+
+body.theme-light .btn-reset-mini {
+  background: #F8FAFC;
+  border-color: #CBD5E1;
+  color: #334155;
+}
+
+body.theme-light .btn-reset-mini:hover {
+  background: #EEF2FF;
+  border-color: #6366F1;
+  color: #4F46E5;
+}
+
+body.theme-light .mini-tag {
+  background: #EEF2FF;
+  color: #4F46E5;
+}
+
+body.theme-light .bar-track {
+  background: #E2E8F0;
+}
+
+body.theme-light .bar-fill.emerald {
+  background: linear-gradient(90deg, #6366F1 0%, #38BDF8 100%);
+  box-shadow: none;
+}
+
+body.theme-light .bar-fill.crimson {
+  background: linear-gradient(90deg, #F43F5E 0%, #A855F7 100%);
+  box-shadow: none;
+}
+
+body.theme-light .delta-pill.positive {
+  background: #D1FAE5;
+  color: #065F46;
+}
+
+body.theme-light .delta-pill.negative {
+  background: #FFE4E6;
+  color: #9F1239;
+}
+
+body.theme-light .inset-card {
+  background: #F8FAFC;
+  border: 1px solid #E2E8F0;
+}
+
+/* 3. Global Master Filter & Topbar in Light Mode */
+body.theme-light .global-master-filter {
+  background: #FFFFFF;
+  border: 1px solid #E2E8F0;
+  box-shadow: 0 6px 22px rgba(99, 102, 241, 0.06);
+}
+
+body.theme-light .gmf-label {
+  color: #4F46E5;
+}
+
+body.theme-light .cat-pill-btn {
+  background: #F8FAFC;
+  border: 1px solid #CBD5E1;
+  color: #334155;
+}
+
+body.theme-light .cat-pill-btn .cat-code {
+  color: #1E1B4B;
+}
+
+body.theme-light .cat-pill-btn .cat-name {
+  color: #64748B;
+}
+
+body.theme-light .cat-pill-btn:hover {
+  background: #EEF2FF;
+  border-color: #6366F1;
+  color: #1E1B4B;
+}
+
+body.theme-light .cat-pill-btn.active {
+  background: linear-gradient(135deg, #F43F5E 0%, #EC4899 55%, #6366F1 100%);
+  border-color: transparent;
+  color: #FFFFFF;
+  box-shadow: 0 4px 12px rgba(236, 72, 153, 0.32);
+}
+
+body.theme-light .cat-pill-btn.active .cat-code,
+body.theme-light .cat-pill-btn.active .cat-name {
+  color: #FFFFFF;
+}
+
+body.theme-light .gmf-subcat-select,
+body.theme-light .dark-select,
+body.theme-light .dark-search,
+body.theme-light .pill-toggle {
+  background: #FFFFFF;
+  border: 1px solid #CBD5E1;
+  color: #1E293B;
+}
+
+body.theme-light .dark-select option,
+body.theme-light .date-select option {
+  background: #FFFFFF;
+  color: #1E293B;
+}
+
+body.theme-light .local-filter-tag {
+  background: #EEF2FF;
+  border-color: #C7D2FE;
+  color: #4338CA;
+}
+
+body.theme-light .date-picker-box {
+  background: #FFFFFF;
+  border: 1px solid #CBD5E1;
+  border-radius: 6px;
+  color: #334155;
+}
+
+body.theme-light .date-select {
+  color: #1E1B4B;
+}
+
+body.theme-light .theme-switch-group {
+  background: #F1F5F9;
+  border-color: #CBD5E1;
+}
+
+body.theme-light .theme-switch-btn {
+  color: #64748B;
+}
+
+body.theme-light .theme-switch-btn:hover {
+  color: #1E1B4B;
+}
+
+body.theme-light .theme-switch-btn.active {
+  background: linear-gradient(135deg, #F43F5E 0%, #EC4899 100%);
+  color: #FFFFFF;
+  box-shadow: 0 2px 10px rgba(244, 63, 94, 0.35);
+}
+
+body.theme-light .chip {
+  background: #EEF2FF;
+  border-color: #A5B4FC;
+  color: #4338CA;
+}
+
+body.theme-light .chip.amber {
+  background: #FEF3C7;
+  border-color: #FCD34D;
+  color: #B45309;
+}
+
+body.theme-light .chip.muted-chip {
+  background: #FFFFFF;
+  border-color: #E2E8F0;
+  color: #64748B;
+}
+
+/* 4. Panels, Cards, Buttons & Tabs in Light Mode */
+body.theme-light .panel-block,
+body.theme-light .inv-filter-bar,
+body.theme-light .inv-kpi-card {
+  background: #FFFFFF;
+  border-color: #E2E8F0;
+  box-shadow: 0 6px 24px rgba(99, 102, 241, 0.05);
+}
+
+body.theme-light .badge-blue {
+  background: #EEF2FF;
+  color: #4F46E5;
+}
+
+body.theme-light .seg-tabs {
+  background: #F1F5F9;
+  border-color: #E2E8F0;
+}
+
+body.theme-light .seg-btn {
+  color: #64748B;
+}
+
+body.theme-light .seg-btn:hover {
+  color: #1E1B4B;
+}
+
+body.theme-light .seg-btn.active {
+  background: linear-gradient(135deg, #6366F1 0%, #8B5CF6 100%);
+  color: #FFFFFF;
+  box-shadow: 0 2px 6px rgba(99, 102, 241, 0.28);
+}
+
+body.theme-light .btn-mini,
+body.theme-light .page-btn,
+body.theme-light .quick-pick-btn {
+  background: #F8FAFC;
+  border-color: #CBD5E1;
+  color: #334155;
+}
+
+body.theme-light .btn-mini:hover,
+body.theme-light .page-btn:hover:not(:disabled),
+body.theme-light .quick-pick-btn:hover {
+  background: #EEF2FF;
+  border-color: #6366F1;
+  color: #4F46E5;
+}
+
+/* 5. Target Benchmark Table & KPI Cards in Light Mode */
+body.theme-light .target-table-wrap,
+body.theme-light .target-kpi-card,
+body.theme-light .target-canvas {
+  background: #FFFFFF;
+  border-color: #E2E8F0;
+}
+
+body.theme-light .target-kpi-card.highlight {
+  background: linear-gradient(180deg, rgba(99, 102, 241, 0.08) 0%, #FFFFFF 100%);
+  border-color: #A5B4FC;
+}
+
+body.theme-light .target-kpi-val {
+  color: #1E1B4B;
+}
+
+body.theme-light .target-benchmark-table thead tr {
+  background: linear-gradient(90deg, #4F46E5 0%, #7C3AED 100%);
+  color: #FFFFFF;
+}
+
+body.theme-light .target-benchmark-table tbody tr {
+  border-bottom: 1px solid #E2E8F0;
+}
+
+body.theme-light .target-benchmark-table tbody tr.row-nh11 {
+  background: rgba(99, 102, 241, 0.08);
+}
+
+body.theme-light .target-benchmark-table tbody tr.row-total {
+  background: #F8FAFC;
+  border-top: 2px solid #CBD5E1;
+}
+
+body.theme-light .target-benchmark-table td {
+  color: #1E293B;
+  border-right: 1px solid #F1F5F9;
+}
+
+body.theme-light .target-delta-pos {
+  color: #2563EB !important;
+}
+
+body.theme-light .target-delta-neg {
+  color: #E11D48 !important;
+}
+
+body.theme-light .target-cell-track,
+body.theme-light .target-mini-track {
+  background: #E2E8F0;
+}
+
+body.theme-light .target-table-legend {
+  background: #F8FAFC;
+  border-top-color: #E2E8F0;
+  color: #64748B;
+}
+
+/* 6. Site Rank List & Region Modality in Light Mode */
+body.theme-light .rank-row {
+  background: #F8FAFC;
+  border-color: #E2E8F0;
+}
+
+body.theme-light .rank-row:hover {
+  background: #EEF2FF;
+  border-color: #A5B4FC;
+}
+
+body.theme-light .rank-row.selected {
+  background: rgba(99, 102, 241, 0.12);
+  border-color: #4F46E5;
+}
+
+body.theme-light .rank-ring-inner,
+body.theme-light .rank-row:hover .rank-ring-inner {
+  background: #FFFFFF;
+  color: #1E1B4B;
+}
+
+body.theme-light .rank-site-title,
+body.theme-light .rank-right-val,
+body.theme-light .modality-total-value,
+body.theme-light .reg-mod-val,
+body.theme-light .inv-kpi-val,
+body.theme-light .inv-banner-title,
+body.theme-light .lookup-hero-title,
+body.theme-light .lookup-sug-code,
+body.theme-light .lookup-kv-val,
+body.theme-light .sku-name-title,
+body.theme-light .source-folder-title {
+  color: #1E1B4B;
+}
+
+body.theme-light .rank-right {
+  border-left-color: #E2E8F0;
+}
+
+body.theme-light .stacked-segment-bar {
+  background: #E2E8F0;
+}
+
+body.theme-light .reg-mod-item {
+  background: #F8FAFC;
+  border-color: #E2E8F0;
+}
+
+body.theme-light .reg-mod-item:hover {
+  background: #EEF2FF;
+  border-color: #A5B4FC;
+}
+
+body.theme-light .region-pie-legend {
+  background: #F8FAFC;
+  border-color: #E2E8F0;
+}
+
+body.theme-light .region-legend-row {
+  background: #FFFFFF;
+  border-color: #F1F5F9;
+}
+
+body.theme-light .region-legend-row:hover {
+  background: #EEF2FF;
+  border-color: #A5B4FC;
+}
+
+body.theme-light .region-legend-name {
+  color: #334155;
+}
+
+body.theme-light .region-legend-val {
+  color: #1E1B4B;
+}
+
+body.theme-light .region-legend-pct {
+  background: #EEF2FF;
+  color: #4F46E5;
+}
+
+/* 7. Data Tables, Lookup, Storage Modal & Scrollbars in Light Mode */
+body.theme-light .dark-table th {
+  background: #F1F5F9;
+  color: #334155;
+  border-bottom-color: #CBD5E1;
+}
+
+body.theme-light .dark-table td {
+  color: #1E293B;
+  border-bottom-color: #E2E8F0;
+}
+
+body.theme-light .dark-table tbody tr:hover {
+  background: rgba(99, 102, 241, 0.06);
+}
+
+body.theme-light .dark-table tbody tr.row-total {
+  background: #EEF2FF;
+  color: #1E1B4B;
+}
+
+body.theme-light .tag-pill {
+  background: #EEF2FF;
+  color: #4338CA;
+}
+
+body.theme-light .link-sku-btn {
+  color: #4F46E5;
+}
+
+body.theme-light .lookup-hero-box,
+body.theme-light .serial-spotlight {
+  background: linear-gradient(135deg, rgba(99, 102, 241, 0.08) 0%, #FFFFFF 70%);
+  border-color: #C7D2FE;
+}
+
+body.theme-light .lookup-search-input {
+  background: #FFFFFF;
+  border-color: #A5B4FC;
+  color: #1E1B4B;
+}
+
+body.theme-light .lookup-sug-item,
+body.theme-light .lookup-kv,
+body.theme-light .sku-warranty-box,
+body.theme-light .source-folder-card,
+body.theme-light .cloud-pull-row {
+  background: #F8FAFC;
+  border-color: #E2E8F0;
+}
+
+body.theme-light .modal-dialog {
+  background: #FFFFFF;
+  border-color: #CBD5E1;
+  box-shadow: 0 24px 64px rgba(15, 23, 42, 0.18);
+}
+
+body.theme-light .modal-header,
+body.theme-light .modal-footer {
+  background: #F8FAFC;
+  border-color: #E2E8F0;
+}
+
+body.theme-light .storage-matrix-wrap {
+  background: #FFFFFF;
+  border-color: #E2E8F0;
+}
+
+body.theme-light .storage-pivot-table thead th {
+  background: #F1F5F9;
+  color: #1E293B;
+  border-bottom-color: #6366F1;
+}
+
+body.theme-light .storage-pivot-table .piv-sticky-col {
+  background: #F8FAFC;
+  color: #1E293B;
+  box-shadow: 2px 0 6px rgba(15, 23, 42, 0.06);
+}
+
+body.theme-light .storage-pivot-table thead th.piv-sticky-col {
+  background: #E2E8F0;
+}
+
+body.theme-light .storage-pivot-table tfoot tr,
+body.theme-light .storage-pivot-table tfoot th.piv-sticky-col {
+  background: #EEF2FF;
+  color: #1E1B4B;
+}
+
+body.theme-light .storage-pivot-table tfoot th,
+body.theme-light .piv-val {
+  color: #1E1B4B;
+}
+
+body.theme-light .piv-pct {
+  color: #4F46E5;
+}
+
+body.theme-light ::-webkit-scrollbar-track {
+  background: #F1F5F9;
+}
+
+body.theme-light ::-webkit-scrollbar-thumb {
+  background: #CBD5E1;
+}
+
+body.theme-light ::-webkit-scrollbar-thumb:hover {
+  background: #94A3B8;
+}

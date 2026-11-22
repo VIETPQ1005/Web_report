@@ -18,6 +18,10 @@
     gridLine: "rgba(255, 255, 255, 0.07)",
     axisLine: "rgba(255, 255, 255, 0.14)",
     axisLabel: "#8492A6",
+    textMain: "#E2E8F0",
+    textSub: "#CBD5E1",
+    textMuted: "#94A3B8",
+    pieBorder: "#15181D",
     tooltipBg: "rgba(15, 18, 24, 0.96)",
     tooltipBorder: "rgba(29, 122, 252, 0.55)",
   };
@@ -321,6 +325,7 @@
     cloudUpdatedAt: "",
     monthsAll: [],
     activeView: "dashboard",
+    theme: localStorage.getItem("cyberpulse_theme") === "light" ? "light" : "dark",
     // Tier 1 Global Master Filter (applies to ALL Tabs & Left Sidebar)
     globalCat: "",
     globalSubcat: "",
@@ -1367,6 +1372,17 @@
       clearGlobalMasterFilter();
     });
 
+    // Theme Switcher (Dark Mode ⇄ Light Mode)
+    document.getElementById("themeSwitchGroup")?.addEventListener("click", (e) => {
+      const btn = e.target.closest(".theme-switch-btn[data-theme-val]");
+      if (!btn) return;
+      applyTheme(btn.dataset.themeVal, true);
+    });
+    document.getElementById("themeToggleRailBtn")?.addEventListener("click", () => {
+      applyTheme(state.theme === "light" ? "dark" : "light", true);
+    });
+    applyTheme(state.theme, false);
+
     // Tier 2 Sales Local Filters (Channel, Sale Site Code - Store name, Region name)
     document.getElementById("filterRegion")?.addEventListener("change", (e) => {
       state.region = e.target.value; state.tablePage = 1; renderAll();
@@ -1757,6 +1773,62 @@
   }
 
   // =========================================================================
+  // 0. THEME ENGINE (DARK MODE ⇄ LIGHT MODE)
+  // =========================================================================
+  function applyTheme(theme, shouldRender = true) {
+    const isLight = theme === "light";
+    state.theme = isLight ? "light" : "dark";
+    try {
+      localStorage.setItem("cyberpulse_theme", state.theme);
+    } catch {
+      // ignore storage errors
+    }
+
+    document.body.classList.toggle("theme-light", isLight);
+    document.body.classList.toggle("theme-dark", !isLight);
+
+    // Update topbar theme switch buttons
+    document.querySelectorAll("#themeSwitchGroup .theme-switch-btn").forEach((btn) => {
+      btn.classList.toggle("active", btn.dataset.themeVal === state.theme);
+    });
+
+    // Update left rail theme button label
+    const railLbl = document.getElementById("railThemeLabel");
+    if (railLbl) {
+      railLbl.innerHTML = isLight ? "Dark<br/>Mode" : "Light<br/>Mode";
+    }
+
+    // Update ECharts dynamic color tokens
+    if (isLight) {
+      COLORS.gridLine = "rgba(15, 23, 42, 0.08)";
+      COLORS.axisLine = "rgba(15, 23, 42, 0.18)";
+      COLORS.axisLabel = "#475569";
+      COLORS.textMain = "#1E1B4B";
+      COLORS.textSub = "#334155";
+      COLORS.textMuted = "#64748B";
+      COLORS.pieBorder = "#FFFFFF";
+      COLORS.tooltipBg = "rgba(15, 23, 42, 0.94)";
+      COLORS.tooltipBorder = "rgba(99, 102, 241, 0.45)";
+    } else {
+      COLORS.gridLine = "rgba(255, 255, 255, 0.07)";
+      COLORS.axisLine = "rgba(255, 255, 255, 0.14)";
+      COLORS.axisLabel = "#8492A6";
+      COLORS.textMain = "#E2E8F0";
+      COLORS.textSub = "#CBD5E1";
+      COLORS.textMuted = "#94A3B8";
+      COLORS.pieBorder = "#15181D";
+      COLORS.tooltipBg = "rgba(15, 18, 24, 0.96)";
+      COLORS.tooltipBorder = "rgba(29, 122, 252, 0.55)";
+    }
+
+    if (shouldRender && state.raw) {
+      renderAll();
+      if (state.activeView === "inventory") renderInventoryView();
+      if (state.storage?.open) renderStorageReport();
+    }
+  }
+
+  // =========================================================================
   // 1. CONTEXT-AWARE LEFT KPI & GAUGE SIDEBAR (TAILORED PER TAB)
   // =========================================================================
   function applySidebarSpec(spec) {
@@ -1820,6 +1892,8 @@
       if (sEl) sEl.className = `metric-delta ${m.cls || "pos"} mono`;
     });
 
+    const isLight = state.theme === "light";
+
     if (charts.gaugeRing) {
       const ringPct = Math.max(0, Math.min(100, spec.g1Pct));
       charts.gaugeRing.setOption({
@@ -1827,7 +1901,7 @@
           {
             type: "gauge", startAngle: 90, endAngle: -270, radius: "96%", min: 0, max: 100, splitNumber: 12,
             pointer: { show: false }, axisLine: { show: false },
-            axisTick: { distance: -6, length: 7, splitNumber: 5, lineStyle: { color: "rgba(255,255,255,0.16)", width: 1.5 } },
+            axisTick: { distance: -6, length: 7, splitNumber: 5, lineStyle: { color: isLight ? "rgba(79,70,229,0.28)" : "rgba(255,255,255,0.16)", width: 1.5 } },
             splitLine: { show: false }, axisLabel: { show: false }, detail: { show: false },
           },
           {
@@ -1836,13 +1910,13 @@
               show: true, overlap: false, roundCap: true, clip: false,
               itemStyle: {
                 color: new echarts.graphic.LinearGradient(0, 0, 1, 1, [
-                  { offset: 0, color: spec.g1ColorA || "#1D7AFC" },
-                  { offset: 1, color: spec.g1ColorB || "#12D37A" },
+                  { offset: 0, color: spec.g1ColorA || (isLight ? "#6366F1" : "#1D7AFC") },
+                  { offset: 1, color: spec.g1ColorB || (isLight ? "#EC4899" : "#12D37A") },
                 ]),
-                shadowBlur: 10, shadowColor: "rgba(29, 122, 252, 0.5)",
+                shadowBlur: 10, shadowColor: isLight ? "rgba(99, 102, 241, 0.35)" : "rgba(29, 122, 252, 0.5)",
               },
             },
-            axisLine: { lineStyle: { width: 7, color: [[1, "rgba(255,255,255,0.08)"]] } },
+            axisLine: { lineStyle: { width: 7, color: [[1, isLight ? "#E2E8F0" : "rgba(255,255,255,0.08)"]] } },
             splitLine: { show: false }, axisTick: { show: false }, axisLabel: { show: false }, detail: { show: false },
             data: [{ value: ringPct }],
           },
@@ -1860,17 +1934,17 @@
             show: true, width: 20,
             itemStyle: {
               color: new echarts.graphic.LinearGradient(0, 0, 1, 0, [
-                { offset: 0, color: spec.g2ColorA || "#0D63D9" },
-                { offset: 1, color: spec.g2ColorB || "#2196F3" },
+                { offset: 0, color: spec.g2ColorA || (isLight ? "#6366F1" : "#0D63D9") },
+                { offset: 1, color: spec.g2ColorB || (isLight ? "#38BDF8" : "#2196F3") },
               ]),
             },
           },
-          axisLine: { lineStyle: { width: 20, color: [[1, "#252A34"]] } },
+          axisLine: { lineStyle: { width: 20, color: [[1, isLight ? "#E2E8F0" : "#252A34"]] } },
           axisTick: { show: false },
-          splitLine: { show: true, distance: -20, length: 20, lineStyle: { color: "rgba(255,255,255,0.22)", width: 1.5 } },
+          splitLine: { show: true, distance: -20, length: 20, lineStyle: { color: isLight ? "rgba(255,255,255,0.75)" : "rgba(255,255,255,0.22)", width: 1.5 } },
           splitNumber: 5,
           axisLabel: {
-            show: true, distance: -32, color: "#8492A6", fontFamily: "JetBrains Mono", fontSize: 9,
+            show: true, distance: -32, color: isLight ? "#64748B" : "#8492A6", fontFamily: "JetBrains Mono", fontSize: 9,
             formatter: (v) => (v === 0 || v === 80 || v === 100 ? `${v}%` : ""),
           },
           detail: { show: false },
@@ -2720,7 +2794,7 @@
           icon: "circle",
           itemWidth: 8,
           itemHeight: 8,
-          textStyle: { color: "#94A3B8", fontSize: 11 },
+          textStyle: { color: COLORS.textMuted, fontSize: 11 },
           formatter: (n) => shortRegionLabel(n),
         },
         grid: { left: 54, right: 16, top: 14, bottom: 48 },
@@ -2728,7 +2802,7 @@
           type: "category",
           data: buckets,
           axisLine: { lineStyle: { color: COLORS.axisLine } },
-          axisLabel: { color: "#CBD5E1", fontFamily: "JetBrains Mono", fontSize: 10.5 },
+          axisLabel: { color: COLORS.textSub, fontFamily: "JetBrains Mono", fontSize: 10.5 },
         },
         yAxis: {
           type: "value",
@@ -2790,7 +2864,7 @@
             label: {
               show: keys.length <= 13,
               position: "top",
-              color: "#CBD5E1",
+              color: COLORS.textSub,
               fontFamily: "JetBrains Mono",
               fontSize: 10,
               formatter: (p) => fmtCompactVnd(p.value),
@@ -2805,7 +2879,7 @@
             symbolSize: keys.length > 35 ? 4 : 7,
             data: keys.map((k) => map.get(k).qty),
             lineStyle: { width: 2.5, color: COLORS.amber },
-            itemStyle: { color: COLORS.amber, borderColor: "#0E1014", borderWidth: 1.5 },
+            itemStyle: { color: COLORS.amber, borderColor: COLORS.pieBorder, borderWidth: 1.5 },
           },
         ];
 
@@ -2835,14 +2909,14 @@
         icon: "circle",
         itemWidth: 8,
         itemHeight: 8,
-        textStyle: { color: "#94A3B8", fontSize: 11 },
+        textStyle: { color: COLORS.textMuted, fontSize: 11 },
       },
       grid: { left: 54, right: isGp ? 20 : 54, top: 24, bottom: 44 },
       xAxis: {
         type: "category",
         data: keys,
         axisLine: { lineStyle: { color: COLORS.axisLine } },
-        axisLabel: { color: "#CBD5E1", fontFamily: "JetBrains Mono", fontSize: 10.5 },
+        axisLabel: { color: COLORS.textSub, fontFamily: "JetBrains Mono", fontSize: 10.5 },
       },
       yAxis: isGp
         ? {
@@ -3039,6 +3113,7 @@
   function renderTargetChart(reportRows) {
     if (!charts.targetProgress) return;
 
+    const isLight = state.theme === "light";
     const reversed = [...reportRows].reverse();
     const catLabels = reversed.map((r) => `${r.code} (${Math.round(r.proportPct)}%)`);
     const salesData = reversed.map((r) => Math.round(r.ytdSales));
@@ -3050,8 +3125,8 @@
       tooltip: {
         trigger: "axis",
         axisPointer: { type: "shadow" },
-        backgroundColor: "#1A1F29",
-        borderColor: "#28303F",
+        backgroundColor: COLORS.tooltipBg,
+        borderColor: COLORS.tooltipBorder,
         textStyle: { color: "#F1F5F9", fontSize: 11 },
         formatter: (params) => {
           if (!params || !params.length) return "";
@@ -3069,7 +3144,7 @@
       },
       legend: {
         data: ["Doanh số (Sales)", "Kế hoạch (Target)"],
-        textStyle: { color: "#8492A6", fontSize: 11 },
+        textStyle: { color: COLORS.axisLabel, fontSize: 11 },
         top: 2,
         right: 8,
       },
@@ -3083,17 +3158,17 @@
       xAxis: {
         type: "value",
         axisLabel: {
-          color: "#8492A6",
+          color: COLORS.axisLabel,
           fontSize: 10,
           formatter: (v) => v >= 1000 ? `${(v / 1000).toFixed(0)}k Tr` : `${v} Tr`,
         },
-        splitLine: { lineStyle: { color: "rgba(255, 255, 255, 0.06)" } },
+        splitLine: { lineStyle: { color: COLORS.gridLine } },
       },
       yAxis: {
         type: "category",
         data: catLabels,
-        axisLabel: { color: "#F1F5F9", fontSize: 11, fontWeight: 600 },
-        axisLine: { lineStyle: { color: "#28303F" } },
+        axisLabel: { color: isLight ? "#1E1B4B" : "#F1F5F9", fontSize: 11, fontWeight: 600 },
+        axisLine: { lineStyle: { color: COLORS.axisLine } },
       },
       series: [
         {
@@ -3102,15 +3177,15 @@
           barWidth: 14,
           itemStyle: {
             color: new echarts.graphic.LinearGradient(0, 0, 1, 0, [
-              { offset: 0, color: "#1D7AFC" },
-              { offset: 1, color: "#12D37A" },
+              { offset: 0, color: isLight ? "#6366F1" : "#1D7AFC" },
+              { offset: 1, color: isLight ? "#EC4899" : "#12D37A" },
             ]),
             borderRadius: [0, 4, 4, 0],
           },
           label: {
             show: true,
             position: "right",
-            color: "#12D37A",
+            color: isLight ? "#059669" : "#12D37A",
             fontSize: 10,
             fontFamily: "JetBrains Mono",
             formatter: (p) => `${completionPct[p.dataIndex]}%`,
@@ -3122,8 +3197,8 @@
           type: "bar",
           barWidth: 14,
           itemStyle: {
-            color: "rgba(255, 255, 255, 0.12)",
-            borderColor: "rgba(255, 255, 255, 0.35)",
+            color: isLight ? "rgba(99, 102, 241, 0.14)" : "rgba(255, 255, 255, 0.12)",
+            borderColor: isLight ? "rgba(99, 102, 241, 0.45)" : "rgba(255, 255, 255, 0.35)",
             borderWidth: 1,
             borderRadius: [0, 4, 4, 0],
           },
@@ -3228,6 +3303,10 @@
     const totalRankMetric = state.rankSort === "qty" ? totalRankQty : totalRankSales;
     const metricName = state.rankSort === "qty" ? "QTY" : "Doanh số";
 
+    const isLight = state.theme === "light";
+    const ringFill = isLight ? "#6366F1" : "#1D7AFC";
+    const ringTrack = isLight ? "#E2E8F0" : "#2A313D";
+
     container.innerHTML = top
       .map((d, idx) => {
         const itemVal = state.rankSort === "qty" ? d.qty : d.sales;
@@ -3242,7 +3321,7 @@
         return `
         <div class="rank-row ${selectedCls}" data-site="${esc(d.siteCode)}" title="Click để lọc Site Code: ${esc(d.siteCode)}">
           <div class="rank-idx">${idx + 1}</div>
-          <div class="rank-ring" style="background: conic-gradient(#1D7AFC 0deg ${ringDeg}deg, #2A313D ${ringDeg}deg 360deg)" title="Tỷ trọng: ${sharePct.toFixed(1)}% trên tổng ${metricName}">
+          <div class="rank-ring" style="background: conic-gradient(${ringFill} 0deg ${ringDeg}deg, ${ringTrack} ${ringDeg}deg 360deg)" title="Tỷ trọng: ${sharePct.toFixed(1)}% trên tổng ${metricName}">
             <div class="rank-ring-inner">${shareLabel}</div>
           </div>
           <div class="rank-mid">
@@ -3391,7 +3470,7 @@
         icon: "circle",
         itemWidth: 8,
         itemHeight: 8,
-        textStyle: { color: "#94A3B8", fontSize: 11 },
+        textStyle: { color: COLORS.textMuted, fontSize: 11 },
       },
       grid: { left: 48, right: 16, top: 14, bottom: 42 },
       xAxis: {
@@ -3400,7 +3479,7 @@
         data: months,
         axisLine: { lineStyle: { color: COLORS.axisLine } },
         axisLabel: {
-          color: "#94A3B8",
+          color: COLORS.textMuted,
           fontFamily: "JetBrains Mono",
           fontSize: 10,
           formatter: (v) => `T${v.slice(5)}`,
@@ -3602,7 +3681,7 @@
         top: 0,
         right: 12,
         icon: "circle",
-        textStyle: { color: "#CBD5E1", fontSize: 11 },
+        textStyle: { color: COLORS.textSub, fontSize: 11 },
       },
       grid: { left: 56, right: 24, top: 32, bottom: 28 },
       xAxis: {
@@ -3610,7 +3689,7 @@
         boundaryGap: false,
         data: monthLabels,
         axisLine: { lineStyle: { color: COLORS.axisLine } },
-        axisLabel: { color: "#CBD5E1", fontFamily: "JetBrains Mono", fontSize: 11 },
+        axisLabel: { color: COLORS.textSub, fontFamily: "JetBrains Mono", fontSize: 11 },
       },
       yAxis: {
         type: "value",
@@ -3664,9 +3743,9 @@
 
       charts.deepMonthly.setOption({
         tooltip: { trigger: "axis", backgroundColor: COLORS.tooltipBg, borderColor: COLORS.tooltipBorder, textStyle: { color: "#F1F5F9" } },
-        legend: { top: 0, textStyle: { color: "#CBD5E1" } },
+        legend: { top: 0, textStyle: { color: COLORS.textSub } },
         grid: { left: 58, right: 24, top: 36, bottom: 70 },
-        xAxis: { type: "category", data: keys, axisLabel: { color: "#CBD5E1", fontFamily: "JetBrains Mono" } },
+        xAxis: { type: "category", data: keys, axisLabel: { color: COLORS.textSub, fontFamily: "JetBrains Mono" } },
         yAxis: { type: "value", axisLabel: { color: COLORS.axisLabel, formatter: (v) => `${v}%` }, splitLine: { lineStyle: { color: COLORS.gridLine } } },
         dataZoom: [{ type: "inside" }, { type: "slider", bottom: 8, height: 22 }],
         series: [
@@ -3684,9 +3763,9 @@
 
     charts.deepMonthly.setOption({
       tooltip: { trigger: "axis", axisPointer: { type: "shadow" }, backgroundColor: COLORS.tooltipBg, borderColor: COLORS.tooltipBorder, textStyle: { color: "#F1F5F9" } },
-      legend: { top: 0, textStyle: { color: "#CBD5E1" } },
+      legend: { top: 0, textStyle: { color: COLORS.textSub } },
       grid: { left: 62, right: 62, top: 38, bottom: 70 },
-      xAxis: { type: "category", data: keys, axisLabel: { color: "#CBD5E1", fontFamily: "JetBrains Mono" } },
+      xAxis: { type: "category", data: keys, axisLabel: { color: COLORS.textSub, fontFamily: "JetBrains Mono" } },
       yAxis: [
         { type: "value", name: "Sales", axisLabel: { color: COLORS.axisLabel, formatter: fmtAxisVnd }, splitLine: { lineStyle: { color: COLORS.gridLine } } },
         { type: "value", name: "Qty", axisLabel: { color: COLORS.amber }, splitLine: { show: false } },
@@ -3889,12 +3968,12 @@
           `;
         },
       },
-      legend: { top: 0, textStyle: { color: "#CBD5E1" } },
+      legend: { top: 0, textStyle: { color: COLORS.textSub } },
       grid: { left: 60, right: mode === "sales_qty" ? 60 : 28, top: 38, bottom: 32 },
       xAxis: {
         type: "category",
         data: xLabels,
-        axisLabel: { color: "#CBD5E1", fontFamily: "JetBrains Mono", fontSize: 10.5 },
+        axisLabel: { color: COLORS.textSub, fontFamily: "JetBrains Mono", fontSize: 10.5 },
       },
       yAxis: mode === "sales_qty"
         ? [
@@ -3959,7 +4038,7 @@
           axisLabel: { color: COLORS.axisLabel, formatter: (v) => (sk === "qty" ? fmtInt(v) : sk === "gm" ? `${v}%` : fmtAxisVnd(v)) },
           splitLine: { lineStyle: { color: COLORS.gridLine } },
         },
-        yAxis: { type: "category", data: rev.map((d) => d.siteCode), axisLabel: { color: "#E2E8F0", fontFamily: "JetBrains Mono", fontSize: 11 } },
+        yAxis: { type: "category", data: rev.map((d) => d.siteCode), axisLabel: { color: COLORS.textMain, fontFamily: "JetBrains Mono", fontSize: 11 } },
         dataZoom: rev.length > 16 ? [{ type: "slider", yAxisIndex: 0, right: 6, width: 12, start: 40, end: 100 }] : [],
         series: [{
           type: "bar",
@@ -3971,7 +4050,7 @@
           label: {
             show: true,
             position: "right",
-            color: "#CBD5E1",
+            color: COLORS.textSub,
             fontFamily: "JetBrains Mono",
             fontSize: 10,
             formatter: (p) => (sk === "qty" ? fmtInt(p.value) : sk === "gm" ? `${p.value}%` : fmtCompactVnd(p.value)),
@@ -3999,7 +4078,7 @@
             siteCode: d.siteCode,
             value: Math.max(1, Math.round(state.siteChartSort === "qty" ? d.qty : d.sales)),
             raw: d,
-            itemStyle: { color: REGION_COLORS[d.region] || COLORS.blue, borderColor: "#0E1014", borderWidth: 2 },
+            itemStyle: { color: REGION_COLORS[d.region] || COLORS.blue, borderColor: COLORS.pieBorder, borderWidth: 2 },
           })),
         }],
       }, true);
@@ -4027,7 +4106,7 @@
             raw: d,
             itemStyle: { color: REGION_COLORS[d.region] || COLORS.blue },
           })),
-          label: { show: true, position: "top", color: "#CBD5E1", fontFamily: "JetBrains Mono", fontSize: 10, formatter: (p) => p.data.siteCode },
+          label: { show: true, position: "top", color: COLORS.textSub, fontFamily: "JetBrains Mono", fontSize: 10, formatter: (p) => p.data.siteCode },
         }],
       }, true);
     }
@@ -4066,7 +4145,7 @@
         avoidLabelOverlap: true,
         minShowLabelAngle: 10,
         label: {
-          color: "#E2E8F0",
+          color: COLORS.textMain,
           fontSize: 11,
           fontFamily: "JetBrains Mono",
           formatter: "{d}%",
@@ -4079,7 +4158,7 @@
         data: regs.map(([name, val], i) => ({
           name,
           value: Math.round(val),
-          itemStyle: { color: REGION_COLORS[name] || FALLBACK_COLORS[i % FALLBACK_COLORS.length], borderColor: "#15181D", borderWidth: 2 },
+          itemStyle: { color: REGION_COLORS[name] || FALLBACK_COLORS[i % FALLBACK_COLORS.length], borderColor: COLORS.pieBorder, borderWidth: 2 },
         })),
       }],
     }, true);
@@ -4108,9 +4187,9 @@
 
     charts.deepRegionStack.setOption({
       tooltip: { trigger: "axis", axisPointer: { type: "shadow" }, backgroundColor: COLORS.tooltipBg, borderColor: COLORS.tooltipBorder, textStyle: { color: "#F1F5F9" }, valueFormatter: fmtVndFull },
-      legend: { bottom: 0, type: "scroll", textStyle: { color: "#94A3B8", fontSize: 11 } },
+      legend: { bottom: 0, type: "scroll", textStyle: { color: COLORS.textMuted, fontSize: 11 } },
       grid: { left: 56, right: 16, top: 18, bottom: 54 },
-      xAxis: { type: "category", data: months, axisLabel: { color: "#CBD5E1", fontFamily: "JetBrains Mono", fontSize: 10.5 } },
+      xAxis: { type: "category", data: months, axisLabel: { color: COLORS.textSub, fontFamily: "JetBrains Mono", fontSize: 10.5 } },
       yAxis: { type: "value", axisLabel: { color: COLORS.axisLabel, formatter: fmtAxisVnd }, splitLine: { lineStyle: { color: COLORS.gridLine } } },
       series: regs.map(([reg], i) => ({
         name: reg,
@@ -4177,12 +4256,12 @@
             `;
           },
         },
-        legend: { top: 0, textStyle: { color: "#CBD5E1", fontSize: 11 } },
+        legend: { top: 0, textStyle: { color: COLORS.textSub, fontSize: 11 } },
         grid: { left: 58, right: 54, top: 32, bottom: 34 },
         xAxis: {
           type: "category",
           data: segAgg.map((d) => d.name),
-          axisLabel: { color: "#E2E8F0", fontFamily: "JetBrains Mono", fontSize: 10.5 },
+          axisLabel: { color: COLORS.textMain, fontFamily: "JetBrains Mono", fontSize: 10.5 },
         },
         yAxis: [
           { type: "value", name: "Sales", axisLabel: { color: COLORS.axisLabel, formatter: fmtAxisVnd }, splitLine: { lineStyle: { color: COLORS.gridLine } } },
@@ -4200,7 +4279,7 @@
             label: {
               show: true,
               position: "top",
-              color: "#CBD5E1",
+              color: COLORS.textSub,
               fontFamily: "JetBrains Mono",
               fontSize: 9.5,
               formatter: (p) => (totSales > 0 && p.value > 0 ? `${((p.value / totSales) * 100).toFixed(0)}%` : ""),
@@ -4264,11 +4343,11 @@
           type: "scroll",
           itemWidth: 10,
           itemHeight: 10,
-          textStyle: { color: "#94A3B8", fontSize: 10.5 },
+          textStyle: { color: COLORS.textMuted, fontSize: 10.5 },
         },
         grid: { left: 105, right: 24, top: 12, bottom: 42 },
         xAxis: { type: "value", axisLabel: { color: COLORS.axisLabel, formatter: fmtAxisVnd }, splitLine: { lineStyle: { color: COLORS.gridLine } } },
-        yAxis: { type: "category", data: topBrands.map((b) => b.brand), axisLabel: { color: "#E2E8F0", width: 95, overflow: "truncate", fontSize: 11 } },
+        yAxis: { type: "category", data: topBrands.map((b) => b.brand), axisLabel: { color: COLORS.textMain, width: 95, overflow: "truncate", fontSize: 11 } },
         series: PRICE_SEGMENTS.map((segName, sIdx) => ({
           name: segName,
           type: "bar",
@@ -4315,7 +4394,7 @@
         },
         grid: { left: 190, right: 76, top: 14, bottom: 26 },
         xAxis: { type: "value", axisLabel: { color: COLORS.axisLabel, formatter: fmtAxisVnd }, splitLine: { lineStyle: { color: COLORS.gridLine } } },
-        yAxis: { type: "category", data: siteList.map((d) => d.name), axisLabel: { color: "#E2E8F0", width: 178, overflow: "truncate", fontSize: 11 } },
+        yAxis: { type: "category", data: siteList.map((d) => d.name), axisLabel: { color: COLORS.textMain, width: 178, overflow: "truncate", fontSize: 11 } },
         series: [{
           name: "Sales",
           type: "bar",
@@ -4329,7 +4408,7 @@
             gp: d.gp,
             itemStyle: { color: d.siteCode === state.site ? COLORS.amber : FALLBACK_COLORS[i % FALLBACK_COLORS.length], borderRadius: [0, 3, 3, 0] },
           })),
-          label: { show: true, position: "right", color: "#CBD5E1", fontFamily: "JetBrains Mono", fontSize: 10, formatter: (p) => fmtCompactVnd(p.value) },
+          label: { show: true, position: "right", color: COLORS.textSub, fontFamily: "JetBrains Mono", fontSize: 10, formatter: (p) => fmtCompactVnd(p.value) },
         }],
       }, true);
     } else {
@@ -4346,7 +4425,7 @@
       charts.deepChannel.setOption({
         tooltip: { trigger: "axis", axisPointer: { type: "shadow" }, backgroundColor: COLORS.tooltipBg, borderColor: COLORS.tooltipBorder, textStyle: { color: "#F1F5F9" } },
         grid: { left: 58, right: 54, top: 24, bottom: 34 },
-        xAxis: { type: "category", data: chList.map((d) => d.name), axisLabel: { color: "#E2E8F0", fontFamily: "JetBrains Mono" } },
+        xAxis: { type: "category", data: chList.map((d) => d.name), axisLabel: { color: COLORS.textMain, fontFamily: "JetBrains Mono" } },
         yAxis: [
           { type: "value", axisLabel: { color: COLORS.axisLabel, formatter: fmtAxisVnd }, splitLine: { lineStyle: { color: COLORS.gridLine } } },
           { type: "value", axisLabel: { color: COLORS.amber }, splitLine: { show: false } },
@@ -4376,13 +4455,13 @@
       tooltip: { trigger: "axis", axisPointer: { type: "shadow" }, backgroundColor: COLORS.tooltipBg, borderColor: COLORS.tooltipBorder, textStyle: { color: "#F1F5F9" }, valueFormatter: fmtVndFull },
       grid: { left: 176, right: 72, top: 14, bottom: 26 },
       xAxis: { type: "value", axisLabel: { color: COLORS.axisLabel, formatter: fmtAxisVnd }, splitLine: { lineStyle: { color: COLORS.gridLine } } },
-      yAxis: { type: "category", data: topDr.map(([n]) => n), axisLabel: { color: "#E2E8F0", width: 164, overflow: "truncate" } },
+      yAxis: { type: "category", data: topDr.map(([n]) => n), axisLabel: { color: COLORS.textMain, width: 164, overflow: "truncate" } },
       series: [{
         type: "bar",
         barMaxWidth: 20,
         data: topDr.map(([, v]) => Math.round(v)),
         itemStyle: { color: COLORS.emerald, borderRadius: [0, 3, 3, 0] },
-        label: { show: true, position: "right", color: "#CBD5E1", fontFamily: "JetBrains Mono", fontSize: 10, formatter: (p) => fmtCompactVnd(p.value) },
+        label: { show: true, position: "right", color: COLORS.textSub, fontFamily: "JetBrains Mono", fontSize: 10, formatter: (p) => fmtCompactVnd(p.value) },
       }],
     }, true);
 
@@ -4604,7 +4683,7 @@
           },
         },
         grid: { left: 62, right: 20, top: 28, bottom: 32 },
-        xAxis: { type: "category", data: capList.map((d) => d.name), axisLabel: { color: "#E2E8F0", fontFamily: "JetBrains Mono", fontSize: 11 } },
+        xAxis: { type: "category", data: capList.map((d) => d.name), axisLabel: { color: COLORS.textMain, fontFamily: "JetBrains Mono", fontSize: 11 } },
         yAxis: { type: "value", axisLabel: { color: COLORS.axisLabel, formatter: fmtAxis }, splitLine: { lineStyle: { color: COLORS.gridLine } } },
         series: [{
           name: isQty ? "Qty" : "Sales",
@@ -4618,7 +4697,7 @@
               borderRadius: [4, 4, 0, 0],
             },
           })),
-          label: { show: true, position: "top", color: "#CBD5E1", fontFamily: "JetBrains Mono", fontSize: 10, formatter: (p) => fmtVal(p.value) },
+          label: { show: true, position: "top", color: COLORS.textSub, fontFamily: "JetBrains Mono", fontSize: 10, formatter: (p) => fmtVal(p.value) },
         }],
       }, true);
     }
@@ -4645,7 +4724,7 @@
           },
         },
         grid: { left: 58, right: 16, top: 26, bottom: 44 },
-        xAxis: { type: "category", data: priceList.map((d) => d.name), axisLabel: { color: "#E2E8F0", fontFamily: "JetBrains Mono", fontSize: 10.5, rotate: 18 } },
+        xAxis: { type: "category", data: priceList.map((d) => d.name), axisLabel: { color: COLORS.textMain, fontFamily: "JetBrains Mono", fontSize: 10.5, rotate: 18 } },
         yAxis: { type: "value", axisLabel: { color: COLORS.axisLabel, formatter: fmtAxis }, splitLine: { lineStyle: { color: COLORS.gridLine } } },
         series: [{
           type: "bar",
@@ -4655,7 +4734,7 @@
             ...d,
             itemStyle: { color: d.name === st.priceBand ? COLORS.amber : COLORS.violet, borderRadius: [4, 4, 0, 0] },
           })),
-          label: { show: true, position: "top", color: "#CBD5E1", fontFamily: "JetBrains Mono", fontSize: 10, formatter: (p) => fmtVal(p.value) },
+          label: { show: true, position: "top", color: COLORS.textSub, fontFamily: "JetBrains Mono", fontSize: 10, formatter: (p) => fmtVal(p.value) },
         }],
       }, true);
     }
@@ -4722,7 +4801,7 @@
         axisLabel: { color: COLORS.axisLabel, formatter: (v) => (isBrandQty ? fmtInt(v) : fmtAxisVnd(v)) },
         splitLine: { lineStyle: { color: COLORS.gridLine } },
       },
-      yAxis: { type: "category", data: topBrands.map((d) => d.name), axisLabel: { color: "#E2E8F0", width: 100, overflow: "truncate", fontSize: 11 } },
+      yAxis: { type: "category", data: topBrands.map((d) => d.name), axisLabel: { color: COLORS.textMain, width: 100, overflow: "truncate", fontSize: 11 } },
       series: [{
         name: isBrandQty ? "Qty" : "Sales",
         type: "bar",
@@ -4738,7 +4817,7 @@
         label: {
           show: true,
           position: "right",
-          color: "#CBD5E1",
+          color: COLORS.textSub,
           fontFamily: "JetBrains Mono",
           fontSize: 10,
           formatter: (p) => (isBrandQty ? fmtInt(p.value) : fmtCompactVnd(p.value)),
@@ -5822,7 +5901,7 @@
         type: "category",
         data: entries.map((e) => e[0]),
         axisLine: { lineStyle: { color: COLORS.axisLine } },
-        axisLabel: { color: "#CBD5E1", fontSize: 10.5, interval: 0, width: 95, overflow: "truncate" },
+        axisLabel: { color: COLORS.textSub, fontSize: 10.5, interval: 0, width: 95, overflow: "truncate" },
       },
       yAxis: {
         type: "value",
@@ -5840,7 +5919,7 @@
         label: {
           show: true,
           position: "top",
-          color: "#CBD5E1",
+          color: COLORS.textSub,
           fontSize: 10,
           fontFamily: "JetBrains Mono",
           formatter: (p) => {
@@ -5960,7 +6039,7 @@
         type: "category",
         data: entries.map((e) => e.name),
         axisLine: { lineStyle: { color: COLORS.axisLine } },
-        axisLabel: { color: "#CBD5E1", fontSize: 11 },
+        axisLabel: { color: COLORS.textSub, fontSize: 11 },
       },
       yAxis: {
         type: "value",
@@ -5978,7 +6057,7 @@
         label: {
           show: true,
           position: "top",
-          color: "#CBD5E1",
+          color: COLORS.textSub,
           fontSize: 10.5,
           fontFamily: "JetBrains Mono",
           formatter: (p) => {
@@ -6079,7 +6158,7 @@
         icon: "circle",
         itemWidth: 8,
         itemHeight: 8,
-        textStyle: { color: "#94A3B8", fontSize: 10.5 },
+        textStyle: { color: COLORS.textMuted, fontSize: 10.5 },
       } : { show: false },
       grid: { top: 18, left: 56, right: 16, bottom: state.inv.siteMode === "stacked" ? 42 : 28 },
       xAxis: {
@@ -6153,17 +6232,17 @@
         icon: "circle",
         itemWidth: 8,
         itemHeight: 8,
-        textStyle: { color: "#94A3B8", fontSize: 10.5 },
+        textStyle: { color: COLORS.textMuted, fontSize: 10.5 },
       },
       series: [{
         type: "pie",
         radius: ["48%", "74%"],
         center: ["50%", "44%"],
         avoidLabelOverlap: true,
-        itemStyle: { borderRadius: 4, borderColor: "#15181D", borderWidth: 2 },
+        itemStyle: { borderRadius: 4, borderColor: COLORS.pieBorder, borderWidth: 2 },
         label: {
           show: true,
-          color: "#CBD5E1",
+          color: COLORS.textSub,
           fontSize: 10.5,
           formatter: (p) => (p.percent >= 4 ? `${p.percent}%` : ""),
         },
@@ -6276,7 +6355,7 @@
             `Số lượng: <b>${fmtInt(b.qty)} ${useSerials ? "Serial" : "units"}</b>`;
         },
       },
-      legend: { bottom: 0, textStyle: { color: "#94A3B8", fontSize: 10.5 } },
+      legend: { bottom: 0, textStyle: { color: COLORS.textMuted, fontSize: 10.5 } },
       grid: { top: 20, left: 56, right: mode === "both" ? 48 : 16, bottom: 38 },
       xAxis: {
         type: "category",
@@ -6364,7 +6443,7 @@
         data: top.map((x) => x.name),
         axisLine: { lineStyle: { color: COLORS.axisLine } },
         axisLabel: {
-          color: "#CBD5E1",
+          color: COLORS.textSub,
           fontSize: 10.5,
           width: 140,
           overflow: "truncate",
@@ -6383,7 +6462,7 @@
         label: {
           show: true,
           position: "right",
-          color: "#94A3B8",
+          color: COLORS.textMuted,
           fontSize: 10,
           fontFamily: "JetBrains Mono",
           formatter: (p) => (isQty ? fmtInt(p.value) : fmtCompactVnd(p.value)),
@@ -7253,13 +7332,13 @@
           borderColor: COLORS.tooltipBorder,
           textStyle: { color: "#F1F5F9", fontSize: 12 },
         },
-        legend: { bottom: 0, textStyle: { color: "#94A3B8", fontSize: 10.5 } },
+        legend: { bottom: 0, textStyle: { color: COLORS.textMuted, fontSize: 10.5 } },
         grid: { top: 20, left: 44, right: 44, bottom: 38 },
         xAxis: {
           type: "category",
           data: periods,
           axisLine: { lineStyle: { color: COLORS.axisLine } },
-          axisLabel: { color: "#CBD5E1", fontSize: 11 },
+          axisLabel: { color: COLORS.textSub, fontSize: 11 },
         },
         yAxis: [
           {

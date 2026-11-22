@@ -65,6 +65,14 @@ html, body {
   min-height: 100vh;
 }
 
+.app-shell.hide-sidebar {
+  grid-template-columns: 72px minmax(0, 1fr);
+}
+
+.app-shell.hide-sidebar .kpi-sidebar {
+  display: none;
+}
+
 /* 1. FAR-LEFT ELECTRIC BLUE RAIL */
 .nav-rail {
   background: linear-gradient(180deg, #0D5FD6 0%, #1068DF 55%, #0A52BD 100%);
@@ -2089,12 +2097,14 @@ html, body {
 /* RESPONSIVE */
 @media (max-width: 1260px) {
   .app-shell { grid-template-columns: 64px 250px minmax(0, 1fr); }
+  .app-shell.hide-sidebar { grid-template-columns: 64px minmax(0, 1fr); }
   .dashboard-bottom-grid { grid-template-columns: 1fr; }
   .two-col-deep { grid-template-columns: 1fr; }
 }
 
 @media (max-width: 960px) {
   .app-shell { grid-template-columns: 60px minmax(0, 1fr); }
+  .app-shell.hide-sidebar { grid-template-columns: 60px minmax(0, 1fr); }
   .kpi-sidebar {
     grid-column: 2;
     position: static;
@@ -2107,7 +2117,7 @@ html, body {
 }
 
 @media (max-width: 600px) {
-  .app-shell { grid-template-columns: 1fr; }
+  .app-shell, .app-shell.hide-sidebar { grid-template-columns: 1fr; }
   .nav-rail {
     position: static;
     height: auto;

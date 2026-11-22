@@ -787,6 +787,7 @@
     if (pane) pane.classList.add("active");
 
     const isInvOrLookup = view === "inventory" || view === "lookup";
+    document.getElementById("appShell")?.classList.toggle("hide-sidebar", view === "lookup");
     document.getElementById("salesTopFilters")?.classList.toggle("hidden", isInvOrLookup);
     document.getElementById("salesDatePickerBox")?.classList.toggle("hidden", isInvOrLookup);
     document.getElementById("activeChipsBar")?.classList.toggle("hidden", isInvOrLookup);
@@ -800,10 +801,13 @@
     }
     document.getElementById("jumpToLookupBtn")?.classList.toggle("hidden", view === "lookup");
 
-    renderActiveView(getFilteredRows(false), state.clickedMonth ? getFilteredRows(true) : getFilteredRows(false));
+    const filtered = getFilteredRows(false);
+    const filteredTime = state.clickedMonth ? getFilteredRows(true) : filtered;
+    renderSidebarForView(filtered);
+    renderActiveView(filtered, filteredTime);
     setTimeout(() => {
       Object.values(charts).forEach((ch) => ch && ch.resize());
-    }, 30);
+    }, 35);
   }
 
   function bindEvents() {
@@ -856,7 +860,10 @@
       state.storeRegionsOnly = e.target.checked; state.tablePage = 1; renderAll();
     });
 
-    document.getElementById("resetFiltersBtn").addEventListener("click", resetFilters);
+    document.getElementById("resetFiltersBtn").addEventListener("click", () => {
+      if (state.activeView === "inventory") resetInvFilters(true);
+      else resetFilters();
+    });
 
     // Segmented group helper
     const bindSeg = (id, cb) => {
@@ -1017,7 +1024,7 @@
     const filtered = getFilteredRows(false);
     const filteredTime = state.clickedMonth ? getFilteredRows(true) : filtered;
 
-    renderSidebar(filtered);
+    renderSidebarForView(filtered);
     renderChipsAndInsight(filtered);
     renderActiveView(filtered, filteredTime);
   }
@@ -1048,8 +1055,488 @@
   }
 
   // =========================================================================
-  // 1. LEFT KPI & GAUGE SIDEBAR (MATCHING REFERENCE)
+  // 1. CONTEXT-AWARE LEFT KPI & GAUGE SIDEBAR (TAILORED PER TAB)
   // =========================================================================
+  function applySidebarSpec(spec) {
+    const set = (id, txt) => { const el = document.getElementById(id); if (el) el.textContent = txt; };
+    set("sidebarTitle", spec.title);
+    set("sbGauge1Label", spec.g1Label);
+    set("sidebarSalesShareTag", spec.g1Tag);
+    set("gaugeGmValue", spec.g1Big);
+    const gpPill = document.getElementById("gaugeGpPill");
+    if (gpPill) {
+      gpPill.textContent = spec.g1Pill;
+      gpPill.classList.toggle("negative", Boolean(spec.g1PillNeg));
+      gpPill.classList.toggle("positive", !spec.g1PillNeg);
+    }
+
+    set("sbBar1Label", spec.bar1Label);
+    set("statSalesVal", spec.bar1Val);
+    document.getElementById("barSalesFill").style.width = `${Math.max(4, Math.min(100, spec.bar1Pct))}%`;
+
+    set("sbBar2Label", spec.bar2Label);
+    set("statCogsVal", spec.bar2Val);
+    document.getElementById("barCogsFill").style.width = `${Math.max(4, Math.min(100, spec.bar2Pct))}%`;
+
+    set("sbGauge2Label", spec.g2Label);
+    set("statQtyHeader", spec.g2Tag);
+    set("gaugeFulfillVal", spec.g2Big);
+    const qtyPill = document.getElementById("gaugeQtyPill");
+    if (qtyPill) {
+      qtyPill.textContent = spec.g2Pill;
+      qtyPill.classList.toggle("negative", Boolean(spec.g2PillNeg));
+      qtyPill.classList.toggle("positive", !spec.g2PillNeg);
+    }
+
+    const mIds = [
+      ["mLbl1", "mAvgMonthSales", "mAvgMonthSalesSub"],
+      ["mLbl2", "mAvgMonthQty", "mAvgMonthQtySub"],
+      ["mLbl3", "mAsp", "mAspSub"],
+      ["mLbl4", "mTotalGp", "mTotalGpPct"],
+    ];
+    spec.metrics.forEach((m, i) => {
+      const [lId, vId, sId] = mIds[i];
+      set(lId, m.l); set(vId, m.v); set(sId, m.s);
+      const sEl = document.getElementById(sId);
+      if (sEl) sEl.className = `metric-delta ${m.cls || "pos"} mono`;
+    });
+
+    const iIds = [
+      ["iLbl1", "mActiveSites", "mActiveSitesSub"],
+      ["iLbl2", "mActiveRegions", "mActiveRegionsSub"],
+      ["iLbl3", "mExportRows", "mExportPct"],
+      ["iLbl4", "mReturnRows", "mReturnPct"],
+    ];
+    spec.insets.forEach((m, i) => {
+      const [lId, vId, sId] = iIds[i];
+      set(lId, m.l); set(vId, m.v); set(sId, m.s);
+      const sEl = document.getElementById(sId);
+      if (sEl) sEl.className = `metric-delta ${m.cls || "pos"} mono`;
+    });
+
+    if (charts.gaugeRing) {
+      const ringPct = Math.max(0, Math.min(100, spec.g1Pct));
+      charts.gaugeRing.setOption({
+        series: [
+          {
+            type: "gauge", startAngle: 90, endAngle: -270, radius: "96%", min: 0, max: 100, splitNumber: 12,
+            pointer: { show: false }, axisLine: { show: false },
+            axisTick: { distance: -6, length: 7, splitNumber: 5, lineStyle: { color: "rgba(255,255,255,0.16)", width: 1.5 } },
+            splitLine: { show: false }, axisLabel: { show: false }, detail: { show: false },
+          },
+          {
+            type: "gauge", startAngle: 90, endAngle: -270, radius: "80%", min: 0, max: 100, pointer: { show: false },
+            progress: {
+              show: true, overlap: false, roundCap: true, clip: false,
+              itemStyle: {
+                color: new echarts.graphic.LinearGradient(0, 0, 1, 1, [
+                  { offset: 0, color: spec.g1ColorA || "#1D7AFC" },
+                  { offset: 1, color: spec.g1ColorB || "#12D37A" },
+                ]),
+                shadowBlur: 10, shadowColor: "rgba(29, 122, 252, 0.5)",
+              },
+            },
+            axisLine: { lineStyle: { width: 7, color: [[1, "rgba(255,255,255,0.08)"]] } },
+            splitLine: { show: false }, axisTick: { show: false }, axisLabel: { show: false }, detail: { show: false },
+            data: [{ value: ringPct }],
+          },
+        ],
+      });
+    }
+
+    if (charts.gaugeSemi) {
+      const semiPct = Math.max(0, Math.min(100, spec.g2Pct));
+      charts.gaugeSemi.setOption({
+        series: [{
+          type: "gauge", startAngle: 180, endAngle: 0, center: ["50%", "84%"], radius: "136%", min: 0, max: 100,
+          pointer: { show: false },
+          progress: {
+            show: true, width: 20,
+            itemStyle: {
+              color: new echarts.graphic.LinearGradient(0, 0, 1, 0, [
+                { offset: 0, color: spec.g2ColorA || "#0D63D9" },
+                { offset: 1, color: spec.g2ColorB || "#2196F3" },
+              ]),
+            },
+          },
+          axisLine: { lineStyle: { width: 20, color: [[1, "#252A34"]] } },
+          axisTick: { show: false },
+          splitLine: { show: true, distance: -20, length: 20, lineStyle: { color: "rgba(255,255,255,0.22)", width: 1.5 } },
+          splitNumber: 5,
+          axisLabel: {
+            show: true, distance: -32, color: "#8492A6", fontFamily: "JetBrains Mono", fontSize: 9,
+            formatter: (v) => (v === 0 || v === 80 || v === 100 ? `${v}%` : ""),
+          },
+          detail: { show: false },
+          data: [{ value: Number(semiPct.toFixed(1)) }],
+        }],
+      });
+    }
+  }
+
+  function renderSidebarForView(salesRows) {
+    const v = state.activeView;
+    if (v === "lookup") return; // Sidebar hidden on Tra cứu SKU/SN
+    if (v === "inventory") { renderSidebarInventory(); return; }
+    if (v === "monthly") { renderSidebarMonthly(salesRows); return; }
+    if (v === "site") { renderSidebarSite(salesRows); return; }
+    if (v === "region") { renderSidebarRegion(salesRows); return; }
+    if (v === "channel") { renderSidebarChannel(salesRows); return; }
+    if (v === "ledger") { renderSidebarLedger(salesRows); return; }
+    renderSidebar(salesRows); // Default: Dashboard (giữ nguyên 100%)
+  }
+
+  function renderSidebarInventory() {
+    const inv = state.raw?.inventory;
+    if (!inv || !inv.rows?.length) return;
+    const rows = getFilteredInvRows();
+    const serialRows = getFilteredSerialRows();
+    const { lookups } = inv;
+    let totVal = 0, totQty = 0, sellVal = 0, sellQty = 0, dmgVal = 0, dmgQty = 0, discVal = 0, discQty = 0, age365Val = 0, age365Qty = 0;
+    const skus = new Set(), sites = new Set();
+
+    rows.forEach((r) => {
+      const val = r[INV_C.VALUE], qty = r[INV_C.QTY];
+      totVal += val; totQty += qty; skus.add(r[INV_C.SKU]); sites.add(r[INV_C.SITE]);
+      const bt = (lookups.binTypes[r[INV_C.BIN_TYPE]] || "").toLowerCase();
+      if (bt.includes("bán mới")) { sellVal += val; sellQty += qty; }
+      if (bt.includes("hư hỏng")) { dmgVal += val; dmgQty += qty; }
+      if ((lookups.purchaseStatuses[r[INV_C.STATUS]] || "").toLowerCase() === "discontinued") { discVal += val; discQty += qty; }
+      const d = state.inv.agingBasis === "first" && r.length > INV_C.AGING_FIRST ? r[INV_C.AGING_FIRST] : r[INV_C.AGING];
+      if (d > 365) { age365Val += val; age365Qty += qty; }
+    });
+
+    let healthyCnt = 0, clsCnt = 0, badRiskCnt = 0, badRiskVal = 0;
+    if (state.raw.invSerials) {
+      const snL = state.raw.invSerials.lookups;
+      const badCol = state.inv.badScope === "site" ? SN_C.BAD_SITE : SN_C.BAD_COMP;
+      const badL = state.inv.badScope === "site" ? snL.badSite : snL.badComp;
+      serialRows.forEach((sr) => {
+        if (!sr[SN_C.IN_BAD_FILE]) return;
+        clsCnt++;
+        if (badL[sr[badCol]] === "Tồn thông thường") healthyCnt++;
+        else { badRiskCnt++; badRiskVal += sr[SN_C.INV_VAL]; }
+      });
+    }
+
+    const sellPct = totVal > 0 ? (sellVal / totVal) * 100 : 0;
+    const dmgPct = totVal > 0 ? (dmgVal / totVal) * 100 : 0;
+    const shareAll = inv.meta?.totals?.value ? (totVal / inv.meta.totals.value) * 100 : 100;
+    const healthyPct = clsCnt > 0 ? (healthyCnt / clsCnt) * 100 : 0;
+    const vel30d = state.raw.invSkuLevel?.meta?.totals?.sales30d || 0;
+    const mpCount = state.raw.masterProducts?.meta?.rowCount || 0;
+
+    applySidebarSpec({
+      title: "Tồn Kho",
+      g1Label: "Tỷ lệ Hàng Bán Mới",
+      g1Tag: `${fmtPct(shareAll)} tổng kho`,
+      g1Big: fmtPct(sellPct),
+      g1Pill: `Bán mới ${fmtCompactVnd(sellVal)}`,
+      g1Pct: sellPct,
+      bar1Label: "Tổng Giá trị Tồn",
+      bar1Val: fmtCompactVnd(totVal),
+      bar1Pct: shareAll,
+      bar2Label: "Hàng Hư Hỏng",
+      bar2Val: fmtCompactVnd(dmgVal),
+      bar2Pct: dmgPct,
+      g2Label: "Tỷ lệ Tồn Thông Thường",
+      g2Tag: `${fmtInt(clsCnt)} SN phân loại`,
+      g2Big: fmtPct(healthyPct),
+      g2Pill: `${fmtInt(badRiskCnt)} SN Bad Stock`,
+      g2PillNeg: badRiskCnt > 0,
+      g2Pct: healthyPct,
+      metrics: [
+        { l: "Tổng SL Tồn", v: `${fmtInt(totQty)} qty`, s: `${fmtInt(serialRows.length)} Serial`, cls: "neutral" },
+        { l: "Bad Stock Rủi ro", v: fmtCompactVnd(badRiskVal), s: `${fmtInt(badRiskCnt)} SN chậm/xấu`, cls: "neg" },
+        { l: "Tồn > 365 ngày", v: fmtCompactVnd(age365Val), s: `${fmtInt(age365Qty)} units`, cls: "neg" },
+        { l: "Discontinued", v: fmtCompactVnd(discVal), s: `${fmtInt(discQty)} units`, cls: "neutral" },
+      ],
+      insets: [
+        { l: "Số Kho (Sites)", v: fmtInt(sites.size), s: `/ ${lookups.sites.length} kho`, cls: "pos" },
+        { l: "Unique SKUs", v: fmtInt(skus.size), s: `${fmtInt(rows.length)} BIN`, cls: "pos" },
+        { l: "Bán 30D (SKU)", v: fmtInt(vel30d), s: "units / 30D", cls: "pos" },
+        { l: "Master SKUs", v: fmtInt(mpCount), s: "danh mục gốc", cls: "neutral" },
+      ],
+    });
+  }
+
+  function renderSidebarMonthly(rows) {
+    const byM = new Map(), weeks = new Set(), days = new Set();
+    let totSales = 0, totQty = 0, totGp = 0, bulkCnt = 0;
+    rows.forEach((r) => {
+      const m = r[C.MONTH];
+      const cur = byM.get(m) || { sales: 0, qty: 0 };
+      cur.sales += r[C.SALES]; cur.qty += r[C.QTY];
+      byM.set(m, cur);
+      weeks.add(r[C.WEEK]); days.add(r[C.DATE]);
+      totSales += r[C.SALES]; totQty += r[C.QTY]; totGp += r[C.GP];
+      if (Math.abs(r[C.QTY]) >= 100) bulkCnt++;
+    });
+    const sortedM = Array.from(byM.entries()).sort((a, b) => a[0].localeCompare(b[0]));
+    let peak = ["—", { sales: 0 }], low = ["—", { sales: Infinity }], posMom = 0;
+    sortedM.forEach((e, idx) => {
+      if (e[1].sales > peak[1].sales) peak = e;
+      if (e[1].sales < low[1].sales) low = e;
+      if (idx > 0 && e[1].sales >= sortedM[idx - 1][1].sales) posMom++;
+    });
+    if (!sortedM.length) low = ["—", { sales: 0 }];
+    const peakShare = totSales > 0 ? (peak[1].sales / totSales) * 100 : 0;
+    const momDenom = Math.max(1, sortedM.length - 1);
+    const momPosRate = sortedM.length > 1 ? (posMom / momDenom) * 100 : 100;
+    const ratioHL = low[1].sales > 0 ? (peak[1].sales / low[1].sales).toFixed(1) + "×" : "—";
+
+    applySidebarSpec({
+      title: "Monthly Report",
+      g1Label: "Tỷ trọng Tháng Đỉnh",
+      g1Tag: `${sortedM.length} tháng lọc`,
+      g1Big: fmtPct(peakShare),
+      g1Pill: `Đỉnh T${peak[0].slice(5)}/${peak[0].slice(2, 4)}`,
+      g1Pct: peakShare,
+      bar1Label: `Cao nhất (${peak[0]})`,
+      bar1Val: fmtCompactVnd(peak[1].sales),
+      bar1Pct: 100,
+      bar2Label: `Thấp nhất (${low[0]})`,
+      bar2Val: fmtCompactVnd(low[1].sales),
+      bar2Pct: peak[1].sales > 0 ? (low[1].sales / peak[1].sales) * 100 : 0,
+      g2Label: "Tỷ lệ Tháng Tăng MoM",
+      g2Tag: `${posMom}/${momDenom} kỳ`,
+      g2Big: fmtPct(momPosRate),
+      g2Pill: `${fmtInt(totQty)} tổng QTY`,
+      g2Pct: momPosRate,
+      metrics: [
+        { l: "TB Sales / Tháng", v: fmtCompactVnd(sortedM.length ? totSales / sortedM.length : 0), s: `${sortedM.length} tháng`, cls: "pos" },
+        { l: "TB Qty / Tháng", v: fmtInt(sortedM.length ? totQty / sortedM.length : 0), s: "sp / tháng", cls: "pos" },
+        { l: "Tổng Sales (Lọc)", v: fmtCompactVnd(totSales), s: `GM ${totSales ? fmtPct((totGp / totSales) * 100) : "0%"}`, cls: "neutral" },
+        { l: "Biên độ Max / Min", v: ratioHL, s: "độ biến động", cls: "neutral" },
+      ],
+      insets: [
+        { l: "Số Tháng", v: fmtInt(sortedM.length), s: "chu kỳ báo cáo", cls: "pos" },
+        { l: "Số Tuần ISO", v: fmtInt(weeks.size), s: "tuần có đơn", cls: "pos" },
+        { l: "Ngày phát sinh", v: fmtInt(days.size), s: "ngày bán hàng", cls: "pos" },
+        { l: "Đơn sỉ ≥100", v: fmtInt(bulkCnt), s: "dòng đột biến", cls: bulkCnt ? "neg" : "pos" },
+      ],
+    });
+  }
+
+  function renderSidebarSite(rows) {
+    const { lookups, siteDirectory } = state.raw;
+    const byS = new Map();
+    let totSales = 0, totQty = 0;
+    rows.forEach((r) => {
+      const code = lookups.sites[r[C.SITE]];
+      const cur = byS.get(code) || { code, sales: 0, qty: 0, gp: 0 };
+      cur.sales += r[C.SALES]; cur.qty += r[C.QTY]; cur.gp += r[C.GP];
+      byS.set(code, cur);
+      totSales += r[C.SALES]; totQty += r[C.QTY];
+    });
+    const list = Array.from(byS.values()).map((s) => ({
+      ...s,
+      gm: s.sales !== 0 ? (s.gp / s.sales) * 100 : 0,
+      isStore: !(siteDirectory[s.code]?.region || "").startsWith("Non-Store"),
+    })).sort((a, b) => b.sales - a.sales);
+
+    const top5Sales = list.slice(0, 5).reduce((a, b) => a + b.sales, 0);
+    const top5Share = totSales > 0 ? (top5Sales / totSales) * 100 : 0;
+    const top1 = list[0] || { code: "—", sales: 0 };
+    const top2 = list[1] || { code: "—", sales: 0 };
+    const profCnt = list.filter((s) => s.gp > 0).length;
+    const profRate = list.length ? (profCnt / list.length) * 100 : 0;
+    const byGm = [...list].filter((s) => s.sales > 0).sort((a, b) => b.gm - a.gm);
+    const bestGm = byGm[0] || { code: "—", gm: 0 };
+    const worstGm = byGm[byGm.length - 1] || { code: "—", gm: 0 };
+    const storeCnt = list.filter((s) => s.isStore).length;
+
+    applySidebarSpec({
+      title: "Site Code",
+      g1Label: "Tỷ trọng Top 5 Sites",
+      g1Tag: `${list.length} active sites`,
+      g1Big: fmtPct(top5Share),
+      g1Pill: `Top 5: ${fmtCompactVnd(top5Sales)}`,
+      g1Pct: top5Share,
+      bar1Label: `#1 ${top1.code}`,
+      bar1Val: fmtCompactVnd(top1.sales),
+      bar1Pct: totSales > 0 ? (top1.sales / totSales) * 100 : 0,
+      bar2Label: `#2 ${top2.code}`,
+      bar2Val: fmtCompactVnd(top2.sales),
+      bar2Pct: totSales > 0 ? (top2.sales / totSales) * 100 : 0,
+      g2Label: "Tỷ lệ Site có lãi (GP>0)",
+      g2Tag: `${profCnt}/${list.length} sites`,
+      g2Big: fmtPct(profRate),
+      g2Pill: `TB ${fmtCompactVnd(list.length ? totSales / list.length : 0)}/site`,
+      g2Pct: profRate,
+      metrics: [
+        { l: "TB Sales / Site", v: fmtCompactVnd(list.length ? totSales / list.length : 0), s: `${list.length} điểm bán`, cls: "pos" },
+        { l: "TB Qty / Site", v: fmtInt(list.length ? totQty / list.length : 0), s: "sp / site", cls: "pos" },
+        { l: "GM% Cao nhất", v: fmtPct(bestGm.gm), s: bestGm.code, cls: "pos" },
+        { l: "GM% Thấp nhất", v: fmtPct(worstGm.gm), s: worstGm.code, cls: worstGm.gm < 20 ? "neg" : "neutral" },
+      ],
+      insets: [
+        { l: "Active Sites", v: fmtInt(list.length), s: `/ ${lookups.sites.length} sites`, cls: "pos" },
+        { l: "Cửa hàng (CH)", v: fmtInt(storeCnt), s: "site bán lẻ", cls: "pos" },
+        { l: "Non-Store", v: fmtInt(list.length - storeCnt), s: "BH / Corp / Inb", cls: "neutral" },
+        { l: "Tổng QTY", v: fmtInt(totQty), s: "units bán ra", cls: "pos" },
+      ],
+    });
+  }
+
+  function renderSidebarRegion(rows) {
+    const { lookups } = state.raw;
+    const byR = new Map(), sites = new Set();
+    let totSales = 0, totGp = 0, storeSales = 0, storeGp = 0, nonSales = 0;
+    rows.forEach((r) => {
+      const reg = lookups.regions[r[C.REGION]];
+      const cur = byR.get(reg) || { reg, sales: 0, gp: 0, qty: 0 };
+      cur.sales += r[C.SALES]; cur.gp += r[C.GP]; cur.qty += r[C.QTY];
+      byR.set(reg, cur);
+      sites.add(r[C.SITE]);
+      totSales += r[C.SALES]; totGp += r[C.GP];
+      if (reg.startsWith("Non-Store")) nonSales += r[C.SALES];
+      else { storeSales += r[C.SALES]; storeGp += r[C.GP]; }
+    });
+    const list = Array.from(byR.values()).sort((a, b) => b.sales - a.sales);
+    const top1 = list[0] || { reg: "—", sales: 0 };
+    const top2 = list[1] || { reg: "—", sales: 0 };
+    const top1Share = totSales > 0 ? (top1.sales / totSales) * 100 : 0;
+    const storeGm = storeSales > 0 ? (storeGp / storeSales) * 100 : 0;
+    const storeRegCnt = list.filter((x) => !x.reg.startsWith("Non-Store")).length;
+
+    applySidebarSpec({
+      title: "Region Report",
+      g1Label: `Tỷ trọng #1 (${shortRegionLabel(top1.reg)})`,
+      g1Tag: `${list.length} vùng lọc`,
+      g1Big: fmtPct(top1Share),
+      g1Pill: fmtCompactVnd(top1.sales),
+      g1Pct: top1Share,
+      bar1Label: "Khối 5 Region CH",
+      bar1Val: fmtCompactVnd(storeSales),
+      bar1Pct: totSales > 0 ? (storeSales / totSales) * 100 : 0,
+      bar2Label: "Khối Non-Store",
+      bar2Val: fmtCompactVnd(nonSales),
+      bar2Pct: totSales > 0 ? (nonSales / totSales) * 100 : 0,
+      g2Label: "Biên lợi nhuận Khối CH",
+      g2Tag: "Store GM (%)",
+      g2Big: fmtPct(storeGm),
+      g2Pill: `GP CH ${fmtCompactVnd(storeGp)}`,
+      g2Pct: Math.min(100, (storeGm / 40) * 100),
+      metrics: [
+        { l: "Top #1 Region", v: shortRegionLabel(top1.reg), s: fmtCompactVnd(top1.sales), cls: "pos" },
+        { l: "Top #2 Region", v: shortRegionLabel(top2.reg), s: fmtCompactVnd(top2.sales), cls: "neutral" },
+        { l: "TB Sales / Region", v: fmtCompactVnd(list.length ? totSales / list.length : 0), s: `${list.length} vùng`, cls: "pos" },
+        { l: "Tổng Lợi nhuận", v: fmtCompactVnd(totGp), s: `GM ${totSales ? fmtPct((totGp / totSales) * 100) : "0%"}`, cls: "pos" },
+      ],
+      insets: [
+        { l: "Active Regions", v: fmtInt(list.length), s: `/ ${lookups.regions.length} vùng`, cls: "pos" },
+        { l: "Region CH", v: fmtInt(storeRegCnt), s: "vùng cửa hàng", cls: "pos" },
+        { l: "Non-Store", v: fmtInt(list.length - storeRegCnt), s: "kênh dịch vụ", cls: "neutral" },
+        { l: "Active Sites", v: fmtInt(sites.size), s: "điểm bán", cls: "pos" },
+      ],
+    });
+  }
+
+  function renderSidebarChannel(rows) {
+    const { lookups } = state.raw;
+    const byCh = new Map(), bySub = new Map(), byBr = new Map(), skus = new Set();
+    let totSales = 0, totQty = 0;
+    rows.forEach((r) => {
+      const ch = lookups.channels[r[C.CHANNEL]], sub = lookups.subcats[r[C.SUBCAT]], br = lookups.brands[r[C.BRAND]];
+      byCh.set(ch, (byCh.get(ch) || 0) + r[C.SALES]);
+      bySub.set(sub, (bySub.get(sub) || 0) + r[C.SALES]);
+      byBr.set(br, (byBr.get(br) || 0) + r[C.SALES]);
+      skus.add(r[C.SKU]);
+      totSales += r[C.SALES]; totQty += r[C.QTY];
+    });
+    const chList = Array.from(byCh.entries()).sort((a, b) => b[1] - a[1]);
+    const subList = Array.from(bySub.entries()).sort((a, b) => b[1] - a[1]);
+    const brList = Array.from(byBr.entries()).sort((a, b) => b[1] - a[1]);
+
+    const topCh = chList[0] || ["—", 0];
+    const topSub = subList[0] || ["—", 0];
+    const topBr1 = brList[0] || ["—", 0];
+    const topBr2 = brList[1] || ["—", 0];
+    const topChShare = totSales > 0 ? (topCh[1] / totSales) * 100 : 0;
+    const top3BrSales = brList.slice(0, 3).reduce((s, x) => s + x[1], 0);
+    const top3BrShare = totSales > 0 ? (top3BrSales / totSales) * 100 : 0;
+
+    applySidebarSpec({
+      title: "Channel & Brand",
+      g1Label: `Top Channel (${topCh[0]})`,
+      g1Tag: `${chList.length} kênh bán`,
+      g1Big: fmtPct(topChShare),
+      g1Pill: fmtCompactVnd(topCh[1]),
+      g1Pct: topChShare,
+      bar1Label: `Kênh #1: ${topCh[0]}`,
+      bar1Val: fmtCompactVnd(topCh[1]),
+      bar1Pct: topChShare,
+      bar2Label: `Nhóm #1: ${topSub[0].slice(0, 18)}`,
+      bar2Val: fmtCompactVnd(topSub[1]),
+      bar2Pct: totSales > 0 ? (topSub[1] / totSales) * 100 : 0,
+      g2Label: "Tỷ trọng Top 3 Brands",
+      g2Tag: `${brList.length} brands`,
+      g2Big: fmtPct(top3BrShare),
+      g2Pill: fmtCompactVnd(top3BrSales),
+      g2Pct: top3BrShare,
+      metrics: [
+        { l: "Top #1 Brand", v: topBr1[0].slice(0, 12), s: fmtCompactVnd(topBr1[1]), cls: "pos" },
+        { l: "Top #2 Brand", v: topBr2[0].slice(0, 12), s: fmtCompactVnd(topBr2[1]), cls: "neutral" },
+        { l: "Top #1 Subcat", v: fmtCompactVnd(topSub[1]), s: topSub[0].slice(0, 14), cls: "pos" },
+        { l: "Giá bán TB (ASP)", v: fmtCompactVnd(totQty ? totSales / totQty : 0), s: "VND / unit", cls: "neutral" },
+      ],
+      insets: [
+        { l: "Channels", v: fmtInt(chList.length), s: "kênh phân phối", cls: "pos" },
+        { l: "Subcat 2", v: fmtInt(subList.length), s: "nhóm hàng", cls: "pos" },
+        { l: "Brands", v: fmtInt(brList.length), s: "thương hiệu", cls: "pos" },
+        { l: "Unique SKUs", v: fmtInt(skus.size), s: "mã phát sinh", cls: "neutral" },
+      ],
+    });
+  }
+
+  function renderSidebarLedger(rows) {
+    const { meta, lookups } = state.raw;
+    const retIdx = lookups.orderTypes.indexOf("don_nhap_hoan_ban");
+    let expRows = 0, retRows = 0, expSales = 0, retSales = 0, totSales = 0, totGp = 0, totQty = 0;
+    const sites = new Set(), skus = new Set();
+    rows.forEach((r) => {
+      totSales += r[C.SALES]; totGp += r[C.GP]; totQty += r[C.QTY];
+      sites.add(r[C.SITE]); skus.add(r[C.SKU]);
+      if (r[C.ORDER_TYPE] === retIdx) { retRows++; retSales += Math.abs(r[C.SALES]); }
+      else { expRows++; expSales += r[C.SALES]; }
+    });
+    const expRate = rows.length ? (expRows / rows.length) * 100 : 0;
+    const filterShare = meta.rowCount ? (rows.length / meta.rowCount) * 100 : 0;
+
+    applySidebarSpec({
+      title: "Data Ledger",
+      g1Label: "Tỷ lệ Đơn Xuất Bán",
+      g1Tag: `${fmtInt(rows.length)} dòng`,
+      g1Big: fmtPct(expRate),
+      g1Pill: `${fmtInt(expRows)} đơn xuất`,
+      g1Pct: expRate,
+      bar1Label: "Giá trị Xuất bán",
+      bar1Val: fmtCompactVnd(expSales),
+      bar1Pct: 100,
+      bar2Label: "Giá trị Hoàn bán",
+      bar2Val: fmtCompactVnd(retSales),
+      bar2Pct: expSales > 0 ? (retSales / expSales) * 100 : 0,
+      g2Label: "Phạm vi Dữ liệu Lọc",
+      g2Tag: `/ ${fmtInt(meta.rowCount)} gốc`,
+      g2Big: fmtPct(filterShare),
+      g2Pill: "Sẵn sàng Export CSV",
+      g2Pct: filterShare,
+      metrics: [
+        { l: "Tổng dòng lọc", v: fmtInt(rows.length), s: `/ ${fmtInt(meta.rowCount)}`, cls: "pos" },
+        { l: "Tổng Sales (Lọc)", v: fmtCompactVnd(totSales), s: "doanh thu thuần", cls: "pos" },
+        { l: "Tổng GP (Lọc)", v: fmtCompactVnd(totGp), s: `GM ${totSales ? fmtPct((totGp / totSales) * 100) : "0%"}`, cls: "pos" },
+        { l: "Tổng QTY (Lọc)", v: fmtInt(totQty), s: "units thuần", cls: "neutral" },
+      ],
+      insets: [
+        { l: "Đơn Xuất bán", v: fmtInt(expRows), s: fmtPct(expRate), cls: "pos" },
+        { l: "Đơn Hoàn bán", v: fmtInt(retRows), s: rows.length ? fmtPct((retRows / rows.length) * 100) : "0%", cls: "neg" },
+        { l: "Active Sites", v: fmtInt(sites.size), s: "điểm bán", cls: "pos" },
+        { l: "Unique SKUs", v: fmtInt(skus.size), s: "mã hàng", cls: "neutral" },
+      ],
+    });
+  }
+
   function renderSidebar(rows) {
     const { meta, lookups } = state.raw;
     let sales = 0, qty = 0, cogs = 0, gp = 0, exportRows = 0, returnRows = 0;
@@ -1078,145 +1565,37 @@
     const avgMonthQty = months.size > 0 ? qty / months.size : 0;
     const asp = qty !== 0 ? sales / qty : 0;
 
-    // Text updates
-    document.getElementById("sidebarSalesShareTag").textContent = `${fmtPct(salesShare)} tổng`;
-    document.getElementById("gaugeGmValue").textContent = fmtPct(gm);
-    document.getElementById("gaugeGpPill").textContent = `GP ${fmtCompactVnd(gp)}`;
-    document.getElementById("statSalesVal").textContent = fmtCompactVnd(sales);
-    document.getElementById("statCogsVal").textContent = fmtCompactVnd(cogs);
-    document.getElementById("barSalesFill").style.width = `${Math.max(4, Math.min(100, salesShare))}%`;
-    document.getElementById("barCogsFill").style.width = `${Math.max(4, cogsRatio)}%`;
-
-    document.getElementById("statQtyHeader").textContent = `${fmtInt(qty)} QTY`;
-    document.getElementById("gaugeFulfillVal").textContent = fmtPct(fulfillRate);
-    document.getElementById("gaugeQtyPill").textContent = `${fmtInt(qty)} units`;
-
-    document.getElementById("mAvgMonthSales").textContent = fmtCompactVnd(avgMonthSales);
-    document.getElementById("mAvgMonthSalesSub").textContent = `${months.size} tháng`;
-    document.getElementById("mAvgMonthQty").textContent = fmtInt(avgMonthQty);
-    document.getElementById("mAvgMonthQtySub").textContent = "sp / tháng";
-    document.getElementById("mAsp").textContent = fmtCompactVnd(asp);
-    document.getElementById("mTotalGp").textContent = fmtCompactVnd(gp);
-    document.getElementById("mTotalGpPct").textContent = `GM ${fmtPct(gm)}`;
-
-    document.getElementById("mActiveSites").textContent = fmtInt(sites.size);
-    document.getElementById("mActiveSitesSub").textContent = `/ ${lookups.sites.length} sites`;
-    document.getElementById("mActiveRegions").textContent = fmtInt(regions.size);
-    document.getElementById("mExportRows").textContent = fmtInt(exportRows);
-    document.getElementById("mExportPct").textContent = fmtPct(fulfillRate);
-    document.getElementById("mReturnRows").textContent = fmtInt(returnRows);
-    document.getElementById("mReturnPct").textContent = totalRows ? fmtPct((returnRows / totalRows) * 100) : "0.0%";
-
-    // Gauge 1: Circular Segmented Tick Ring (scaled to 35% benchmark so 27.7% fills ~79% like reference)
-    if (charts.gaugeRing) {
-      const ringPct = Math.max(0, Math.min(100, (gm / 35) * 100));
-      charts.gaugeRing.setOption({
-        series: [
-          // Outer radial ticks
-          {
-            type: "gauge",
-            startAngle: 90,
-            endAngle: -270,
-            radius: "96%",
-            min: 0,
-            max: 100,
-            splitNumber: 12,
-            pointer: { show: false },
-            axisLine: { show: false },
-            axisTick: {
-              distance: -6,
-              length: 7,
-              splitNumber: 5,
-              lineStyle: { color: "rgba(255,255,255,0.16)", width: 1.5 },
-            },
-            splitLine: { show: false },
-            axisLabel: { show: false },
-            detail: { show: false },
-          },
-          // Inner glowing blue progress ring
-          {
-            type: "gauge",
-            startAngle: 90,
-            endAngle: -270,
-            radius: "80%",
-            min: 0,
-            max: 100,
-            pointer: { show: false },
-            progress: {
-              show: true,
-              overlap: false,
-              roundCap: true,
-              clip: false,
-              itemStyle: {
-                color: new echarts.graphic.LinearGradient(0, 0, 1, 1, [
-                  { offset: 0, color: "#1D7AFC" },
-                  { offset: 1, color: "#12D37A" },
-                ]),
-                shadowBlur: 10,
-                shadowColor: "rgba(29, 122, 252, 0.5)",
-              },
-            },
-            axisLine: {
-              lineStyle: { width: 7, color: [[1, "rgba(255,255,255,0.08)"]] },
-            },
-            splitLine: { show: false },
-            axisTick: { show: false },
-            axisLabel: { show: false },
-            detail: { show: false },
-            data: [{ value: ringPct }],
-          },
-        ],
-      });
-    }
-
-    // Gauge 2: Semi-Circle Blue Arc (matching Handle Rate 90.2%)
-    if (charts.gaugeSemi) {
-      charts.gaugeSemi.setOption({
-        series: [
-          {
-            type: "gauge",
-            startAngle: 180,
-            endAngle: 0,
-            center: ["50%", "84%"],
-            radius: "136%",
-            min: 0,
-            max: 100,
-            pointer: { show: false },
-            progress: {
-              show: true,
-              width: 20,
-              itemStyle: {
-                color: new echarts.graphic.LinearGradient(0, 0, 1, 0, [
-                  { offset: 0, color: "#0D63D9" },
-                  { offset: 1, color: "#2196F3" },
-                ]),
-              },
-            },
-            axisLine: {
-              lineStyle: { width: 20, color: [[1, "#252A34"]] },
-            },
-            axisTick: { show: false },
-            splitLine: {
-              show: true,
-              distance: -20,
-              length: 20,
-              lineStyle: { color: "rgba(255,255,255,0.22)", width: 1.5 },
-            },
-            splitNumber: 5,
-            axisLabel: {
-              show: true,
-              distance: -32,
-              color: "#8492A6",
-              fontFamily: "JetBrains Mono",
-              fontSize: 9,
-              formatter: (v) => (v === 0 || v === 80 || v === 100 ? `${v}%` : ""),
-            },
-            detail: { show: false },
-            data: [{ value: Number(fulfillRate.toFixed(1)) }],
-          },
-        ],
-      });
-    }
+    applySidebarSpec({
+      title: "Dashboard",
+      g1Label: "Gross Margin & Revenue",
+      g1Tag: `${fmtPct(salesShare)} tổng`,
+      g1Big: fmtPct(gm),
+      g1Pill: `GP ${fmtCompactVnd(gp)}`,
+      g1Pct: (gm / 35) * 100,
+      bar1Label: "Total Sales",
+      bar1Val: fmtCompactVnd(sales),
+      bar1Pct: salesShare,
+      bar2Label: "COGS (Giá vốn)",
+      bar2Val: fmtCompactVnd(cogs),
+      bar2Pct: cogsRatio,
+      g2Label: "Net Export Rate",
+      g2Tag: `${fmtInt(qty)} QTY`,
+      g2Big: fmtPct(fulfillRate),
+      g2Pill: `${fmtInt(qty)} units`,
+      g2Pct: fulfillRate,
+      metrics: [
+        { l: "TB Sales / Tháng", v: fmtCompactVnd(avgMonthSales), s: `${months.size} tháng`, cls: "pos" },
+        { l: "TB Qty / Tháng", v: fmtInt(avgMonthQty), s: "sp / tháng", cls: "pos" },
+        { l: "Giá bán TB (ASP)", v: fmtCompactVnd(asp), s: "VND / unit", cls: "neutral" },
+        { l: "Tổng Lợi nhuận", v: fmtCompactVnd(gp), s: `GM ${fmtPct(gm)}`, cls: "pos" },
+      ],
+      insets: [
+        { l: "Active Sites", v: fmtInt(sites.size), s: `/ ${lookups.sites.length} sites`, cls: "pos" },
+        { l: "Active Regions", v: fmtInt(regions.size), s: "vùng lọc", cls: "pos" },
+        { l: "Đơn Xuất bán", v: fmtInt(exportRows), s: fmtPct(fulfillRate), cls: "pos" },
+        { l: "Đơn Hoàn bán", v: fmtInt(returnRows), s: totalRows ? fmtPct((returnRows / totalRows) * 100) : "0.0%", cls: "neg" },
+      ],
+    });
   }
 
   // =========================================================================
@@ -2640,6 +3019,7 @@
 
     const rows = getFilteredInvRows();
     const serialRows = getFilteredSerialRows();
+    if (state.activeView === "inventory") renderSidebarInventory();
     renderInvKpis(rows, serialRows);
     renderInvChipsAndInsight(rows, serialRows);
     renderInvBadStockChart(serialRows);

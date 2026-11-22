@@ -15,7 +15,7 @@
   <script src="./app.js" defer></script>
 </head>
 <body>
-  <div class="app-shell">
+  <div class="app-shell" id="appShell">
     <!-- 1. FAR-LEFT ELECTRIC BLUE NAVIGATION RAIL (MATCHING REFERENCE) -->
     <aside class="nav-rail" aria-label="Menu điều hướng">
       <div class="rail-logo" title="CYBERPULSE Sales Telemetry">
@@ -74,17 +74,17 @@
       </div>
     </aside>
 
-    <!-- 2. LEFT KPI & GAUGE TELEMETRY PANEL (MATCHING REFERENCE) -->
-    <aside class="kpi-sidebar" aria-label="Chỉ số tổng quan">
+    <!-- 2. LEFT KPI & GAUGE TELEMETRY PANEL (CONTEXT-AWARE PER TAB) -->
+    <aside class="kpi-sidebar" id="kpiSidebar" aria-label="Chỉ số tổng quan">
       <div class="sidebar-top">
-        <h1 class="sidebar-title">Dashboard</h1>
+        <h1 class="sidebar-title" id="sidebarTitle">Dashboard</h1>
         <button class="btn-reset-mini" id="resetFiltersBtn" title="Đặt lại toàn bộ bộ lọc">↺ Reset</button>
       </div>
 
-      <!-- GAUGE 1: CIRCULAR TICK RING (GROSS MARGIN & SALES VS COGS) -->
+      <!-- GAUGE 1: CIRCULAR TICK RING -->
       <div class="sidebar-block">
         <div class="block-label">
-          <span>Gross Margin &amp; Revenue</span>
+          <span id="sbGauge1Label">Gross Margin &amp; Revenue</span>
           <span class="mini-tag" id="sidebarSalesShareTag">100% tổng</span>
         </div>
         <div class="gauge-wrap">
@@ -97,7 +97,7 @@
 
         <div class="bar-stat">
           <div class="bar-stat-head">
-            <span class="muted">Total Sales</span>
+            <span class="muted" id="sbBar1Label">Total Sales</span>
             <strong class="mono" id="statSalesVal">--</strong>
           </div>
           <div class="bar-track"><div class="bar-fill emerald" id="barSalesFill" style="width:100%"></div></div>
@@ -105,17 +105,17 @@
 
         <div class="bar-stat">
           <div class="bar-stat-head">
-            <span class="muted">COGS (Giá vốn)</span>
+            <span class="muted" id="sbBar2Label">COGS (Giá vốn)</span>
             <strong class="mono" id="statCogsVal">--</strong>
           </div>
           <div class="bar-track"><div class="bar-fill crimson" id="barCogsFill" style="width:72%"></div></div>
         </div>
       </div>
 
-      <!-- GAUGE 2: SEMI-CIRCLE HANDLE/FULFILLMENT RATE -->
+      <!-- GAUGE 2: SEMI-CIRCLE RATE ARC -->
       <div class="sidebar-block">
         <div class="block-label">
-          <span>Net Export Rate</span>
+          <span id="sbGauge2Label">Net Export Rate</span>
           <span class="muted mono" id="statQtyHeader">-- QTY</span>
         </div>
         <div class="semi-gauge-wrap">
@@ -127,49 +127,49 @@
         </div>
       </div>
 
-      <!-- 2x2 METRIC LIST (MATCHING AVG QUEUE / TALKTIME BLOCK) -->
+      <!-- 2x2 METRIC LIST -->
       <div class="sidebar-block metric-grid-2">
         <div class="metric-item">
-          <div class="metric-name">TB Sales / Tháng</div>
+          <div class="metric-name" id="mLbl1">TB Sales / Tháng</div>
           <div class="metric-val mono" id="mAvgMonthSales">--</div>
           <div class="metric-delta pos mono" id="mAvgMonthSalesSub">11 tháng</div>
         </div>
         <div class="metric-item">
-          <div class="metric-name">TB Qty / Tháng</div>
+          <div class="metric-name" id="mLbl2">TB Qty / Tháng</div>
           <div class="metric-val mono" id="mAvgMonthQty">--</div>
           <div class="metric-delta pos mono" id="mAvgMonthQtySub">sp / tháng</div>
         </div>
         <div class="metric-item">
-          <div class="metric-name">Giá bán TB (ASP)</div>
+          <div class="metric-name" id="mLbl3">Giá bán TB (ASP)</div>
           <div class="metric-val mono" id="mAsp">--</div>
-          <div class="metric-delta neutral mono">VND / unit</div>
+          <div class="metric-delta neutral mono" id="mAspSub">VND / unit</div>
         </div>
         <div class="metric-item">
-          <div class="metric-name">Tổng Lợi nhuận</div>
+          <div class="metric-name" id="mLbl4">Tổng Lợi nhuận</div>
           <div class="metric-val mono" id="mTotalGp">--</div>
           <div class="metric-delta pos mono" id="mTotalGpPct">GM --%</div>
         </div>
       </div>
 
-      <!-- 2x2 INSET DARK CARDS (MATCHING DECLINE / ANSWER BLOCK) -->
+      <!-- 2x2 INSET DARK CARDS -->
       <div class="inset-grid-2">
         <div class="inset-card">
-          <div class="metric-name">Active Sites</div>
+          <div class="metric-name" id="iLbl1">Active Sites</div>
           <div class="inset-val mono" id="mActiveSites">--</div>
           <div class="metric-delta pos mono" id="mActiveSitesSub">/ 31 sites</div>
         </div>
         <div class="inset-card">
-          <div class="metric-name">Active Regions</div>
+          <div class="metric-name" id="iLbl2">Active Regions</div>
           <div class="inset-val mono" id="mActiveRegions">--</div>
-          <div class="metric-delta pos mono">vùng lọc</div>
+          <div class="metric-delta pos mono" id="mActiveRegionsSub">vùng lọc</div>
         </div>
         <div class="inset-card">
-          <div class="metric-name">Đơn Xuất bán</div>
+          <div class="metric-name" id="iLbl3">Đơn Xuất bán</div>
           <div class="inset-val mono" id="mExportRows">--</div>
           <div class="metric-delta pos mono" id="mExportPct">--%</div>
         </div>
         <div class="inset-card">
-          <div class="metric-name">Đơn Hoàn bán</div>
+          <div class="metric-name" id="iLbl4">Đơn Hoàn bán</div>
           <div class="inset-val mono" id="mReturnRows">--</div>
           <div class="metric-delta neg mono" id="mReturnPct">--%</div>
         </div>

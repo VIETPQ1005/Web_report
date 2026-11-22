@@ -1774,6 +1774,318 @@ html, body {
   .inv-kpi-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
+/* ==========================================================================
+   SKU / SERIAL 360° SEARCH INSPECTOR STYLES
+   ========================================================================== */
+.btn-quick-lookup {
+  background: rgba(0, 229, 255, 0.14);
+  border: 1px solid rgba(0, 229, 255, 0.45);
+  color: #7CEEFF;
+  font-family: var(--font-ui);
+  font-size: 11px;
+  font-weight: 600;
+  padding: 4px 10px;
+  border-radius: 5px;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.btn-quick-lookup:hover {
+  background: rgba(0, 229, 255, 0.28);
+  color: #fff;
+}
+
+.lookup-hero-box {
+  background: linear-gradient(135deg, rgba(16, 104, 223, 0.14) 0%, #15181D 60%);
+  border-color: rgba(29, 122, 252, 0.35);
+}
+
+.lookup-hero-title {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: 1.15rem;
+  font-weight: 700;
+  color: #fff;
+}
+
+.lookup-hero-sub {
+  margin: 4px 0 0;
+  font-size: 11.5px;
+  color: var(--text-muted);
+}
+
+.lookup-hero-sub strong {
+  color: var(--text-secondary);
+}
+
+.lookup-search-wrap {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  position: relative;
+}
+
+.lookup-search-icon {
+  position: absolute;
+  left: 12px;
+  width: 16px;
+  height: 16px;
+  color: var(--cyan);
+  pointer-events: none;
+}
+
+.lookup-search-input {
+  flex: 1;
+  background: #0D1016;
+  border: 1px solid rgba(29, 122, 252, 0.45);
+  color: #fff;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  padding: 10px 14px 10px 36px;
+  border-radius: 6px;
+  outline: none;
+  transition: border-color 0.18s ease, box-shadow 0.18s ease;
+}
+
+.lookup-search-input:focus {
+  border-color: var(--cyan);
+  box-shadow: 0 0 0 2px rgba(0, 229, 255, 0.16);
+}
+
+.lookup-quick-picks {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.quick-pick-btn {
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  padding: 4px 9px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.quick-pick-btn:hover {
+  border-color: var(--cyan);
+  color: #fff;
+  background: rgba(0, 229, 255, 0.12);
+}
+
+.lookup-suggestions {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 290px;
+  overflow-y: auto;
+  border-top: 1px solid var(--border-subtle);
+  padding-top: 8px;
+}
+
+.lookup-sug-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 11px;
+  border-radius: 5px;
+  background: #101319;
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  cursor: pointer;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.lookup-sug-item:hover {
+  border-color: var(--cyan);
+  background: rgba(29, 122, 252, 0.14);
+}
+
+.lookup-sug-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.lookup-sug-code {
+  font-family: var(--font-mono);
+  font-weight: 700;
+  color: #fff;
+  white-space: nowrap;
+}
+
+.lookup-sug-name {
+  font-size: 12px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.lookup-sug-right {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.lookup-empty {
+  text-align: center;
+  padding: 42px 24px;
+}
+
+.lookup-empty-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.lookup-empty-sub {
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--text-muted);
+  max-width: 680px;
+  margin-left: auto;
+  margin-right: auto;
+  line-height: 1.5;
+}
+
+.lookup-result {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.serial-spotlight {
+  border-color: rgba(0, 229, 255, 0.5);
+  background: linear-gradient(135deg, rgba(0, 229, 255, 0.07) 0%, #15181D 65%);
+}
+
+.lookup-kv-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.lookup-kv {
+  background: #101319;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 5px;
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.lookup-kv-lbl {
+  font-size: 10px;
+  color: var(--text-muted);
+}
+
+.lookup-kv-val {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: #fff;
+}
+
+.sku-profile-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.sku-code-line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.sku-code-pill {
+  background: var(--blue);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 700;
+  padding: 3px 9px;
+  border-radius: 4px;
+}
+
+.sku-name-title {
+  margin: 7px 0 4px;
+  font-size: 1.08rem;
+  font-weight: 700;
+  color: #fff;
+}
+
+.sku-meta-line {
+  font-size: 11.5px;
+  color: var(--text-muted);
+}
+
+.sku-warranty-box {
+  background: #101319;
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  padding: 8px 12px;
+  font-size: 11px;
+  color: var(--text-secondary);
+  max-width: 280px;
+}
+
+.lookup-price-strip {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.lookup-vel-chart { height: 260px; }
+.lookup-subtable-wrap { max-height: 260px; overflow-y: auto; }
+
+.inv-badge.bad-normal { background: rgba(18, 211, 122, 0.16); color: #34D399; }
+.inv-badge.bad-slow { background: rgba(56, 189, 248, 0.18); color: #7DD3FC; }
+.inv-badge.bad-long { background: rgba(245, 158, 11, 0.18); color: #FCD34D; }
+.inv-badge.bad-bad { background: rgba(249, 115, 22, 0.22); color: #FDBA74; }
+.inv-badge.bad-verybad { background: rgba(229, 62, 81, 0.24); color: #FDA4AF; }
+.inv-badge.status-shortage { background: rgba(124, 58, 237, 0.24); color: #C4B5FD; }
+
+.dark-table tbody tr.row-highlight {
+  background: rgba(0, 229, 255, 0.14);
+  outline: 1px solid rgba(0, 229, 255, 0.55);
+}
+
+.link-sku-btn {
+  background: none;
+  border: none;
+  padding: 0;
+  color: #7DB8FF;
+  font-family: var(--font-mono);
+  font-weight: 700;
+  font-size: inherit;
+  cursor: pointer;
+  text-decoration: underline;
+  text-decoration-color: rgba(125, 184, 255, 0.35);
+}
+
+.link-sku-btn:hover {
+  color: var(--cyan);
+}
+
+@media (max-width: 1100px) {
+  .lookup-kv-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .lookup-price-strip { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+
+@media (max-width: 600px) {
+  .lookup-price-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
 /* RESPONSIVE */
 @media (max-width: 1260px) {
   .app-shell { grid-template-columns: 64px 250px minmax(0, 1fr); }

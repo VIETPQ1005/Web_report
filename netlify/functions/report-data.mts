@@ -50,6 +50,10 @@ interface ReportPayload {
     siteDirectory?: Record<string, unknown>;
     rows?: unknown[][];
   };
+  masterProducts?: { meta?: { rowCount?: number }; rows?: unknown[][] };
+  invSkuLevel?: { meta?: { rowCount?: number }; rows?: unknown[][] };
+  invBranchLevel?: { meta?: { rowCount?: number }; rows?: unknown[][] };
+  invSerials?: { meta?: { rowCount?: number }; rows?: unknown[][] };
 }
 
 function getReportStore(context: Context) {
@@ -234,6 +238,8 @@ export default async (req: Request, context: Context) => {
         updatedAt,
         rowCount: parsed.rows.length,
         inventoryRows: Array.isArray(parsed.inventory?.rows) ? parsed.inventory.rows.length : 0,
+        serialRows: Array.isArray(parsed.invSerials?.rows) ? parsed.invSerials.rows.length : 0,
+        masterRows: Array.isArray(parsed.masterProducts?.rows) ? parsed.masterProducts.rows.length : 0,
         dateMin: String(parsed.meta.dateMin || ""),
         dateMax: String(parsed.meta.dateMax || ""),
         sources: sourceNames || "Uploaded Excel",

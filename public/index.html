@@ -32,9 +32,13 @@
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
           <span>Dashboard</span>
         </button>
-        <button class="rail-item" data-view="inventory" title="Báo cáo Tồn Kho (Inventory Details)">
+        <button class="rail-item" data-view="inventory" title="Báo cáo Tổng quan Tồn Kho, Bad Stock & Tuổi tồn">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 2L3 7l9 5 9-5-9-5z"/><path d="M3 12l9 5 9-5"/><path d="M3 17l9 5 9-5"/></svg>
           <span>Tồn Kho<br/>Inventory</span>
+        </button>
+        <button class="rail-item" data-view="lookup" title="Công cụ Tra cứu 360° theo mã SKU hoặc số Serial">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><circle cx="11" cy="11" r="7"/><path d="M20 20l-4.35-4.35"/></svg>
+          <span>Tra cứu<br/>SKU/SN</span>
         </button>
         <button class="rail-item" data-view="monthly" title="Báo cáo Sales & Qty theo Report Date">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 3v18h18"/><rect x="7" y="10" width="3" height="7"/><rect x="12" y="6" width="3" height="11"/><rect x="17" y="12" width="3" height="5"/></svg>
@@ -203,8 +207,9 @@
         </div>
 
         <div class="inv-top-banner hidden" id="invTopBanner">
-          <span class="inv-banner-title">📦 BÁO CÁO TỒN KHO (INVENTORY TELEMETRY)</span>
+          <span class="inv-banner-title" id="invTopBannerTitle">📦 BÁO CÁO TỒN KHO &amp; BAD STOCK</span>
           <span class="badge-blue mono" id="invSnapshotBadge">Snapshot: --</span>
+          <button type="button" class="btn-quick-lookup" id="jumpToLookupBtn" title="Mở công cụ tra cứu nhanh theo SKU hoặc Serial">🔍 Tra cứu SKU / Serial</button>
         </div>
 
         <div class="topbar-right">
@@ -461,11 +466,21 @@
 
       <!-- ================================================================
            VIEW 7: INVENTORY (TỒN KHO) FULL ANALYTICS DASHBOARD
+           Tình trạng mua hàng • Range • Loại tồn (Bad Stock) • Tuổi tồn (30/60/90/180/365/>365)
            ================================================================ -->
       <section class="view-pane" id="view-inventory">
         <!-- INVENTORY FILTER BAR -->
         <div class="inv-filter-bar">
           <div class="topbar-filters">
+            <select id="invFilterStatus" class="dark-select" title="Lọc theo Tình trạng mua hàng (Normal, Market Shortage, Discontinued, EOL)">
+              <option value="">Tất cả Tình trạng mua</option>
+            </select>
+            <select id="invFilterRange" class="dark-select" title="Lọc theo Range sản phẩm">
+              <option value="">Tất cả Range</option>
+            </select>
+            <select id="invFilterBadStock" class="dark-select" title="Lọc theo Loại tồn (Thông thường, Bán chậm, Tồn lâu, Tồn xấu, Rất xấu)">
+              <option value="">Tất cả Loại tồn</option>
+            </select>
             <select id="invFilterSite" class="dark-select" title="Lọc theo Mã Kho / Site Code">
               <option value="">Tất cả Site Kho</option>
             </select>
@@ -480,11 +495,6 @@
             </select>
             <select id="invFilterBrand" class="dark-select" title="Lọc theo Thương hiệu">
               <option value="">Tất cả Brand</option>
-            </select>
-            <select id="invFilterStatus" class="dark-select" title="Lọc theo Trạng thái mua hàng">
-              <option value="">Normal + Discontinued</option>
-              <option value="Normal">Chỉ Normal</option>
-              <option value="Discontinued">Chỉ Discontinued</option>
             </select>
             <label class="pill-toggle" title="Chỉ xem hàng bán mới tại kho">
               <input type="checkbox" id="invSellableOnlyToggle" />
@@ -512,7 +522,7 @@
             <div class="inv-kpi-sub mono" id="invKpiValueSub">Net PP: --</div>
           </div>
           <div class="inv-kpi-card accent-cyan">
-            <div class="inv-kpi-lbl">Tổng Số lượng Tồn (QTY)</div>
+            <div class="inv-kpi-lbl">Tổng QTY / Serial / SKU</div>
             <div class="inv-kpi-val mono" id="invKpiQty">--</div>
             <div class="inv-kpi-sub mono" id="invKpiQtySub">-- SKUs • -- kho</div>
           </div>
@@ -521,25 +531,97 @@
             <div class="inv-kpi-val mono" id="invKpiSellable">--</div>
             <div class="inv-kpi-sub mono pos" id="invKpiSellableSub">--% • -- units</div>
           </div>
+          <div class="inv-kpi-card accent-amber">
+            <div class="inv-kpi-lbl">Bad Stock (Chậm/Lâu/Xấu)</div>
+            <div class="inv-kpi-val mono" id="invKpiBadStock">--</div>
+            <div class="inv-kpi-sub mono warn" id="invKpiBadStockSub">-- SN rủi ro / -- SN</div>
+          </div>
           <div class="inv-kpi-card accent-crimson">
             <div class="inv-kpi-lbl">Hàng Hư Hỏng (Damaged)</div>
             <div class="inv-kpi-val mono" id="invKpiDamaged">--</div>
             <div class="inv-kpi-sub mono neg" id="invKpiDamagedSub">--% • -- units</div>
           </div>
-          <div class="inv-kpi-card accent-amber">
-            <div class="inv-kpi-lbl">Ngừng nhập (Discontinued)</div>
-            <div class="inv-kpi-val mono" id="invKpiDiscontinued">--</div>
-            <div class="inv-kpi-sub mono warn" id="invKpiDiscontinuedSub">--% • -- units</div>
-          </div>
           <div class="inv-kpi-card accent-violet">
-            <div class="inv-kpi-lbl">Tồn lâu &gt; 180 ngày</div>
-            <div class="inv-kpi-val mono" id="invKpiAging180">--</div>
-            <div class="inv-kpi-sub mono" id="invKpiAging180Sub">--% • -- units</div>
+            <div class="inv-kpi-lbl">Tồn lâu &gt; 365 ngày</div>
+            <div class="inv-kpi-val mono" id="invKpiAging365">--</div>
+            <div class="inv-kpi-sub mono" id="invKpiAging365Sub">Discontinued: --</div>
           </div>
         </div>
 
-        <!-- CHARTS ROW 1: SITE CODE + BIN TYPE/ZONE -->
-        <div class="inv-charts-row-top">
+        <!-- CORE OVERVIEW ROW 1: LOẠI TỒN (BAD STOCK) + TUỔI TỒN (30/60/90/180/365/>365) -->
+        <div class="two-col-deep">
+          <div class="panel-block">
+            <div class="panel-header">
+              <div class="panel-title-group">
+                <h2 class="panel-title">Phân loại Tồn Kho (Loại tồn / Bad Stock)</h2>
+                <span class="panel-hint">Thông thường • Bán chậm • Tồn lâu • Tồn xấu • Rất xấu — Click để lọc</span>
+              </div>
+              <div class="panel-controls">
+                <div class="seg-tabs" id="invBadScopeGroup">
+                  <button class="seg-btn active" data-val="company">Công ty</button>
+                  <button class="seg-btn" data-val="site">Chi nhánh</button>
+                </div>
+                <div class="seg-tabs" id="invBadFilterGroup">
+                  <button class="seg-btn active" data-val="classified">5 Loại tồn</button>
+                  <button class="seg-btn" data-val="all">Tất cả SN</button>
+                </div>
+                <div class="seg-tabs" id="invBadMetricGroup">
+                  <button class="seg-btn active" data-val="value">Giá trị</button>
+                  <button class="seg-btn" data-val="qty">SL</button>
+                </div>
+                <button class="btn-mini" data-export-chart="invBadStock">PNG</button>
+              </div>
+            </div>
+            <div id="chartInvBadStock" class="chart-canvas inv-chart-mid"></div>
+          </div>
+
+          <div class="panel-block">
+            <div class="panel-header">
+              <div class="panel-title-group">
+                <h2 class="panel-title">Phân tích Tuổi Tồn Kho <span class="badge-blue">30 • 60 • 90 • 180 • 365 • &gt;365</span></h2>
+                <span class="panel-hint">Click cột để lọc theo nhóm tuổi tồn</span>
+              </div>
+              <div class="panel-controls">
+                <div class="seg-tabs" id="invAgingBasisGroup">
+                  <button class="seg-btn active" data-val="first">Nhập đầu (Cty)</button>
+                  <button class="seg-btn" data-val="last">Nhập kho (Site)</button>
+                </div>
+                <div class="seg-tabs" id="invAgingMetricGroup">
+                  <button class="seg-btn active" data-val="both">Giá trị + QTY</button>
+                  <button class="seg-btn" data-val="value">Giá trị</button>
+                  <button class="seg-btn" data-val="qty">QTY</button>
+                </div>
+                <button class="btn-mini" data-export-chart="invAging">PNG</button>
+              </div>
+            </div>
+            <div id="chartInvAging" class="chart-canvas inv-chart-mid"></div>
+          </div>
+        </div>
+
+        <!-- CORE OVERVIEW ROW 2: TÌNH TRẠNG MUA HÀNG & RANGE + TỒN KHO THEO SITE CODE -->
+        <div class="two-col-deep">
+          <div class="panel-block">
+            <div class="panel-header">
+              <div class="panel-title-group">
+                <h2 class="panel-title">Tình trạng Mua hàng &amp; Range</h2>
+                <span class="panel-hint">Normal • Market Shortage • Discontinued • EOL • Range — Click để lọc</span>
+              </div>
+              <div class="panel-controls">
+                <div class="seg-tabs" id="invStatusDimGroup">
+                  <button class="seg-btn active" data-val="status_inv">TT Mua (Kho)</button>
+                  <button class="seg-btn" data-val="range_inv">Range (Kho)</button>
+                  <button class="seg-btn" data-val="status_master">Master (4,068)</button>
+                </div>
+                <div class="seg-tabs" id="invStatusMetricGroup">
+                  <button class="seg-btn active" data-val="value">Giá trị</button>
+                  <button class="seg-btn" data-val="qty">SL/SKU</button>
+                </div>
+                <button class="btn-mini" data-export-chart="invStatusRange">PNG</button>
+              </div>
+            </div>
+            <div id="chartInvStatusRange" class="chart-canvas inv-chart-mid"></div>
+          </div>
+
           <div class="panel-block">
             <div class="panel-header">
               <div class="panel-title-group">
@@ -558,9 +640,12 @@
                 <button class="btn-mini" data-export-chart="invSite">PNG</button>
               </div>
             </div>
-            <div id="chartInvSite" class="chart-canvas inv-chart-tall"></div>
+            <div id="chartInvSite" class="chart-canvas inv-chart-mid"></div>
           </div>
+        </div>
 
+        <!-- OVERVIEW ROW 3: BIN TYPE/ZONE + SUBCAT/BRAND -->
+        <div class="two-col-deep">
           <div class="panel-block">
             <div class="panel-header">
               <div class="panel-title-group">
@@ -579,28 +664,7 @@
                 <button class="btn-mini" data-export-chart="invBin">PNG</button>
               </div>
             </div>
-            <div id="chartInvBin" class="chart-canvas inv-chart-tall"></div>
-          </div>
-        </div>
-
-        <!-- CHARTS ROW 2: INVENTORY AGING + SUBCAT/BRAND -->
-        <div class="two-col-deep">
-          <div class="panel-block">
-            <div class="panel-header">
-              <div class="panel-title-group">
-                <h2 class="panel-title">Phân tích Tuổi Tồn Kho (Aging)</h2>
-                <span class="panel-hint">Tính từ Last Received Date — Click cột để lọc nhóm tuổi</span>
-              </div>
-              <div class="panel-controls">
-                <div class="seg-tabs" id="invAgingMetricGroup">
-                  <button class="seg-btn active" data-val="both">Giá trị + QTY</button>
-                  <button class="seg-btn" data-val="value">Giá trị</button>
-                  <button class="seg-btn" data-val="qty">QTY</button>
-                </div>
-                <button class="btn-mini" data-export-chart="invAging">PNG</button>
-              </div>
-            </div>
-            <div id="chartInvAging" class="chart-canvas inv-chart-mid"></div>
+            <div id="chartInvBin" class="chart-canvas inv-chart-mid"></div>
           </div>
 
           <div class="panel-block">
@@ -625,21 +689,23 @@
           </div>
         </div>
 
-        <!-- INVENTORY DETAIL TABLE & CSV EXPORT -->
+        <!-- INVENTORY DETAIL TABLE & CSV EXPORT (5 MODES) -->
         <div class="panel-block">
           <div class="panel-header">
             <div>
-              <h2 class="panel-title">Bảng đối soát Tồn kho chi tiết &amp; Xuất CSV</h2>
-              <span class="panel-hint" id="invTableCountInfo">Đang hiển thị -- dòng</span>
+              <h2 class="panel-title">Bảng đối soát Tồn kho, Serial, Bad Stock &amp; Tốc độ bán</h2>
+              <span class="panel-hint" id="invTableCountInfo">Click vào bất kỳ SKU hoặc Serial nào để mở Tra cứu 360°</span>
             </div>
             <div class="panel-controls">
               <div class="seg-tabs" id="invTableTabGroup">
-                <button class="seg-btn active" id="invRawTabBtn" data-val="raw">Chi tiết SKU &amp; BIN</button>
-                <button class="seg-btn" data-val="sites">Tổng hợp theo Kho</button>
-                <button class="seg-btn" data-val="skus">Tổng hợp theo SKU</button>
+                <button class="seg-btn active" id="invRawTabBtn" data-val="raw">SKU &amp; BIN</button>
+                <button class="seg-btn" id="invSerialTabBtn" data-val="serials">Serial &amp; Bad Stock</button>
+                <button class="seg-btn" id="invVelocityTabBtn" data-val="velocity">Bán 7D–180D</button>
+                <button class="seg-btn" data-val="sites">Theo Kho</button>
+                <button class="seg-btn" id="invMasterTabBtn" data-val="master">Master Product</button>
               </div>
-              <input type="search" id="invTableSearchInput" class="dark-search" placeholder="Tìm SKU, tên linh kiện, kho, BIN, hãng..." />
-              <button class="btn-primary-blue" id="exportInvCsvBtn">⬇ Export CSV Kho</button>
+              <input type="search" id="invTableSearchInput" class="dark-search" placeholder="Tìm SKU, Serial, tên SP, kho, BIN..." />
+              <button class="btn-primary-blue" id="exportInvCsvBtn">⬇ Export CSV</button>
             </div>
           </div>
           <div class="table-pagination-bar" id="invTablePagination"></div>
@@ -648,6 +714,179 @@
               <thead id="invTableHead"></thead>
               <tbody id="invTableBody"></tbody>
             </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- ================================================================
+           VIEW 8: SKU / SERIAL 360° SEARCH INSPECTOR
+           ================================================================ -->
+      <section class="view-pane" id="view-lookup">
+        <!-- HERO SEARCH BAR -->
+        <div class="panel-block lookup-hero-box">
+          <div class="lookup-hero-head">
+            <div>
+              <h2 class="lookup-hero-title">🔍 Công cụ Tra cứu 360° theo SKU hoặc Serial Number</h2>
+              <p class="lookup-hero-sub">Hợp nhất tức thì từ <strong>Master Product (4,068 SKUs)</strong> • <strong>Inventory Details</strong> • <strong>SKU Level (7D/30D/90D/180D)</strong> • <strong>Branch Level</strong> • <strong>Serial Details (520 SN)</strong> • <strong>Bad Stock</strong> • <strong>Sales 2026</strong></p>
+            </div>
+          </div>
+
+          <div class="lookup-search-wrap">
+            <svg class="lookup-search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M20 20l-4.35-4.35"/></svg>
+            <input type="search" id="lookupSearchInput" class="lookup-search-input" placeholder="Nhập mã SKU (vd: 19020206), số Serial (vd: 19020206AE00052, NH311026-1020) hoặc tên sản phẩm (vd: HT03XL, WDX0R)..." autocomplete="off" />
+            <button type="button" class="btn-primary-blue" id="lookupSearchBtn">Tra cứu</button>
+          </div>
+
+          <div class="lookup-quick-picks" id="lookupQuickPicks"></div>
+
+          <!-- Instant Autocomplete Suggestions -->
+          <div class="lookup-suggestions hidden" id="lookupSuggestions"></div>
+        </div>
+
+        <!-- EMPTY PROMPT STATE -->
+        <div class="panel-block lookup-empty" id="lookupEmptyState">
+          <div class="lookup-empty-title">Nhập mã SKU, số Serial hoặc tên linh kiện ở khung trên để xem hồ sơ 360°</div>
+          <div class="lookup-empty-sub">Hoặc bấm vào một mã gợi ý nhanh phía trên để xem đầy đủ: Tình trạng mua hàng, Range, Giá niêm yết &amp; Giá vốn, Tồn kho theo từng kho/BIN, Tốc độ bán 7D/30D/90D/180D toàn hệ thống &amp; từng Chi nhánh, Tuổi tồn và Danh sách Serial / Bad Stock.</div>
+        </div>
+
+        <!-- 360° RESULT CONTAINER -->
+        <div class="lookup-result hidden" id="lookupResultPane">
+          <!-- 1. SERIAL SPOTLIGHT CARD (SHOWN WHEN SEARCHING BY SERIAL) -->
+          <div class="panel-block serial-spotlight hidden" id="lookupSerialCard">
+            <div class="panel-header">
+              <div class="panel-title-group">
+                <h3 class="panel-title">🏷️ Thông tin chi tiết Serial Number: <span class="mono" id="lkSnCode">--</span></h3>
+                <span class="inv-badge" id="lkSnBadCompBadge">--</span>
+                <span class="inv-badge" id="lkSnBadSiteBadge">--</span>
+              </div>
+              <button type="button" class="btn-mini" id="lkClearSerialBtn">Xem toàn bộ SKU</button>
+            </div>
+            <div class="lookup-kv-grid" id="lkSerialGrid"></div>
+          </div>
+
+          <!-- 2. SKU MASTER HEADER + PRICING & MARGIN -->
+          <div class="panel-block sku-profile-card">
+            <div class="sku-profile-top">
+              <div>
+                <div class="sku-code-line">
+                  <span class="sku-code-pill mono" id="lkSkuCode">--</span>
+                  <span class="inv-badge" id="lkSkuStatusBadge">--</span>
+                  <span class="inv-badge other" id="lkSkuRangeBadge">Range: --</span>
+                  <span class="inv-badge other" id="lkSkuListingBadge">--</span>
+                  <span class="inv-badge other" id="lkSkuSerialFlag">--</span>
+                </div>
+                <h2 class="sku-name-title" id="lkSkuName">--</h2>
+                <div class="sku-meta-line" id="lkSkuMetaLine">--</div>
+              </div>
+              <div class="sku-warranty-box" id="lkWarrantyBox"></div>
+            </div>
+
+            <!-- 6 KEY METRIC CARDS -->
+            <div class="inv-kpi-grid" id="lkSummaryKpis"></div>
+
+            <!-- PRICING & MARGIN ROW -->
+            <div class="lookup-price-strip" id="lkPriceStrip"></div>
+          </div>
+
+          <!-- 3. VELOCITY (7D/30D/90D/180D) + BRANCH LEVEL BREAKDOWN -->
+          <div class="two-col-deep">
+            <div class="panel-block">
+              <div class="panel-header">
+                <div class="panel-title-group">
+                  <h3 class="panel-title">Tốc độ bán SKU (7D • 30D • 90D • 180D)</h3>
+                  <span class="panel-hint" id="lkVelocitySub">Nguồn: Inventory_SKU_Level &amp; Sales 2026</span>
+                </div>
+              </div>
+              <div id="chartLookupVelocity" class="chart-canvas lookup-vel-chart"></div>
+            </div>
+
+            <div class="panel-block">
+              <div class="panel-header">
+                <div class="panel-title-group">
+                  <h3 class="panel-title">Phân bổ Tồn &amp; Bán theo Chi nhánh (Branch Level)</h3>
+                  <span class="panel-hint" id="lkBranchCountInfo">-- chi nhánh</span>
+                </div>
+              </div>
+              <div class="table-wrap lookup-subtable-wrap">
+                <table class="dark-table">
+                  <thead>
+                    <tr>
+                      <th>Site</th>
+                      <th>Tên Chi nhánh</th>
+                      <th class="num">Inv QTY</th>
+                      <th class="num">Inv Value</th>
+                      <th class="num">7D</th>
+                      <th class="num">30D</th>
+                      <th class="num">90D</th>
+                      <th class="num">180D</th>
+                      <th class="num">S.Days</th>
+                    </tr>
+                  </thead>
+                  <tbody id="lkBranchTableBody"></tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+
+          <!-- 4. BIN INVENTORY DETAILS + SERIAL & BAD STOCK LIST -->
+          <div class="panel-block">
+            <div class="panel-header">
+              <div class="panel-title-group">
+                <h3 class="panel-title">Danh sách Serial tồn kho &amp; Phân loại Bad Stock</h3>
+                <span class="panel-hint" id="lkSerialListInfo">-- serial</span>
+              </div>
+              <button type="button" class="btn-mini" id="lkExportSkuBtn">⬇ Export Hồ sơ CSV</button>
+            </div>
+            <div class="table-wrap">
+              <table class="dark-table">
+                <thead>
+                  <tr>
+                    <th>Serial Number</th>
+                    <th>Site</th>
+                    <th>BIN Code</th>
+                    <th>BIN Type</th>
+                    <th>Nhà cung cấp</th>
+                    <th>Nhập đầu / Cuối</th>
+                    <th class="num">Tuổi Cty</th>
+                    <th class="num">Tuổi Site</th>
+                    <th>Loại tồn (Cty)</th>
+                    <th>Loại tồn (Site)</th>
+                    <th class="num">Stock Day</th>
+                    <th class="num">Giá trị (VND)</th>
+                  </tr>
+                </thead>
+                <tbody id="lkSerialTableBody"></tbody>
+              </table>
+            </div>
+          </div>
+
+          <!-- 5. BIN-LEVEL SUMMARY (Inventory_Details) -->
+          <div class="panel-block">
+            <div class="panel-header">
+              <div class="panel-title-group">
+                <h3 class="panel-title">Chi tiết vị trí BIN (Inventory Details)</h3>
+                <span class="panel-hint" id="lkBinListInfo">-- dòng BIN</span>
+              </div>
+            </div>
+            <div class="table-wrap">
+              <table class="dark-table">
+                <thead>
+                  <tr>
+                    <th>Site</th>
+                    <th>Tên Kho</th>
+                    <th>BIN Code</th>
+                    <th>BIN Type</th>
+                    <th>BIN Zone</th>
+                    <th>Last Recv</th>
+                    <th class="num">Min Stock</th>
+                    <th class="num">QTY</th>
+                    <th class="num">Unit Cost</th>
+                    <th class="num">Giá trị (VND)</th>
+                  </tr>
+                </thead>
+                <tbody id="lkBinTableBody"></tbody>
+              </table>
+            </div>
           </div>
         </div>
       </section>

@@ -1,6 +1,8 @@
 # Dependencies & Netlify local state
 node_modules/
 .netlify/
+__pycache__/
+*.pyc
 
 # Raw Excel data (keep private if pushing to a public repo)
 data/*.xlsx

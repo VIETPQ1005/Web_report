@@ -3570,14 +3570,15 @@ body.theme-light .gmf-divider {
 .gmf-date-box {
   display: inline-flex;
   align-items: center;
-  gap: 7px;
+  gap: 6px;
+  margin-left: 4px;
 }
 
 .gmf-date-box .date-picker-box {
   background: #0E1117;
   border: 1px solid rgba(0, 229, 255, 0.35);
   border-radius: 5px;
-  padding: 5px 10px;
+  padding: 4px 8px;
 }
 
 body.theme-light .gmf-date-box .date-picker-box {
@@ -3585,11 +3586,36 @@ body.theme-light .gmf-date-box .date-picker-box {
   border-color: #CBD5E1;
 }
 
+.gmf-top-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: nowrap;
+}
+
+.gmf-cat-section {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex-wrap: nowrap;
+  min-width: 0;
+}
+
 .gmf-right-actions {
   margin-left: auto;
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  gap: 10px;
-  flex-wrap: wrap;
+  gap: 8px;
+  flex-wrap: nowrap;
+  flex-shrink: 0;
+}
+
+@media (max-width: 1180px) {
+  .gmf-top-row,
+  .gmf-cat-section,
+  .gmf-right-actions {
+    flex-wrap: wrap;
+  }
 }

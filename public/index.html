@@ -188,47 +188,18 @@
     <!-- 3. MAIN DARK WORKSPACE CANVAS -->
     <main class="main-canvas">
       <!-- ================================================================
-           TIER 1: BỘ LỌC LỚN TOÀN CỤC (GLOBAL MASTER FILTER FOR ALL TABS)
-           Phong Vũ × ACCY Brand + Category Code + Subcat 2 + Date Range + Theme Switch
+           ROW 1: BỘ LỌC CHUNG (CATEGORY + KỲ BÁO CÁO + UPDATE DATA + DARK/LIGHT MODE GÓC CAO)
            ================================================================ -->
       <section class="global-master-filter" aria-label="Bộ lọc lớn toàn cục cho tất cả báo cáo">
         <div class="gmf-top-row">
           <div class="gmf-cat-section">
-            <div class="pv-accy-brand" title="PHONGVU.VN — Ngành hàng ACCY (Accessories &amp; Peripherals)">
-              <div class="pv-brand-mark">
-                <svg viewBox="0 0 36 36" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-                  <polygon points="10.5,2.2 18.8,10.5 10.5,18.8 2.2,10.5" fill="#3EE0FF"/>
-                  <circle cx="26.5" cy="10.5" r="6.3" fill="#3EE0FF"/>
-                  <circle cx="10.5" cy="26.5" r="6.3" fill="#3EE0FF"/>
-                  <rect x="20.2" y="20.2" width="12.6" height="12.6" rx="0.8" fill="#3EE0FF"/>
-                </svg>
-              </div>
-              <div class="pv-brand-text">
-                <div class="pv-brand-top">
-                  <span class="pv-wordmark">PHONGVU</span><span class="pv-vn">.VN</span>
-                </div>
-                <span class="pv-accy-pill">ACCY DIVISION</span>
-              </div>
-            </div>
-
-            <span class="gmf-divider" aria-hidden="true"></span>
-
             <span class="gmf-label">CATEGORY:</span>
             <div class="cat-btn-group" id="globalCatBtnGroup" role="group" aria-label="Lọc theo Category Code">
               <button type="button" class="cat-pill-btn active" data-cat="">Tất cả</button>
             </div>
-          </div>
-
-          <div class="gmf-right-actions">
-            <div class="gmf-subcat-box">
-              <label for="globalSubcatSelect" class="gmf-label">SUBCAT 2:</label>
-              <select id="globalSubcatSelect" class="dark-select gmf-subcat-select" title="Lọc toàn bộ các Tab theo Subcat 2 (Code - Name)">
-                <option value="">Tất cả Subcat 2 (Code - Name)</option>
-              </select>
-            </div>
 
             <div class="gmf-date-box" id="salesDateRightBox">
-              <span class="gmf-label">KỲ BÁO CÁO:</span>
+              <span class="gmf-label">KỲ:</span>
               <div class="date-picker-box" id="salesDatePickerBox" title="Lọc theo khoảng Tháng/Năm (Mặc định hiển thị Năm hiện tại)">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" class="cal-icon"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>
                 <select id="filterMonthFrom" class="date-select" aria-label="Từ tháng"></select>
@@ -236,8 +207,10 @@
                 <select id="filterMonthTo" class="date-select" aria-label="Đến tháng"></select>
               </div>
             </div>
+          </div>
 
-            <button type="button" class="btn-clear-global hidden" id="clearGlobalFilterBtn" title="Xóa bộ lọc Category, Subcat 2 &amp; đặt lại Kỳ báo cáo Năm hiện tại">✕ Bỏ lọc chung</button>
+          <div class="gmf-right-actions">
+            <button type="button" class="btn-clear-global hidden" id="clearGlobalFilterBtn" title="Xóa bộ lọc Category, Subcat 2 &amp; đặt lại Kỳ báo cáo Năm hiện tại">✕ Bỏ lọc</button>
 
             <div class="update-split-btn">
               <button type="button" class="btn-update-data" id="autoSyncDataBtn" title="Bấm 1 lần để tự động đọc tất cả file Excel trong thư mục gốc và cập nhật lên Web">
@@ -248,28 +221,37 @@
             </div>
 
             <div class="theme-switch-group" id="themeSwitchGroup" role="group" aria-label="Chuyển đổi giao diện Dark Mode và Light Mode">
-              <button type="button" class="theme-switch-btn active" data-theme-val="dark" title="Giao diện tối (Dark Mode)">🌙 Dark Mode</button>
-              <button type="button" class="theme-switch-btn" data-theme-val="light" title="Giao diện sáng (Light Mode)">☀️ Light Mode</button>
+              <button type="button" class="theme-switch-btn active" data-theme-val="dark" title="Giao diện tối (Dark Mode)">🌙 Dark</button>
+              <button type="button" class="theme-switch-btn" data-theme-val="light" title="Giao diện sáng (Light Mode)">☀️ Light</button>
             </div>
           </div>
         </div>
       </section>
 
       <!-- ================================================================
-           TIER 2: BỘ LỌC RIÊNG CỦA TỪNG REPORT (PER-REPORT LOCAL FILTERS)
+           ROW 2: SUBCAT 2 & BỘ LỌC RIÊNG CỦA TỪNG REPORT
            ================================================================ -->
       <header class="canvas-topbar" id="localReportTopbar">
-        <div class="topbar-filters" id="salesTopFilters">
-          <span class="local-filter-tag">LỌC RIÊNG:</span>
-          <select id="filterChannel" class="dark-select" title="Lọc theo Sales Channel">
-            <option value="">Tất cả Channel</option>
-          </select>
-          <select id="filterSite" class="dark-select" title="Lọc theo Sale Site Code - Store Name">
-            <option value="">Tất cả Site - Store</option>
-          </select>
-          <select id="filterRegion" class="dark-select" title="Lọc theo Region Name">
-            <option value="">Tất cả Region Name</option>
-          </select>
+        <div class="topbar-filters">
+          <div class="gmf-subcat-box">
+            <label for="globalSubcatSelect" class="gmf-label">SUBCAT 2:</label>
+            <select id="globalSubcatSelect" class="dark-select gmf-subcat-select" title="Lọc toàn bộ các Tab theo Subcat 2 (Code - Name)">
+              <option value="">Tất cả Subcat 2 (Code - Name)</option>
+            </select>
+          </div>
+
+          <div class="topbar-filters" id="salesTopFilters">
+            <span class="local-filter-tag">LỌC RIÊNG:</span>
+            <select id="filterChannel" class="dark-select" title="Lọc theo Sales Channel">
+              <option value="">Tất cả Channel</option>
+            </select>
+            <select id="filterSite" class="dark-select" title="Lọc theo Sale Site Code - Store Name">
+              <option value="">Tất cả Site - Store</option>
+            </select>
+            <select id="filterRegion" class="dark-select" title="Lọc theo Region Name">
+              <option value="">Tất cả Region Name</option>
+            </select>
+          </div>
         </div>
 
         <div class="inv-top-banner hidden" id="invTopBanner">

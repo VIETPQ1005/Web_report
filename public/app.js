@@ -789,24 +789,36 @@
       renderLookupProfile(state.lookup.selectedSku, state.lookup.selectedSerial);
     }
 
-    document.getElementById("filterRegion").value = "";
-    document.getElementById("filterSite").value = "";
-    document.getElementById("filterChannel").value = "";
-    document.getElementById("filterOrderType").value = "";
-    document.getElementById("excludeBulkToggle").checked = false;
-    document.getElementById("storeRegionsOnlyToggle").checked = false;
+    const setValSafe = (id, v) => { const el = document.getElementById(id); if (el) el.value = v; };
+    const setChkSafe = (id, v) => { const el = document.getElementById(id); if (el) el.checked = v; };
+    setValSafe("filterRegion", "");
+    setValSafe("filterSite", "");
+    setValSafe("filterChannel", "");
+    setValSafe("filterOrderType", "");
+    setChkSafe("excludeBulkToggle", false);
+    setChkSafe("storeRegionsOnlyToggle", false);
 
     renderAll();
   }
 
   // --- TIER 1: GLOBAL MASTER FILTER BAR (CATEGORY CODE BUTTONS + SUBCAT 2) ---
-  function populateGlobalMasterFilter() {
+  const HIDDEN_GLOBAL_CATS = new Set(["NH07", "NH10", "NH03"]);
+
+  function getVisibleGlobalCategories() {
     const tax = state.raw?.taxonomy || { categories: [], allSubcats: [] };
+    return (tax.categories || []).filter((c) => !HIDDEN_GLOBAL_CATS.has(String(c.code || "").toUpperCase()));
+  }
+
+  function populateGlobalMasterFilter() {
+    const visibleCats = getVisibleGlobalCategories();
+    if (state.globalCat && HIDDEN_GLOBAL_CATS.has(state.globalCat.toUpperCase())) {
+      state.globalCat = "";
+    }
     const catWrap = document.getElementById("globalCatBtnGroup");
     if (catWrap) {
       const allActive = !state.globalCat ? "active" : "";
-      let html = `<button type="button" class="cat-pill-btn ${allActive}" data-cat="">Tất cả (${tax.categories.length} Cat)</button>`;
-      tax.categories.forEach((c) => {
+      let html = `<button type="button" class="cat-pill-btn ${allActive}" data-cat="">Tất cả (${visibleCats.length} NH)</button>`;
+      visibleCats.forEach((c) => {
         const isAct = state.globalCat === c.code ? "active" : "";
         const shortDesc = String(c.label || "").replace(new RegExp(`^${c.code}\\s*[—-]\\s*`, "i"), "");
         const subText = shortDesc && shortDesc !== c.code ? shortDesc : `${c.subcats?.length || 0} nhóm`;
@@ -823,14 +835,16 @@
   }
 
   function refreshGlobalSubcatDropdown() {
-    const tax = state.raw?.taxonomy || { categories: [], allSubcats: [] };
+    const visibleCats = getVisibleGlobalCategories();
     const sel = document.getElementById("globalSubcatSelect");
     if (!sel) return;
 
-    let subList = tax.allSubcats || [];
+    let subList = [];
     if (state.globalCat) {
-      const catObj = tax.categories.find((c) => c.code === state.globalCat);
-      subList = catObj ? catObj.subcats : subList.filter((s) => s.startsWith(state.globalCat));
+      const catObj = visibleCats.find((c) => c.code === state.globalCat);
+      subList = catObj ? (catObj.subcats || []) : [];
+    } else {
+      subList = Array.from(new Set(visibleCats.flatMap((c) => c.subcats || []))).sort();
     }
 
     if (state.globalSubcat && !subList.includes(state.globalSubcat)) {
@@ -904,26 +918,32 @@
     mTo.value = state.monthTo;
 
     const regEl = document.getElementById("filterRegion");
-    regEl.innerHTML = `<option value="">Tất cả Region (${lookups.regions.length})</option>`;
-    [...lookups.regions]
-      .sort((a, b) => {
-        const an = a.startsWith("Non-Store"), bn = b.startsWith("Non-Store");
-        if (an !== bn) return an ? 1 : -1;
-        return a.localeCompare(b);
-      })
-      .forEach((r) => regEl.add(new Option(r, r)));
+    if (regEl) {
+      regEl.innerHTML = `<option value="">Tất cả Region Name (${lookups.regions.length})</option>`;
+      [...lookups.regions]
+        .sort((a, b) => {
+          const an = a.startsWith("Non-Store"), bn = b.startsWith("Non-Store");
+          if (an !== bn) return an ? 1 : -1;
+          return a.localeCompare(b);
+        })
+        .forEach((r) => regEl.add(new Option(r, r)));
+    }
 
     const siteEl = document.getElementById("filterSite");
-    siteEl.innerHTML = `<option value="">Tất cả Site Code (${lookups.sites.length})</option>`;
-    [...lookups.sites].sort().forEach((code) => {
-      const info = siteDirectory[code];
-      const lbl = info && info.storeName !== code ? `${code} — ${info.storeName}` : code;
-      siteEl.add(new Option(lbl, code));
-    });
+    if (siteEl) {
+      siteEl.innerHTML = `<option value="">Tất cả Site - Store (${lookups.sites.length})</option>`;
+      [...lookups.sites].sort().forEach((code) => {
+        const info = siteDirectory[code];
+        const lbl = info && info.storeName && info.storeName !== code ? `${code} - ${info.storeName}` : code;
+        siteEl.add(new Option(lbl, code));
+      });
+    }
 
     const chEl = document.getElementById("filterChannel");
-    chEl.innerHTML = `<option value="">Tất cả Channel</option>`;
-    [...lookups.channels].sort().forEach((ch) => chEl.add(new Option(ch, ch)));
+    if (chEl) {
+      chEl.innerHTML = `<option value="">Tất cả Channel (${lookups.channels.length})</option>`;
+      [...lookups.channels].sort().forEach((ch) => chEl.add(new Option(ch, ch)));
+    }
   }
 
   function initCharts() {
@@ -1149,20 +1169,20 @@
       clearGlobalMasterFilter();
     });
 
-    // Tier 2 Sales Local Filters
-    document.getElementById("filterRegion").addEventListener("change", (e) => {
+    // Tier 2 Sales Local Filters (Channel, Sale Site Code - Store name, Region name)
+    document.getElementById("filterRegion")?.addEventListener("change", (e) => {
       state.region = e.target.value; state.tablePage = 1; renderAll();
     });
-    document.getElementById("filterSite").addEventListener("change", (e) => {
+    document.getElementById("filterSite")?.addEventListener("change", (e) => {
       state.site = e.target.value; state.tablePage = 1; renderAll();
     });
-    document.getElementById("filterChannel").addEventListener("change", (e) => {
+    document.getElementById("filterChannel")?.addEventListener("change", (e) => {
       state.channel = e.target.value; state.tablePage = 1; renderAll();
     });
-    document.getElementById("filterOrderType").addEventListener("change", (e) => {
+    document.getElementById("filterOrderType")?.addEventListener("change", (e) => {
       state.orderType = e.target.value; state.tablePage = 1; renderAll();
     });
-    document.getElementById("filterMonthFrom").addEventListener("change", (e) => {
+    document.getElementById("filterMonthFrom")?.addEventListener("change", (e) => {
       state.monthFrom = e.target.value;
       if (state.monthFrom > state.monthTo) {
         state.monthTo = state.monthFrom;
@@ -1170,7 +1190,7 @@
       }
       state.clickedMonth = ""; state.tablePage = 1; renderAll();
     });
-    document.getElementById("filterMonthTo").addEventListener("change", (e) => {
+    document.getElementById("filterMonthTo")?.addEventListener("change", (e) => {
       state.monthTo = e.target.value;
       if (state.monthTo < state.monthFrom) {
         state.monthFrom = state.monthTo;
@@ -1179,10 +1199,10 @@
       state.clickedMonth = ""; state.tablePage = 1; renderAll();
     });
 
-    document.getElementById("excludeBulkToggle").addEventListener("change", (e) => {
+    document.getElementById("excludeBulkToggle")?.addEventListener("change", (e) => {
       state.excludeBulk = e.target.checked; state.tablePage = 1; renderAll();
     });
-    document.getElementById("storeRegionsOnlyToggle").addEventListener("change", (e) => {
+    document.getElementById("storeRegionsOnlyToggle")?.addEventListener("change", (e) => {
       state.storeRegionsOnly = e.target.checked; state.tablePage = 1; renderAll();
     });
 
@@ -1304,14 +1324,16 @@
     state.monthTo = state.monthsAll[state.monthsAll.length - 1] || "";
     state.tablePage = 1;
 
-    document.getElementById("filterRegion").value = "";
-    document.getElementById("filterSite").value = "";
-    document.getElementById("filterChannel").value = "";
-    document.getElementById("filterOrderType").value = "";
-    document.getElementById("filterMonthFrom").value = state.monthFrom;
-    document.getElementById("filterMonthTo").value = state.monthTo;
-    document.getElementById("excludeBulkToggle").checked = false;
-    document.getElementById("storeRegionsOnlyToggle").checked = false;
+    const setVal = (id, v) => { const el = document.getElementById(id); if (el) el.value = v; };
+    const setChk = (id, v) => { const el = document.getElementById(id); if (el) el.checked = v; };
+    setVal("filterRegion", "");
+    setVal("filterSite", "");
+    setVal("filterChannel", "");
+    setVal("filterOrderType", "");
+    setVal("filterMonthFrom", state.monthFrom);
+    setVal("filterMonthTo", state.monthTo);
+    setChk("excludeBulkToggle", false);
+    setChk("storeRegionsOnlyToggle", false);
     renderAll();
   }
 
@@ -1762,7 +1784,7 @@
     const storeCnt = list.filter((s) => s.isStore).length;
 
     applySidebarSpec({
-      title: "Site Code",
+      title: "Site Report",
       g1Label: "Tỷ trọng Top 5 Sites",
       g1Tag: `${list.length} active sites`,
       g1Big: fmtPct(top5Share),
@@ -2028,18 +2050,22 @@
     if (state.globalSubcat) add(`Subcat 2: ${state.globalSubcat}`, "amber", () => setGlobalSubcat(""));
     if (state.clickedMonth) add(`Month: ${state.clickedMonth}`, "", () => { state.clickedMonth = ""; renderAll(); });
     if (state.region) add(`Region: ${state.region}`, "", () => toggleRegionFilter(state.region));
-    if (state.site) add(`Site: ${state.site}`, "", () => toggleSiteFilter(state.site));
+    if (state.site) {
+      const sInfo = state.raw?.siteDirectory?.[state.site];
+      const sLbl = sInfo && sInfo.storeName && sInfo.storeName !== state.site ? `${state.site} - ${sInfo.storeName}` : state.site;
+      add(`Site: ${sLbl}`, "", () => toggleSiteFilter(state.site));
+    }
     if (state.channel) add(`Channel: ${state.channel}`, "", () => {
-      state.channel = ""; document.getElementById("filterChannel").value = ""; renderAll();
+      state.channel = ""; const el = document.getElementById("filterChannel"); if (el) el.value = ""; renderAll();
     });
     if (state.orderType) add(state.orderType === "don_xuat_ban" ? "Xuất bán" : "Hoàn bán", "amber", () => {
-      state.orderType = ""; document.getElementById("filterOrderType").value = ""; renderAll();
+      state.orderType = ""; const el = document.getElementById("filterOrderType"); if (el) el.value = ""; renderAll();
     });
     if (state.excludeBulk) add("Ẩn đơn sỉ (≥100 Qty)", "amber", () => {
-      state.excludeBulk = false; document.getElementById("excludeBulkToggle").checked = false; renderAll();
+      state.excludeBulk = false; const el = document.getElementById("excludeBulkToggle"); if (el) el.checked = false; renderAll();
     });
     if (state.storeRegionsOnly) add("Chỉ 5 Region CH", "amber", () => {
-      state.storeRegionsOnly = false; document.getElementById("storeRegionsOnlyToggle").checked = false; renderAll();
+      state.storeRegionsOnly = false; const el = document.getElementById("storeRegionsOnlyToggle"); if (el) el.checked = false; renderAll();
     });
 
     const totalTx = rows.reduce((acc, r) => acc + (r.length > C.COUNT ? (r[C.COUNT] || 1) : 1), 0);

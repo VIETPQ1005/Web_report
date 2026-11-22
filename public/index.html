@@ -43,9 +43,9 @@
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 3v18h18"/><rect x="7" y="10" width="3" height="7"/><rect x="12" y="6" width="3" height="11"/><rect x="17" y="12" width="3" height="5"/></svg>
           <span>Monthly<br/>Report</span>
         </button>
-        <button class="rail-item" data-view="site" title="Phân tích 31 Sales Site Codes">
+        <button class="rail-item" data-view="site" title="Phân tích Site Report">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 9l9-6 9 6v11a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V9z"/><path d="M9 21V12h6v9"/></svg>
-          <span>Site Code<br/>Report</span>
+          <span>Site<br/>Report</span>
         </button>
         <button class="rail-item" data-view="region" title="Báo cáo theo Region Name">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M12 3v9l6.5 3.5"/></svg>
@@ -216,30 +216,16 @@
            ================================================================ -->
       <header class="canvas-topbar" id="localReportTopbar">
         <div class="topbar-filters" id="salesTopFilters">
-          <span class="local-filter-tag">LỌC RIÊNG SALES:</span>
-          <select id="filterRegion" class="dark-select" title="Lọc theo Region Name">
-            <option value="">Tất cả Region</option>
-          </select>
-          <select id="filterSite" class="dark-select" title="Lọc theo Sales Site Code">
-            <option value="">Tất cả Site Code</option>
-          </select>
+          <span class="local-filter-tag">LỌC RIÊNG:</span>
           <select id="filterChannel" class="dark-select" title="Lọc theo Sales Channel">
             <option value="">Tất cả Channel</option>
           </select>
-          <select id="filterOrderType" class="dark-select" title="Lọc loại đơn hàng">
-            <option value="">Xuất + Hoàn</option>
-            <option value="don_xuat_ban">Chỉ Xuất bán</option>
-            <option value="don_nhap_hoan_ban">Chỉ Hoàn bán</option>
+          <select id="filterSite" class="dark-select" title="Lọc theo Sale Site Code - Store Name">
+            <option value="">Tất cả Site - Store</option>
           </select>
-
-          <label class="pill-toggle" title="Ẩn các đơn hàng sỉ ≥100 Qty để soi xu hướng bán lẻ">
-            <input type="checkbox" id="excludeBulkToggle" />
-            <span>Ẩn đơn sỉ (≥100 Qty)</span>
-          </label>
-          <label class="pill-toggle" title="Chỉ lọc 5 Region cửa hàng (HCM 1, HCM 2, SOUTHERN, 264, CENTRAL)">
-            <input type="checkbox" id="storeRegionsOnlyToggle" />
-            <span>Chỉ 5 Region CH</span>
-          </label>
+          <select id="filterRegion" class="dark-select" title="Lọc theo Region Name">
+            <option value="">Tất cả Region Name</option>
+          </select>
         </div>
 
         <div class="inv-top-banner hidden" id="invTopBanner">
@@ -395,7 +381,7 @@
         <div class="panel-block">
           <div class="panel-header">
             <div>
-              <h2 class="panel-title">Xếp hạng toàn bộ <span id="siteTotalCountLabel">31</span> Sales Site Codes</h2>
+              <h2 class="panel-title">Site Report — Xếp hạng toàn bộ <span id="siteTotalCountLabel">31</span> Sites</h2>
               <span class="panel-hint">Chuyển đổi biểu đồ Bar / Treemap / Scatter (Sales × Qty) — Click để lọc chéo</span>
             </div>
             <div class="panel-controls">
@@ -475,7 +461,7 @@
             </div>
             <div class="panel-controls">
               <div class="seg-tabs" id="tableTabGroup">
-                <button class="seg-btn active" data-val="sites">Tổng hợp Site Code</button>
+                <button class="seg-btn active" data-val="sites">Tổng hợp Site</button>
                 <button class="seg-btn" data-val="matrix">Ma trận Region × Month</button>
                 <button class="seg-btn" id="rawTabBtn" data-val="raw">Chi tiết 5,443 giao dịch</button>
               </div>

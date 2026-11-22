@@ -51,7 +51,7 @@ FROZEN_SALES_START_ROW = 2
 FROZEN_SALES_END_ROW = 407593
 FROZEN_SALES_CACHE = DATA_DIR / ".sales_frozen_cache.json.gz"
 FROZEN_CACHE_VERSION = 2
-EXCLUDED_GLOBAL_CATS = {"NH07", "NH10", "NH03"}
+EXCLUDED_GLOBAL_CATS = {"NH07", "NH10"}
 
 STORAGE_GROUPS = ["OCGN", "PK_LUU_TRU"]
 STORAGE_GROUP_LABELS = ["Ổ cứng gắn ngoài (OCGN)", "Phụ kiện lưu trữ (USB & Thẻ nhớ)"]
@@ -238,7 +238,8 @@ def parse_nullable_float(val):
 def extract_cat_code(raw_val: str) -> str:
     s = (raw_val or "").strip()
     m = re.match(r"^(NH\d+)", s, re.IGNORECASE)
-    return m.group(1).upper() if m else (s.split("-")[0].strip().upper() if s else "KHÁC")
+    code = m.group(1).upper() if m else (s.split("-")[0].strip().upper() if s else "KHÁC")
+    return "NH93" if code == "NH03" else code
 
 
 def normalize_subcat2(raw_full: str = "", code: str = "", name: str = "", cat3_code: str = "") -> str:

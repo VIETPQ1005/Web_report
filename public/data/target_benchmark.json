@@ -1,47 +1,47 @@
 {
-  "updatedAt": "2026-11-22T20:25:00+07:00",
+  "updatedAt": "2026-11-22T23:25:00+07:00",
   "unit": "Triệu VND",
-  "description": "Báo cáo Kế hoạch Doanh số (Target) và Tỷ trọng (Proport) YTD theo Ngành Hàng",
+  "description": "Báo cáo Kế hoạch Doanh số (Target) và Tỷ trọng (Proport) YTD thực tế từ Sale_Revenue_Detail (đã gộp NH03 vào NH93)",
   "categories": [
     {
       "code": "NH06",
       "label": "NH06-Thiết bị ngoại vi",
-      "ytdSales": 5593,
-      "vsLyPct": -18.0,
-      "proportPct": 5,
+      "ytdSales": 5621.41,
+      "vsLyPct": -17.7,
+      "proportPct": 5.01,
       "target": 15777,
-      "vsTargetPct": 35,
-      "lySales": 6820.73
+      "vsTargetPct": 35.63,
+      "lySales": 6830.55
     },
     {
       "code": "NH11",
       "label": "NH11-Phụ kiện",
-      "ytdSales": 95845,
+      "ytdSales": 96120.36,
       "vsLyPct": 27.1,
-      "proportPct": 86,
+      "proportPct": 85.63,
       "target": 132421,
-      "vsTargetPct": 72,
-      "lySales": 75409.13
+      "vsTargetPct": 72.59,
+      "lySales": 75648.55
     },
     {
       "code": "NH93",
       "label": "NH93-Linh kiện sửa chữa",
-      "ytdSales": 10490,
+      "ytdSales": 10506.51,
       "vsLyPct": 39.1,
-      "proportPct": 9,
+      "proportPct": 9.36,
       "target": 17668,
-      "vsTargetPct": 59,
-      "lySales": 7541.34
+      "vsTargetPct": 59.47,
+      "lySales": 7553.22
     }
   ],
   "total": {
     "code": "TOTAL",
     "label": "Total",
-    "ytdSales": 111927,
+    "ytdSales": 112248.28,
     "vsLyPct": 24.7,
     "proportPct": 100,
     "target": 165866,
-    "vsTargetPct": 67,
-    "lySales": 89771.20
+    "vsTargetPct": 67.67,
+    "lySales": 90032.31
   }
 }

@@ -43,50 +43,50 @@
     "#1D7AFC", "#38BDF8", "#F59E0B", "#F97316",
   ];
 
-  // Official Management Target & Benchmark Data (Category Level)
+  // Official Management Target & Actual Baseline Data (Category Level — NH03 merged into NH93)
   const TARGET_BENCHMARK = {
     unit: "Triệu VND",
     categories: {
       "NH06": {
         code: "NH06",
         label: "NH06-Thiết bị ngoại vi",
-        ytdSales: 5593,
-        vsLyPct: -18.0,
-        proportPct: 5,
+        ytdSales: 5621.41,
+        vsLyPct: -17.7,
+        proportPct: 5.01,
         target: 15777,
-        vsTargetPct: 35,
-        lySales: 6820.73,
+        vsTargetPct: 35.63,
+        lySales: 6830.55,
       },
       "NH11": {
         code: "NH11",
         label: "NH11-Phụ kiện",
-        ytdSales: 95845,
+        ytdSales: 96120.36,
         vsLyPct: 27.1,
-        proportPct: 86,
+        proportPct: 85.63,
         target: 132421,
-        vsTargetPct: 72,
-        lySales: 75409.13,
+        vsTargetPct: 72.59,
+        lySales: 75648.55,
       },
       "NH93": {
         code: "NH93",
         label: "NH93-Linh kiện sửa chữa",
-        ytdSales: 10490,
+        ytdSales: 10506.51,
         vsLyPct: 39.1,
-        proportPct: 9,
+        proportPct: 9.36,
         target: 17668,
-        vsTargetPct: 59,
-        lySales: 7541.34,
+        vsTargetPct: 59.47,
+        lySales: 7553.22,
       },
     },
     total: {
       code: "TOTAL",
       label: "Total",
-      ytdSales: 111927,
+      ytdSales: 112248.28,
       vsLyPct: 24.7,
       proportPct: 100,
       target: 165866,
-      vsTargetPct: 67,
-      lySales: 89771.20,
+      vsTargetPct: 67.67,
+      lySales: 90032.31,
     },
   };
 
@@ -329,7 +329,7 @@
     // Tier 1 Global Master Filter (applies to ALL Tabs & Left Sidebar)
     globalCat: "",
     globalSubcat: "",
-    targetDataSource: "benchmark", // benchmark | filtered
+    targetDataSource: "filtered", // filtered | benchmark (both computed from actual Sale_Revenue_Detail)
     shardsLoaded: false,
     shardsLoading: false,
     // Inventory sub-state
@@ -521,7 +521,7 @@
   // --- LOCAL INDEXEDDB CACHE (FALLBACK + SAVED SOURCE DIRECTORY HANDLE) ---
   const IDB_NAME = "cyberpulse_sales_db";
   const IDB_STORE = "datasets";
-  const IDB_KEY = "latest_v3_storage";
+  const IDB_KEY = "latest_v4_nh93_merged";
   const IDB_DIR_KEY = "source_dir_handle";
 
   function openLocalDb() {
@@ -621,6 +621,46 @@
     syncSectionCategories(payload.invSerials);
     syncSectionCategories(payload.masterSummary);
     syncSectionCategories(payload.masterProducts);
+
+    // Merge NH03 into NH93 (NH03 transitioned to NH93 in March 2026 — unify across all reports)
+    if (Array.isArray(lk.categories)) {
+      const idx03 = lk.categories.indexOf("NH03");
+      let idx93 = lk.categories.indexOf("NH93");
+      if (idx03 !== -1) {
+        if (idx93 === -1) {
+          lk.categories[idx03] = "NH93";
+          idx93 = idx03;
+        } else {
+          if (Array.isArray(payload.salesCube)) {
+            payload.salesCube.forEach((r) => { if (r[4] === idx03) r[4] = idx93; });
+          }
+          if (Array.isArray(payload.rows)) {
+            payload.rows.forEach((r) => { if (r.length > C.CAT && r[C.CAT] === idx03) r[C.CAT] = idx93; });
+          }
+          if (Array.isArray(payload.salesDaily)) {
+            payload.salesDaily.forEach((d) => {
+              if (d.length === 8) { if (d[1] === idx03) d[1] = idx93; }
+              else if (d.length > 8) { if (d[3] === idx03) d[3] = idx93; }
+            });
+          }
+        }
+      }
+      lk.cats = lk.categories;
+    }
+
+    if (payload.taxonomy && Array.isArray(payload.taxonomy.categories)) {
+      const nh03Tax = payload.taxonomy.categories.find((c) => c.code === "NH03");
+      if (nh03Tax) {
+        let nh93Tax = payload.taxonomy.categories.find((c) => c.code === "NH93");
+        if (!nh93Tax) {
+          nh03Tax.code = "NH93";
+          nh03Tax.label = "Linh kiện sửa chữa";
+        } else {
+          nh93Tax.subcats = Array.from(new Set([...(nh93Tax.subcats || []), ...(nh03Tax.subcats || [])])).sort();
+          payload.taxonomy.categories = payload.taxonomy.categories.filter((c) => c.code !== "NH03");
+        }
+      }
+    }
 
     // Ensure taxonomy exists (even for legacy or browser-uploaded datasets)
     if (!payload.taxonomy || !Array.isArray(payload.taxonomy.categories) || payload.taxonomy.categories.length === 0) {
@@ -800,6 +840,7 @@
     // Purge legacy v1/v2/v3 IndexedDB cache keys so stale data never persists
     idbDeleteKey("latest");
     idbDeleteKey("latest_v3_6nh");
+    idbDeleteKey("latest_v3_storage");
 
     const isHttp = location.protocol === "http:" || location.protocol === "https:";
     let baseline = null;
@@ -1159,8 +1200,8 @@
       }
     };
 
-    const renderOptionsList = () => {
-      const rawVal = getValFn();
+    const renderOptionsList = (overrideVal) => {
+      const rawVal = overrideVal !== undefined ? overrideVal : getValFn();
       const selected = splitMulti(rawVal);
       const opts = Array.from(sel.options);
       const q = searchQuery.trim().toLowerCase();
@@ -1183,7 +1224,7 @@
         const isAll = o.value === "";
         const isSel = isAll ? selected.length === 0 : selected.includes(o.value);
         return `
-          <div class="ms-item ${isSel ? "selected" : ""}" data-ms-val="${esc(o.value)}" title="${isAll ? "Chọn tất cả (Bỏ lọc)" : "Click để chọn 1 • Giữ Ctrl + Click để chọn nhiều"}">
+          <div class="ms-item ${isSel ? "selected" : ""}" data-ms-val="${esc(o.value)}" title="${isAll ? "Chọn tất cả (Bỏ lọc)" : "Click vào tên để chọn 1 • Giữ Ctrl + Click hoặc bấm vào ô tích để chọn nhiều"}">
             <span class="ms-check" data-ms-check="1">${isSel ? "✓" : ""}</span>
             <span class="ms-item-label">${esc(o.textContent)}</span>
           </div>`;
@@ -1196,21 +1237,22 @@
     const rebuildPopoverStructure = () => {
       const optsCount = sel.options.length;
       const showSearch = optsCount > 7;
+      const prevScroll = popover.querySelector(".ms-list")?.scrollTop || 0;
       popover.innerHTML = `
         <div class="ms-hint">
-          <span>💡 Giữ <b>Ctrl + Click</b> để chọn nhiều</span>
+          <span>💡 Giữ <b>Ctrl + Click</b> (hoặc bấm ô <b>☑</b>) để chọn nhiều</span>
           <button type="button" class="ms-clear-mini" style="display:none">Bỏ chọn</button>
         </div>
-        ${showSearch ? `<div class="ms-search-wrap"><input type="search" class="ms-search" placeholder="Tìm nhanh trong ${optsCount - 1} mục..." value="${esc(searchQuery)}" /></div>` : ""}
+        ${showSearch ? `<div class="ms-search-wrap"><input type="search" class="ms-search" placeholder="Tìm nhanh trong ${Math.max(0, optsCount - 1)} mục..." value="${esc(searchQuery)}" /></div>` : ""}
         <div class="ms-list"></div>`;
 
       const clearBtn = popover.querySelector(".ms-clear-mini");
       clearBtn?.addEventListener("click", (e) => {
         e.stopPropagation();
         sel.value = "";
-        renderTriggerLabel("");
-        renderOptionsList();
         onChangeFn("", false);
+        renderTriggerLabel("");
+        renderOptionsList("");
       });
 
       const searchInp = popover.querySelector(".ms-search");
@@ -1221,6 +1263,11 @@
       searchInp?.addEventListener("click", (e) => e.stopPropagation());
 
       const listEl = popover.querySelector(".ms-list");
+      listEl?.addEventListener("mousedown", (e) => {
+        if (e.ctrlKey || e.metaKey || e.shiftKey) {
+          e.preventDefault();
+        }
+      });
       listEl?.addEventListener("click", (e) => {
         e.stopPropagation();
         const item = e.target.closest(".ms-item[data-ms-val]");
@@ -1241,13 +1288,18 @@
         }
 
         sel.value = splitMulti(nextVal)[0] || "";
-        renderTriggerLabel(nextVal);
-        renderOptionsList();
+        const savedScroll = listEl.scrollTop;
         onChangeFn(nextVal, isMultiKey);
+        renderTriggerLabel(nextVal);
+        renderOptionsList(nextVal);
+        const currentListEl = popover.querySelector(".ms-list");
+        if (currentListEl) currentListEl.scrollTop = savedScroll;
       });
 
       renderTriggerLabel(getValFn());
       renderOptionsList();
+      const newListEl = popover.querySelector(".ms-list");
+      if (newListEl && prevScroll) newListEl.scrollTop = prevScroll;
     };
 
     trigger.addEventListener("click", (e) => {
@@ -1344,7 +1396,7 @@
   }
 
   // --- TIER 1: GLOBAL MASTER FILTER BAR (CATEGORY CODE BUTTONS + SUBCAT 2) ---
-  const HIDDEN_GLOBAL_CATS = new Set(["NH07", "NH10", "NH03"]);
+  const HIDDEN_GLOBAL_CATS = new Set(["NH07", "NH10"]);
 
   function getVisibleGlobalCategories() {
     const tax = state.raw?.taxonomy || { categories: [], allSubcats: [] };
@@ -1461,17 +1513,39 @@
   function setGlobalSubcat(subcatStr) {
     state.globalSubcat = subcatStr || "";
     const subs = splitMulti(state.globalSubcat);
+    let catChanged = false;
     if (subs.length && state.globalCat) {
       const currentCats = new Set(splitMulti(state.globalCat));
+      const beforeSize = currentCats.size;
       subs.forEach((s) => {
         const m = s.match(/^(NH\d{2})/i);
-        if (m) currentCats.add(m[1].toUpperCase());
+        if (m) {
+          const c = m[1].toUpperCase() === "NH03" ? "NH93" : m[1].toUpperCase();
+          currentCats.add(c);
+        }
       });
-      state.globalCat = joinMulti(Array.from(currentCats));
+      if (currentCats.size !== beforeSize) {
+        state.globalCat = joinMulti(Array.from(currentCats));
+        catChanged = true;
+      }
     }
     state.tablePage = 1;
     state.inv.tablePage = 1;
-    populateGlobalMasterFilter();
+    state.badstock.page = 1;
+    if (catChanged) {
+      populateGlobalMasterFilter();
+    } else {
+      const clearBtn = document.getElementById("clearGlobalFilterBtn");
+      if (clearBtn) {
+        const defRange = getDefaultYearMonthRange(state.monthsAll);
+        const isCustomDate = Boolean(
+          state.monthsAll.length &&
+          ((state.monthFrom && state.monthFrom !== defRange.from) ||
+           (state.monthTo && state.monthTo !== defRange.to))
+        );
+        clearBtn.classList.toggle("hidden", !state.globalCat && !state.globalSubcat && !isCustomDate);
+      }
+    }
     syncMultiSelectUI("globalSubcatSelect", state.globalSubcat);
     renderLookupQuickPicks();
     renderAll();
@@ -1792,10 +1866,13 @@
     });
 
     // Tier 1 Global Master Filter (Category Code buttons + Subcat 2 dropdown)
+    document.getElementById("globalCatBtnGroup")?.addEventListener("mousedown", (e) => {
+      if (e.ctrlKey || e.metaKey || e.shiftKey) e.preventDefault();
+    });
     document.getElementById("globalCatBtnGroup")?.addEventListener("click", (e) => {
       const btn = e.target.closest(".cat-pill-btn[data-cat]");
       if (!btn) return;
-      setGlobalCategory(btn.dataset.cat || "", Boolean(e.ctrlKey || e.metaKey));
+      setGlobalCategory(btn.dataset.cat || "", Boolean(e.ctrlKey || e.metaKey || e.shiftKey));
     });
     document.getElementById("globalSubcatSelect")?.addEventListener("change", (e) => {
       setGlobalSubcat(e.target.value || "");
@@ -3564,87 +3641,232 @@
   }
 
   // =========================================================================
-  // 3B. TARGET & PROPORTION BENCHMARK REPORT (NGÀNH HÀNG)
+  // 3B. TARGET & PROPORTION BENCHMARK REPORT (NGÀNH HÀNG — ACTUAL DATA FROM Sale_Revenue_Detail)
   // =========================================================================
-  function renderTargetReport(rows) {
+  function computeActualTargetReportData(useActiveFilters = true) {
+    const { rows = [], lookups = {}, salesDaily = [] } = state.raw || {};
+    const catsL = lookups.categories || [];
+    const subsL = lookups.subcats || [];
+    const datesL = lookups.dates || [];
+
+    const subIdxSet = useActiveFilters ? getLookupIdxSet(state.globalSubcat, lookups.subcats) : null;
+    const regIdxSet = useActiveFilters ? getLookupIdxSet(state.region, lookups.regions) : null;
+    const siteIdxSet = useActiveFilters ? getLookupIdxSet(state.site, lookups.sites) : null;
+    const chIdxSet = useActiveFilters ? getLookupIdxSet(state.channel, lookups.channels) : null;
+    const otIdxSet = useActiveFilters ? getLookupIdxSet(state.orderType, lookups.orderTypes) : null;
+    const clickedMonthSet = (useActiveFilters && state.clickedMonth) ? new Set(splitMulti(state.clickedMonth)) : null;
+
+    const storeRegSet = new Set();
+    if (useActiveFilters && state.storeRegionsOnly && Array.isArray(lookups.regions)) {
+      lookups.regions.forEach((n, idx) => { if (!n.startsWith("Non-Store")) storeRegSet.add(idx); });
+    }
+
+    const resolveRowCat = (r) => {
+      let c = "";
+      if (r.length > C.CAT && catsL[r[C.CAT]]) {
+        c = String(catsL[r[C.CAT]]).toUpperCase();
+      } else {
+        const sc = String(subsL[r[C.SUBCAT]] || "");
+        const m = sc.match(/^(NH\d{2})/i);
+        c = m ? m[1].toUpperCase() : "";
+      }
+      return c === "NH03" ? "NH93" : c;
+    };
+
+    // Determine active months & year to compare (default: 2026 YTD vs 2025 Same-Period)
+    const catSales2026 = { NH06: 0, NH11: 0, NH93: 0 };
+    const catSales2025Cube = { NH06: 0, NH11: 0, NH93: 0 };
+    const active2026Months = new Set();
+    let has2026InPeriod = false;
+
+    for (let i = 0; i < rows.length; i++) {
+      const r = rows[i];
+      if (useActiveFilters) {
+        if (subIdxSet && !subIdxSet.has(r[C.SUBCAT])) continue;
+        if (regIdxSet && !regIdxSet.has(r[C.REGION])) continue;
+        if (siteIdxSet && !siteIdxSet.has(r[C.SITE])) continue;
+        if (chIdxSet && !chIdxSet.has(r[C.CHANNEL])) continue;
+        if (otIdxSet && !otIdxSet.has(r[C.ORDER_TYPE])) continue;
+        if (state.excludeBulk) {
+          const isBulk = r.length > C.IS_BULK ? r[C.IS_BULK] === 1 : Math.abs(r[C.QTY]) >= 100;
+          if (isBulk) continue;
+        }
+        if (state.storeRegionsOnly && !storeRegSet.has(r[C.REGION])) continue;
+      }
+
+      const mStr = String(r[C.MONTH] || "");
+      const inSelectedRange = !useActiveFilters
+        ? mStr.startsWith("2026")
+        : ((!state.monthFrom || mStr >= state.monthFrom) &&
+           (!state.monthTo || mStr <= state.monthTo) &&
+           (!clickedMonthSet || clickedMonthSet.has(mStr)));
+
+      if (inSelectedRange && mStr.startsWith("2026")) {
+        has2026InPeriod = true;
+      }
+    }
+
+    // Pass 2: Accumulate current period sales and corresponding LY months from cube
+    for (let i = 0; i < rows.length; i++) {
+      const r = rows[i];
+      if (useActiveFilters) {
+        if (subIdxSet && !subIdxSet.has(r[C.SUBCAT])) continue;
+        if (regIdxSet && !regIdxSet.has(r[C.REGION])) continue;
+        if (siteIdxSet && !siteIdxSet.has(r[C.SITE])) continue;
+        if (chIdxSet && !chIdxSet.has(r[C.CHANNEL])) continue;
+        if (otIdxSet && !otIdxSet.has(r[C.ORDER_TYPE])) continue;
+        if (state.excludeBulk) {
+          const isBulk = r.length > C.IS_BULK ? r[C.IS_BULK] === 1 : Math.abs(r[C.QTY]) >= 100;
+          if (isBulk) continue;
+        }
+        if (state.storeRegionsOnly && !storeRegSet.has(r[C.REGION])) continue;
+      }
+
+      const code = resolveRowCat(r);
+      if (catSales2026[code] === undefined) continue;
+
+      const mStr = String(r[C.MONTH] || "");
+      if (!useActiveFilters) {
+        if (mStr.startsWith("2026")) {
+          catSales2026[code] += r[C.SALES];
+          active2026Months.add(mStr.slice(5, 7));
+        }
+      } else {
+        const inRange =
+          (!state.monthFrom || mStr >= state.monthFrom) &&
+          (!state.monthTo || mStr <= state.monthTo) &&
+          (!clickedMonthSet || clickedMonthSet.has(mStr));
+        if (inRange) {
+          if (has2026InPeriod) {
+            if (mStr.startsWith("2026")) {
+              catSales2026[code] += r[C.SALES];
+              active2026Months.add(mStr.slice(5, 7));
+            }
+          } else {
+            catSales2026[code] += r[C.SALES];
+            active2026Months.add(mStr.slice(5, 7));
+          }
+        }
+      }
+    }
+
+    // Compute exact same-period Last Year (2025) sales from salesDaily (up to max date in active 2026 months)
+    const catSales2025Daily = { NH06: 0, NH11: 0, NH93: 0 };
+    if (Array.isArray(salesDaily) && salesDaily.length > 0 && datesL.length > 0) {
+      let maxMmDd = "11-21";
+      for (let i = 0; i < salesDaily.length; i++) {
+        const d = salesDaily[i];
+        const dt = datesL[d[0]] || "";
+        if (dt.startsWith("2026-") && active2026Months.has(dt.slice(5, 7))) {
+          const mmdd = dt.slice(5, 10);
+          if (mmdd > maxMmDd) maxMmDd = mmdd;
+        }
+      }
+
+      for (let i = 0; i < salesDaily.length; i++) {
+        const d = salesDaily[i];
+        const dt = datesL[d[0]] || "";
+        if (!dt.startsWith("2025-")) continue;
+        const mm = dt.slice(5, 7);
+        const mmdd = dt.slice(5, 10);
+        if (active2026Months.size > 0 && !active2026Months.has(mm)) continue;
+        if (mmdd > maxMmDd) continue;
+
+        if (useActiveFilters) {
+          if (subIdxSet && !subIdxSet.has(d[2])) continue;
+          if (regIdxSet && !regIdxSet.has(d[3])) continue;
+          if (state.excludeBulk && d[4] === 1) continue;
+          if (state.storeRegionsOnly && !storeRegSet.has(d[3])) continue;
+        }
+        let c = String(catsL[d[1]] || "").toUpperCase();
+        if (c === "NH03") c = "NH93";
+        if (catSales2025Daily[c] !== undefined) {
+          catSales2025Daily[c] += d[6];
+        }
+      }
+
+      // If site / channel / orderType filter is active, scale 2025 daily by 2025 cube filter ratio
+      if (useActiveFilters && (siteIdxSet || chIdxSet || otIdxSet)) {
+        const raw2025CubeAll = { NH06: 0, NH11: 0, NH93: 0 };
+        for (let i = 0; i < rows.length; i++) {
+          const r = rows[i];
+          const mStr = String(r[C.MONTH] || "");
+          if (!mStr.startsWith("2025") || (active2026Months.size > 0 && !active2026Months.has(mStr.slice(5, 7)))) continue;
+          if (subIdxSet && !subIdxSet.has(r[C.SUBCAT])) continue;
+          if (regIdxSet && !regIdxSet.has(r[C.REGION])) continue;
+          if (state.excludeBulk && (r.length > C.IS_BULK ? r[C.IS_BULK] === 1 : Math.abs(r[C.QTY]) >= 100)) continue;
+          if (state.storeRegionsOnly && !storeRegSet.has(r[C.REGION])) continue;
+          const code = resolveRowCat(r);
+          if (raw2025CubeAll[code] === undefined) continue;
+          raw2025CubeAll[code] += r[C.SALES];
+          if (siteIdxSet && !siteIdxSet.has(r[C.SITE])) continue;
+          if (chIdxSet && !chIdxSet.has(r[C.CHANNEL])) continue;
+          if (otIdxSet && !otIdxSet.has(r[C.ORDER_TYPE])) continue;
+          catSales2025Cube[code] += r[C.SALES];
+        }
+        ["NH06", "NH11", "NH93"].forEach((code) => {
+          const ratio = raw2025CubeAll[code] > 0 ? catSales2025Cube[code] / raw2025CubeAll[code] : 0;
+          catSales2025Daily[code] *= ratio;
+        });
+      }
+    }
+
+    const totalSales = catSales2026.NH06 + catSales2026.NH11 + catSales2026.NH93;
+    const totalSalesTr = totalSales / 1e6;
+    const totalLyTr = (catSales2025Daily.NH06 + catSales2025Daily.NH11 + catSales2025Daily.NH93) / 1e6;
+
+    const codes = ["NH06", "NH11", "NH93"];
+    const reportRows = codes.map((code) => {
+      const bm = TARGET_BENCHMARK.categories[code];
+      const salesTr = catSales2026[code] / 1e6;
+      const lySalesTr = catSales2025Daily[code] > 0 ? (catSales2025Daily[code] / 1e6) : bm.lySales;
+      const targetTr = bm.target;
+      const vsTargetPct = targetTr > 0 ? (salesTr / targetTr) * 100 : 0;
+      const proportPct = totalSalesTr > 0 ? (salesTr / totalSalesTr) * 100 : 0;
+      const vsLyPct = lySalesTr > 0 ? ((salesTr - lySalesTr) / lySalesTr) * 100 : bm.vsLyPct;
+
+      return {
+        code: bm.code,
+        label: bm.label,
+        ytdSales: salesTr,
+        vsLyPct,
+        proportPct,
+        target: targetTr,
+        vsTargetPct,
+        lySales: lySalesTr,
+      };
+    });
+
+    const totalTargetTr = TARGET_BENCHMARK.total.target;
+    const totalVsTargetPct = totalTargetTr > 0 ? (totalSalesTr / totalTargetTr) * 100 : 0;
+    const effTotalLy = totalLyTr > 0 ? totalLyTr : TARGET_BENCHMARK.total.lySales;
+    const totalVsLyPct = effTotalLy > 0 ? ((totalSalesTr - effTotalLy) / effTotalLy) * 100 : TARGET_BENCHMARK.total.vsLyPct;
+
+    const totalRow = {
+      code: "TOTAL",
+      label: "Total",
+      ytdSales: totalSalesTr,
+      vsLyPct: totalVsLyPct,
+      proportPct: 100,
+      target: totalTargetTr,
+      vsTargetPct: totalVsTargetPct,
+      lySales: effTotalLy,
+    };
+
+    return { reportRows, totalRow };
+  }
+
+  function renderTargetReport() {
     const tbody = document.getElementById("targetTableBody");
     if (!tbody) return;
 
     const isFiltered = state.targetDataSource === "filtered";
     const modeBadge = document.getElementById("targetModeBadge");
     if (modeBadge) {
-      modeBadge.textContent = isFiltered ? "THỰC TẾ THEO BỘ LỌC" : "BENCHMARK YTD";
+      modeBadge.textContent = isFiltered ? "THỰC TẾ THEO BỘ LỌC" : "TOÀN BỘ YTD (DATA GỐC)";
     }
 
-    let reportRows = [];
-    let totalRow = null;
-
-    if (!isFiltered) {
-      // 1. Official Management Benchmark (matching reference image)
-      reportRows = [
-        { ...TARGET_BENCHMARK.categories["NH06"] },
-        { ...TARGET_BENCHMARK.categories["NH11"] },
-        { ...TARGET_BENCHMARK.categories["NH93"] },
-      ];
-      totalRow = { ...TARGET_BENCHMARK.total };
-    } else {
-      // 2. Dynamic Filtered Calculation (use 2026 YTD rows when 2026 is present in filter)
-      const { lookups } = state.raw || { lookups: { subcats: [] } };
-      const has2026 = rows.some((r) => String(r[C.MONTH] || "").startsWith("2026"));
-      const catSales = { NH06: 0, NH11: 0, NH93: 0 };
-
-      for (let i = 0; i < rows.length; i++) {
-        const r = rows[i];
-        if (has2026 && !String(r[C.MONTH] || "").startsWith("2026")) continue;
-        const sc = lookups.subcats[r[C.SUBCAT]] || "";
-        const m = sc.match(/^(NH\d{2})/i);
-        const code = m ? m[1].toUpperCase() : "";
-        if (catSales[code] !== undefined) {
-          catSales[code] += r[C.SALES];
-        }
-      }
-
-      const totalSales = catSales.NH06 + catSales.NH11 + catSales.NH93;
-      const totalSalesTr = totalSales / 1e6;
-
-      const codes = ["NH06", "NH11", "NH93"];
-      reportRows = codes.map((code) => {
-        const bm = TARGET_BENCHMARK.categories[code];
-        const salesTr = catSales[code] / 1e6;
-        const targetTr = bm.target;
-        const vsTargetPct = targetTr > 0 ? (salesTr / targetTr) * 100 : 0;
-        const proportPct = totalSalesTr > 0 ? (salesTr / totalSalesTr) * 100 : 0;
-        const lySales = bm.lySales;
-        const vsLyPct = lySales > 0 ? ((salesTr - lySales) / lySales) * 100 : bm.vsLyPct;
-
-        return {
-          code: bm.code,
-          label: bm.label,
-          ytdSales: salesTr,
-          vsLyPct: vsLyPct,
-          proportPct: proportPct,
-          target: targetTr,
-          vsTargetPct: vsTargetPct,
-          lySales: lySales,
-        };
-      });
-
-      const totalTargetTr = TARGET_BENCHMARK.total.target;
-      const totalVsTargetPct = totalTargetTr > 0 ? (totalSalesTr / totalTargetTr) * 100 : 0;
-      const totalLySales = TARGET_BENCHMARK.total.lySales;
-      const totalVsLyPct = totalLySales > 0 ? ((totalSalesTr - totalLySales) / totalLySales) * 100 : TARGET_BENCHMARK.total.vsLyPct;
-
-      totalRow = {
-        code: "TOTAL",
-        label: "Total",
-        ytdSales: totalSalesTr,
-        vsLyPct: totalVsLyPct,
-        proportPct: 100,
-        target: totalTargetTr,
-        vsTargetPct: totalVsTargetPct,
-        lySales: totalLySales,
-      };
-    }
+    const { reportRows, totalRow } = computeActualTargetReportData(isFiltered);
 
     // Build Table Body HTML matching user's image exactly
     const rowsHtml = reportRows
@@ -3700,8 +3922,11 @@
 
     tbody.innerHTML = rowsHtml + totalRowHtml;
 
-    // Attach click listener on table rows
+    // Attach click listener on table rows (with mousedown preventDefault for Ctrl+Click)
     tbody.querySelectorAll("tr[data-cat]").forEach((tr) => {
+      tr.addEventListener("mousedown", (e) => {
+        if (e.ctrlKey || e.metaKey || e.shiftKey) e.preventDefault();
+      });
       tr.addEventListener("click", (e) => {
         const cat = tr.dataset.cat;
         setGlobalCategory(cat, Boolean(e.ctrlKey || e.metaKey));
@@ -3842,37 +4067,23 @@
       "Tiến độ Vs Target (%)",
     ];
 
-    let rowsData = [];
-    if (!isFiltered) {
-      rowsData = [
-        [TARGET_BENCHMARK.categories["NH06"].label, TARGET_BENCHMARK.categories["NH06"].ytdSales, `${TARGET_BENCHMARK.categories["NH06"].vsLyPct}%`, `${TARGET_BENCHMARK.categories["NH06"].proportPct}%`, TARGET_BENCHMARK.categories["NH06"].target, `${TARGET_BENCHMARK.categories["NH06"].vsTargetPct}%`],
-        [TARGET_BENCHMARK.categories["NH11"].label, TARGET_BENCHMARK.categories["NH11"].ytdSales, `${TARGET_BENCHMARK.categories["NH11"].vsLyPct}%`, `${TARGET_BENCHMARK.categories["NH11"].proportPct}%`, TARGET_BENCHMARK.categories["NH11"].target, `${TARGET_BENCHMARK.categories["NH11"].vsTargetPct}%`],
-        [TARGET_BENCHMARK.categories["NH93"].label, TARGET_BENCHMARK.categories["NH93"].ytdSales, `${TARGET_BENCHMARK.categories["NH93"].vsLyPct}%`, `${TARGET_BENCHMARK.categories["NH93"].proportPct}%`, TARGET_BENCHMARK.categories["NH93"].target, `${TARGET_BENCHMARK.categories["NH93"].vsTargetPct}%`],
-        [TARGET_BENCHMARK.total.label, TARGET_BENCHMARK.total.ytdSales, `${TARGET_BENCHMARK.total.vsLyPct}%`, `${TARGET_BENCHMARK.total.proportPct}%`, TARGET_BENCHMARK.total.target, `${TARGET_BENCHMARK.total.vsTargetPct}%`],
-      ];
-    } else {
-      const rows = getFilteredRows(false);
-      const { lookups } = state.raw || { lookups: { subcats: [] } };
-      const catSales = { NH06: 0, NH11: 0, NH93: 0 };
-      for (let i = 0; i < rows.length; i++) {
-        const r = rows[i];
-        const sc = lookups.subcats[r[C.SUBCAT]] || "";
-        const m = sc.match(/^(NH\d{2})/i);
-        const code = m ? m[1].toUpperCase() : "";
-        if (catSales[code] !== undefined) catSales[code] += r[C.SALES];
-      }
-      const totalSalesTr = (catSales.NH06 + catSales.NH11 + catSales.NH93) / 1e6;
-      ["NH06", "NH11", "NH93"].forEach((code) => {
-        const bm = TARGET_BENCHMARK.categories[code];
-        const sTr = catSales[code] / 1e6;
-        const pPct = totalSalesTr > 0 ? (sTr / totalSalesTr) * 100 : 0;
-        const vtPct = bm.target > 0 ? (sTr / bm.target) * 100 : 0;
-        rowsData.push([bm.label, Math.round(sTr), `${bm.vsLyPct}%`, `${pPct.toFixed(1)}%`, bm.target, `${vtPct.toFixed(1)}%`]);
-      });
-      const totTarget = TARGET_BENCHMARK.total.target;
-      const totVtPct = totTarget > 0 ? (totalSalesTr / totTarget) * 100 : 0;
-      rowsData.push(["Total", Math.round(totalSalesTr), `${TARGET_BENCHMARK.total.vsLyPct}%`, "100%", totTarget, `${totVtPct.toFixed(1)}%`]);
-    }
+    const { reportRows, totalRow } = computeActualTargetReportData(isFiltered);
+    const rowsData = reportRows.map((r) => [
+      r.label,
+      Math.round(r.ytdSales),
+      `${r.vsLyPct.toFixed(1)}%`,
+      `${r.proportPct.toFixed(1)}%`,
+      r.target,
+      `${r.vsTargetPct.toFixed(1)}%`,
+    ]);
+    rowsData.push([
+      totalRow.label,
+      Math.round(totalRow.ytdSales),
+      `${totalRow.vsLyPct.toFixed(1)}%`,
+      "100%",
+      totalRow.target,
+      `${totalRow.vsTargetPct.toFixed(1)}%`,
+    ]);
 
     downloadCsv(headers, rowsData, `Bao_cao_Doanh_so_Vs_Target_Proport_${new Date().toISOString().slice(0, 10)}.csv`);
   }
@@ -9242,7 +9453,8 @@
   function extractCatCodeJs(rawVal) {
     const s = String(rawVal ?? "").trim();
     const m = s.match(/^(NH\d+)/i);
-    return m ? m[1].toUpperCase() : (s ? s.split("-")[0].trim().toUpperCase() : "KHÁC");
+    const code = m ? m[1].toUpperCase() : (s ? s.split("-")[0].trim().toUpperCase() : "KHÁC");
+    return code === "NH03" ? "NH93" : code;
   }
 
   function cleanSubcatJs(val, code = "", name = "", cat3Code = "") {

@@ -8,10 +8,10 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600;700&family=Chakra+Petch:wght@600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="./styles.css" />
+  <link rel="stylesheet" href="./styles.css?v=20261123b" />
   <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.1/dist/echarts.min.js" defer></script>
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js" defer></script>
-  <script src="./app.js" defer></script>
+  <script src="./app.js?v=20261123b" defer></script>
 </head>
 <body>
   <div class="app-shell" id="appShell">
@@ -312,8 +312,8 @@
             </div>
             <div class="panel-controls">
               <div class="seg-tabs" id="targetDataSourceGroup">
-                <button class="seg-btn active" data-val="benchmark" title="Xem bảng Kế hoạch & Thực đạt YTD chuẩn từ báo cáo quản trị">Chuẩn Kế hoạch (Benchmark)</button>
-                <button class="seg-btn" data-val="filtered" title="Tính toán doanh số thực tế theo bộ lọc đang chọn trên Dashboard">Thực tế theo Bộ lọc</button>
+                <button class="seg-btn active" data-val="filtered" title="Tính toán Doanh số thực tế từ Sale_Revenue_Detail theo bộ lọc đang chọn">Thực tế theo Bộ lọc</button>
+                <button class="seg-btn" data-val="benchmark" title="Tính toán Doanh số YTD thực tế toàn hệ thống từ Sale_Revenue_Detail (gộp NH03 vào NH93)">Toàn bộ YTD (Data gốc)</button>
               </div>
               <button class="btn-mini" id="exportTargetCsvBtn" title="Tải bảng Target định dạng CSV">CSV</button>
               <button class="btn-mini" data-export-chart="targetProgress" title="Tải ảnh biểu đồ PNG">PNG</button>

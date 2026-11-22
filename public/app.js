@@ -86,6 +86,104 @@
     },
   };
 
+  const PRICE_SEGMENTS = [
+    "< 150K", "150K - 300K", "300K - 500K", "500K - 1M",
+    "1M - 2M", "2M - 3M", "3M - 5M", "> 5M",
+  ];
+
+  const PRICE_SEGMENT_COLORS = [
+    "#38BDF8", "#12D37A", "#14B8A6", "#1D7AFC",
+    "#F59E0B", "#F97316", "#7C3AED", "#E53E51",
+  ];
+
+  function getPriceSegmentIndex(unitPrice) {
+    const p = Math.abs(unitPrice || 0);
+    if (p < 150000) return 0;
+    if (p < 300000) return 1;
+    if (p < 500000) return 2;
+    if (p < 1000000) return 3;
+    if (p < 2000000) return 4;
+    if (p < 3000000) return 5;
+    if (p < 5000000) return 6;
+    return 7;
+  }
+
+  // Exact (Subcat2 | Brand) item-type weights from Master Product & Sales by SKU:
+  // [[hddQtyRatio, usbQtyRatio, cableQtyRatio, chargerQtyRatio], [hddSalesRatio, usbSalesRatio, cableSalesRatio, chargerSalesRatio]]
+  const SUBCAT_BRAND_ITEM_WEIGHTS = {
+    "NH11-01-01-Phụ kiện lưu trữ|Sandisk": [[0, 0.460998, 0, 0], [0, 0.399539, 0, 0]],
+    "NH11-01-04-Phụ kiện kết nối|Khác": [[0, 0, 0.992932, 0], [0, 0, 0.933839, 0]],
+    "NH11-01-01-Phụ kiện lưu trữ|Kingston": [[0, 0.986892, 0, 0], [0, 0.98929, 0, 0]],
+    "NH11-01-01-Phụ kiện lưu trữ|Kioxia": [[0, 0.428283, 0, 0], [0, 0.342132, 0, 0]],
+    "NH11-01-04-Phụ kiện kết nối|Ugreen": [[0, 0, 0.708882, 0], [0, 0, 0.604351, 0]],
+    "NH11-01-04-Phụ kiện kết nối|VegGieg": [[0, 0, 1, 0], [0, 0, 1, 0]],
+    "NH11-02-02-Thiết bị sạc, pin|Volwatt": [[0, 0, 0.466249, 0.533751], [0, 0, 0.35351, 0.64649]],
+    "NH11-02-02-Thiết bị sạc, pin|Baseus": [[0, 0, 0.486309, 0.28411], [0, 0, 0.213664, 0.30292]],
+    "NH11-01-04-Phụ kiện kết nối|Baseus": [[0, 0, 0.00089, 0], [0, 0, 0.00081, 0]],
+    "NH11-01-07-Ổ cứng gắn ngoài|Seagate": [[1, 0, 0, 0], [1, 0, 0, 0]],
+    "NH11-02-02-Thiết bị sạc, pin|9Fit": [[0, 0, 0.18171, 0.81829], [0, 0, 0.254846, 0.745154]],
+    "NH11-01-01-Phụ kiện lưu trữ|Transcend": [[0, 0.050633, 0, 0], [0, 0.033088, 0, 0]],
+    "NH11-02-02-Thiết bị sạc, pin|Energizer": [[0, 0, 0, 0.00145], [0, 0, 0, 0.047259]],
+    "NH11-01-07-Ổ cứng gắn ngoài|WD": [[1, 0, 0, 0], [1, 0, 0, 0]],
+    "NH11-99-02-Ổ cắm|LiOA": [[0, 0, 0, 0.034132], [0, 0, 0, 0.05358]],
+    "NH11-01-04-Phụ kiện kết nối|Orico": [[0, 0, 0.3, 0], [0, 0, 0.349486, 0]],
+    "NH11-01-07-Ổ cứng gắn ngoài|Sandisk": [[1, 0, 0, 0], [1, 0, 0, 0]],
+    "NH11-01-07-Ổ cứng gắn ngoài|Samsung": [[1, 0, 0, 0], [1, 0, 0, 0]],
+    "NH11-01-04-Phụ kiện kết nối|HP": [[0, 0, 0.960912, 0], [0, 0, 0.873687, 0]],
+    "NH11-02-02-Thiết bị sạc, pin|Pisen": [[0, 0, 0.857418, 0.131342], [0, 0, 0.590332, 0.386578]],
+    "NH11-02-02-Thiết bị sạc, pin|Mazer": [[0, 0, 0.593323, 0.29742], [0, 0, 0.286929, 0.587041]],
+    "NH11-02-02-Thiết bị sạc, pin|Divoom": [[0, 0, 1, 0], [0, 0, 1, 0]],
+    "NH11-01-07-Ổ cứng gắn ngoài|Kioxia": [[1, 0, 0, 0], [1, 0, 0, 0]],
+    "NH11-02-02-Thiết bị sạc, pin|Aukey": [[0, 0, 0.184434, 0.168738], [0, 0, 0.063587, 0.171573]],
+    "NH11-02-02-Thiết bị sạc, pin|Belkin": [[0, 0, 0.547358, 0.449651], [0, 0, 0.365866, 0.633364]],
+    "NH11-01-07-Ổ cứng gắn ngoài|Transcend": [[1, 0, 0, 0], [1, 0, 0, 0]],
+    "NH11-02-02-Thiết bị sạc, pin|Targus": [[0, 0, 0, 1], [0, 0, 0, 1]],
+    "NH11-02-02-Thiết bị sạc, pin|Mophie": [[0, 0, 0.500157, 0.389745], [0, 0, 0.3134, 0.381817]],
+    "NH11-01-04-Phụ kiện kết nối|Kingmaster": [[0, 0, 0.337234, 0], [0, 0, 0.094901, 0]],
+    "NH11-01-04-Phụ kiện kết nối|Philips": [[0, 0, 0.04, 0], [0, 0, 0.003183, 0]],
+    "NH11-01-04-Phụ kiện kết nối|Unitek": [[0, 0, 0.968466, 0], [0, 0, 0.841788, 0]],
+    "NH11-01-07-Ổ cứng gắn ngoài|Kingston": [[1, 0, 0, 0], [1, 0, 0, 0]],
+    "NH11-01-07-Ổ cứng gắn ngoài|Adata": [[1, 0, 0, 0], [1, 0, 0, 0]],
+    "NH11-01-04-Phụ kiện kết nối|Dtech": [[0, 0, 0.595745, 0], [0, 0, 0.241214, 0]],
+    "NH11-01-04-Phụ kiện kết nối|Cliptec": [[0, 0, 1, 0], [0, 0, 1, 0]],
+    "NH11-01-04-Phụ kiện kết nối|Belkin": [[0, 0, 0.991351, 0], [0, 0, 0.972581, 0]],
+    "NH11-02-02-Thiết bị sạc, pin|Elecom": [[0, 0, 0.5, 0], [0, 0, 0.665924, 0]],
+    "NH11-01-04-Phụ kiện kết nối|Elecom": [[0, 0, 1, 0], [0, 0, 1, 0]],
+    "NH11-01-04-Phụ kiện kết nối|Mpower": [[0, 0, 0.944444, 0], [0, 0, 0.973319, 0]],
+    "NH11-01-04-Phụ kiện kết nối|Soundmax": [[0, 0, 1, 0], [0, 0, 1, 0]],
+    "NH11-01-07-Ổ cứng gắn ngoài|Lacie": [[1, 0, 0, 0], [1, 0, 0, 0]],
+    "NH11-02-02-Thiết bị sạc, pin|Orico": [[0, 0, 0, 0.2], [0, 0, 0, 0.386635]],
+    "NH11-01-07-Ổ cứng gắn ngoài|Crucial": [[1, 0, 0, 0], [1, 0, 0, 0]],
+    "NH11-01-07-Ổ cứng gắn ngoài|Lexar": [[1, 0, 0, 0], [1, 0, 0, 0]],
+    "NH11-02-02-Thiết bị sạc, pin|Samsung": [[0, 0, 0, 1], [0, 0, 0, 1]],
+    "NH11-02-02-Thiết bị sạc, pin|Remax": [[0, 0, 0.965517, 0], [0, 0, 0.991077, 0]],
+    "NH11-01-07-Ổ cứng gắn ngoài|Asus": [[1, 0, 0, 0], [1, 0, 0, 0]],
+    "NH11-02-04-Phụ kiện dùng cho Apple|Mophie": [[0, 0, 0.048193, 0.066934], [0, 0, 0.033278, 0.03498]],
+    "NH11-02-02-Thiết bị sạc, pin|Tezag": [[0, 0, 0, 1], [0, 0, 0, 1]],
+    "NH11-02-04-Phụ kiện dùng cho Apple|Divoom": [[0, 0, 0, 1], [0, 0, 0, 1]],
+    "NH11-02-02-Thiết bị sạc, pin|Ugreen": [[0, 0, 0, 1], [0, 0, 0, 1]],
+    "NH11-02-02-Thiết bị sạc, pin|Aver": [[0, 0, 0, 1], [0, 0, 0, 1]],
+  };
+
+  function getRowItemBreakdown(subName, brandName, qty, sales) {
+    const key = `${subName}|${brandName}`;
+    let w = SUBCAT_BRAND_ITEM_WEIGHTS[key];
+    if (!w) {
+      const s = String(subName || "").toLowerCase();
+      if (s.includes("nh11-01-07") || s.includes("ổ cứng gắn ngoài")) {
+        w = [[1, 0, 0, 0], [1, 0, 0, 0]];
+      } else {
+        return null;
+      }
+    }
+    return {
+      hddQty: qty * w[0][0], hddSales: sales * w[1][0],
+      usbQty: qty * w[0][1], usbSales: sales * w[1][1],
+      cableQty: qty * w[0][2], cableSales: sales * w[1][2],
+      chargerQty: qty * w[0][3], chargerSales: sales * w[1][3],
+    };
+  }
+
   // Compact row column indexes (Sales)
   const C = {
     DATE: 0,
@@ -293,12 +391,15 @@
     rankSort: "sales",            // sales | qty | gm
     regionMetric: "sales",        // sales | qty | gp
     trendMetric: "qty",           // qty | gm | sales
+    yearlyCompareMetric: "sales", // sales | qty | gp
     // Deep views controls
     deepGranularity: "month",
     deepMode: "sales_qty",
+    monthlyDailyMonth: "",        // YYYY-MM or all_days
+    monthlyDailyMetric: "sales_qty", // sales_qty | sales | qty
     siteChartView: "bar",         // bar | treemap | scatter
     siteChartSort: "sales",       // sales | qty | gm
-    channelDim: "channel",        // channel | site
+    channelDim: "segment",        // segment | brand_segment | channel | site
     driverDim: "subcat",          // subcat | brand
     storage: {
       open: false,
@@ -345,6 +446,9 @@
     invAging: null,
     invCat: null,
     lookupVelocity: null,
+    targetProgress: null,
+    yearlyCompare: null,
+    monthlyDaily: null,
   };
 
   // --- FORMATTERS ---
@@ -985,6 +1089,20 @@
     mFrom.value = state.monthFrom;
     mTo.value = state.monthTo;
 
+    const mdSelect = document.getElementById("monthlyDailyMonthSelect");
+    if (mdSelect) {
+      mdSelect.innerHTML = "";
+      const revMonths = [...state.monthsAll].reverse();
+      revMonths.forEach((m) => {
+        const lbl = `Tháng ${m.slice(5)}/${m.slice(0, 4)} (${m})`;
+        mdSelect.add(new Option(lbl, m));
+      });
+      if (!state.monthlyDailyMonth || !state.monthsAll.includes(state.monthlyDailyMonth)) {
+        state.monthlyDailyMonth = revMonths[0] || "";
+      }
+      mdSelect.value = state.monthlyDailyMonth;
+    }
+
     const regEl = document.getElementById("filterRegion");
     if (regEl) {
       regEl.innerHTML = `<option value="">Tất cả Region Name (${lookups.regions.length})</option>`;
@@ -1037,6 +1155,10 @@
     charts.lookupVelocity = make("chartLookupVelocity");
     const elTarget = document.getElementById("chartTargetProgress");
     if (elTarget) charts.targetProgress = make("chartTargetProgress");
+    const elYearly = document.getElementById("chartYearlyCompare");
+    if (elYearly) charts.yearlyCompare = make("chartYearlyCompare");
+    const elMonthlyDaily = document.getElementById("chartMonthlyDaily");
+    if (elMonthlyDaily) charts.monthlyDaily = make("chartMonthlyDaily");
 
     // Cross-filter click listeners
     charts.hero.on("click", (params) => {
@@ -1339,6 +1461,20 @@
     });
     document.getElementById("exportTargetCsvBtn")?.addEventListener("click", () => exportTargetCsv());
 
+    bindSeg("yearlyCompareMetricGroup", (v) => {
+      state.yearlyCompareMetric = v;
+      renderYearlyComparisonChart();
+    });
+
+    bindSeg("monthlyDailyMetricGroup", (v) => {
+      state.monthlyDailyMetric = v;
+      renderMonthlyDailyChart();
+    });
+    document.getElementById("monthlyDailyMonthSelect")?.addEventListener("change", (e) => {
+      state.monthlyDailyMonth = e.target.value;
+      renderMonthlyDailyChart();
+    });
+
     bindSeg("deepGranularityGroup", (v) => {
       state.deepGranularity = v;
       renderDeepMonthly(state.clickedMonth ? getFilteredRows(true) : getFilteredRows(false));
@@ -1599,8 +1735,10 @@
       renderSiteRankList(filtered);
       renderRegionModality(filtered);
       renderTrendChart(filteredTime);
+      renderYearlyComparisonChart();
     } else if (state.activeView === "monthly") {
       renderDeepMonthly(filteredTime);
+      renderMonthlyDailyChart();
     } else if (state.activeView === "site") {
       renderDeepSite(filtered);
     } else if (state.activeView === "region") {
@@ -1660,6 +1798,10 @@
     ];
     spec.metrics.forEach((m, i) => {
       const [lId, vId, sId] = mIds[i];
+      const lEl = document.getElementById(lId);
+      const box = lEl ? lEl.closest(".metric-item") : null;
+      if (box) box.classList.toggle("hidden", Boolean(m.hidden));
+      if (m.hidden) return;
       set(lId, m.l); set(vId, m.v); set(sId, m.s);
       const sEl = document.getElementById(sId);
       if (sEl) sEl.className = `metric-delta ${m.cls || "pos"} mono`;
@@ -1758,10 +1900,16 @@
     const { lookups } = inv;
     let totVal = 0, totQty = 0, sellVal = 0, sellQty = 0, dmgVal = 0, dmgQty = 0, discVal = 0, discQty = 0, age365Val = 0, age365Qty = 0;
     const skus = new Set(), sites = new Set();
+    const siteInvMap = new Map();
 
     rows.forEach((r) => {
       const val = r[INV_C.VALUE], qty = r[INV_C.QTY];
       totVal += val; totQty += qty; skus.add(r[INV_C.SKU]); sites.add(r[INV_C.SITE]);
+      const sc = lookups.sites[r[INV_C.SITE]] || "—";
+      const sCur = siteInvMap.get(sc) || { code: sc, val: 0, qty: 0 };
+      sCur.val += val; sCur.qty += qty;
+      siteInvMap.set(sc, sCur);
+
       const bt = (lookups.binTypes[r[INV_C.BIN_TYPE]] || "").toLowerCase();
       if (bt.includes("bán mới")) { sellVal += val; sellQty += qty; }
       if (bt.includes("hư hỏng")) { dmgVal += val; dmgQty += qty; }
@@ -1771,6 +1919,7 @@
     });
 
     let healthyCnt = 0, clsCnt = 0, badRiskCnt = 0, badRiskVal = 0, totalSnCnt = 0;
+    const siteBadMap = new Map();
     const cubeRows = getFilteredSerialCubeRows();
     if (cubeRows && state.raw.invSerialCube) {
       const snL = state.raw.invSerialCube.lookups;
@@ -1778,11 +1927,22 @@
       const badL = state.inv.badScope === "site" ? snL.badSite : snL.badComp;
       cubeRows.forEach((cr) => {
         const cnt = cr[SC_C.COUNT];
+        const val = cr[SC_C.VAL];
+        const sc = snL.sites[cr[SC_C.SITE]] || "—";
+        let sb = siteBadMap.get(sc);
+        if (!sb) { sb = { code: sc, badVal: 0, badCnt: 0, snTotVal: 0, snTotCnt: 0 }; siteBadMap.set(sc, sb); }
+        sb.snTotVal += val;
+        sb.snTotCnt += cnt;
         totalSnCnt += cnt;
         if (!cr[SC_C.IN_BAD_FILE]) return;
         clsCnt += cnt;
         if (badL[cr[badCol]] === "Tồn thông thường") healthyCnt += cnt;
-        else { badRiskCnt += cnt; badRiskVal += cr[SC_C.VAL]; }
+        else {
+          badRiskCnt += cnt;
+          badRiskVal += val;
+          sb.badVal += val;
+          sb.badCnt += cnt;
+        }
       });
     } else if (state.raw.invSerials) {
       const snL = state.raw.invSerials.lookups;
@@ -1790,50 +1950,123 @@
       const badL = state.inv.badScope === "site" ? snL.badSite : snL.badComp;
       totalSnCnt = serialRows.length;
       serialRows.forEach((sr) => {
+        const val = sr[SN_C.INV_VAL];
+        const sc = snL.sites[sr[SN_C.SITE]] || "—";
+        let sb = siteBadMap.get(sc);
+        if (!sb) { sb = { code: sc, badVal: 0, badCnt: 0, snTotVal: 0, snTotCnt: 0 }; siteBadMap.set(sc, sb); }
+        sb.snTotVal += val;
+        sb.snTotCnt += 1;
         if (!sr[SN_C.IN_BAD_FILE]) return;
         clsCnt++;
         if (badL[sr[badCol]] === "Tồn thông thường") healthyCnt++;
-        else { badRiskCnt++; badRiskVal += sr[SN_C.INV_VAL]; }
+        else {
+          badRiskCnt++;
+          badRiskVal += val;
+          sb.badVal += val;
+          sb.badCnt += 1;
+        }
       });
     }
 
-    const sellPct = totVal > 0 ? (sellVal / totVal) * 100 : 0;
-    const dmgPct = totVal > 0 ? (dmgVal / totVal) * 100 : 0;
-    const shareAll = inv.meta?.totals?.value ? (totVal / inv.meta.totals.value) * 100 : 100;
-    const healthyPct = clsCnt > 0 ? (healthyCnt / clsCnt) * 100 : 0;
-    const vel30d = state.raw.invSkuLevel?.meta?.totals?.sales30d || 0;
-    const mpCount = state.raw.masterProducts?.meta?.rowCount || state.raw.masterSummary?.meta?.rowCount || 0;
+    // 1. Vòng tròn đầu tiên: Bad Stock so với Tổng tồn
+    const badPct = totVal > 0 ? Math.min(100, (badRiskVal / totVal) * 100) : (totalSnCnt > 0 ? (badRiskCnt / totalSnCnt) * 100 : 0);
+    // 2. Bán nguyệt tiếp theo: Tồn lâu > 365 ngày so với tổng tồn
+    const age365Pct = totVal > 0 ? Math.min(100, (age365Val / totVal) * 100) : (totQty > 0 ? (age365Qty / totQty) * 100 : 0);
+
+    // 3. Kho tồn nhiều nhất - giá trị bao nhiêu
+    const sortedInvSites = Array.from(siteInvMap.values()).sort((a, b) => b.val - a.val);
+    const topInvSite = sortedInvSites[0] || { code: "—", val: 0, qty: 0 };
+    const topInvSiteShare = totVal > 0 ? (topInvSite.val / totVal) * 100 : 0;
+
+    // 4. Kho có tỷ lệ tồn Bad Stock cao nhất
+    let worstBadSite = { code: "—", pct: 0, badVal: 0, totVal: 0, badCnt: 0 };
+    siteBadMap.forEach((sb) => {
+      const sInv = siteInvMap.get(sb.code);
+      const denomVal = (sInv && sInv.val > 0) ? sInv.val : sb.snTotVal;
+      if (denomVal > 0 && sb.badVal > 0) {
+        const pct = Math.min(100, (sb.badVal / denomVal) * 100);
+        if (pct > worstBadSite.pct || (pct === worstBadSite.pct && sb.badVal > worstBadSite.badVal)) {
+          worstBadSite = { code: sb.code, pct, badVal: sb.badVal, totVal: denomVal, badCnt: sb.badCnt };
+        }
+      }
+    });
+
+    // 5. 4 ô dưới cùng: Số SKU có bán trong 7D, 30D, 90D, 180D (tỷ lệ %)
+    let cnt7d = 0, cnt30d = 0, cnt90d = 0, cnt180d = 0, totVelSkus = 0;
+    const iv = state.inv;
+    if (iv.site && state.raw.invBranchLevel?.rows?.length) {
+      const brL = state.raw.invBranchLevel.lookups;
+      const brSiteIdx = brL.sites.indexOf(iv.site);
+      const validSkuSet = new Set();
+      rows.forEach((r) => validSkuSet.add(extractSkuCodeFromLabel(lookups.skus[r[INV_C.SKU]])));
+      state.raw.invBranchLevel.rows.forEach((br) => {
+        if (br[1] !== brSiteIdx) return;
+        if (validSkuSet.size > 0 && !validSkuSet.has(br[0])) return;
+        totVelSkus++;
+        if (br[3] > 0) cnt7d++;
+        if (br[4] > 0) cnt30d++;
+        if (br[5] > 0) cnt90d++;
+        if (br[6] > 0) cnt180d++;
+      });
+    } else if (state.raw.invSkuLevel?.rows?.length) {
+      const hasLocalFilter = Boolean(state.globalCat || state.globalSubcat || iv.brand || iv.status || iv.range || iv.binType || iv.binZone || iv.badStock || iv.agingBucket || iv.sellableOnly || iv.damagedOnly);
+      const validSkuSet = new Set();
+      if (hasLocalFilter) {
+        rows.forEach((r) => validSkuSet.add(extractSkuCodeFromLabel(lookups.skus[r[INV_C.SKU]])));
+      }
+      state.raw.invSkuLevel.rows.forEach((sr) => {
+        // [0:sku, 1:name, 2:subcat2, 3:brand, 4:pstatus, 5:range, 6:s7, 7:s30, 8:s90, 9:s180, 10:gm, 11:sdays, 12:iq, 13:iv, 14:uc, 15:lp, 16:cat]
+        const catCode = sr[16] || String(sr[2] || "").slice(0, 4);
+        if (HIDDEN_GLOBAL_CATS.has(String(catCode).toUpperCase())) return;
+        if (state.globalCat && catCode !== state.globalCat) return;
+        if (state.globalSubcat && sr[2] !== state.globalSubcat) return;
+        if (iv.brand && sr[3] !== iv.brand) return;
+        if (iv.status && sr[4] !== iv.status) return;
+        if (iv.range && sr[5] !== iv.range) return;
+        if (hasLocalFilter && validSkuSet.size > 0 && !validSkuSet.has(sr[0])) return;
+        totVelSkus++;
+        if (sr[6] > 0) cnt7d++;
+        if (sr[7] > 0) cnt30d++;
+        if (sr[8] > 0) cnt90d++;
+        if (sr[9] > 0) cnt180d++;
+      });
+    }
+    const pct7d = totVelSkus > 0 ? (cnt7d / totVelSkus) * 100 : 0;
+    const pct30d = totVelSkus > 0 ? (cnt30d / totVelSkus) * 100 : 0;
+    const pct90d = totVelSkus > 0 ? (cnt90d / totVelSkus) * 100 : 0;
+    const pct180d = totVelSkus > 0 ? (cnt180d / totVelSkus) * 100 : 0;
 
     applySidebarSpec({
       title: "Tồn Kho",
-      g1Label: "Tỷ lệ Hàng Bán Mới",
-      g1Tag: `${fmtPct(shareAll)} tổng kho`,
-      g1Big: fmtPct(sellPct),
-      g1Pill: `Bán mới ${fmtCompactVnd(sellVal)}`,
-      g1Pct: sellPct,
+      g1Label: "Bad Stock / Tổng Tồn",
+      g1Tag: `${fmtInt(badRiskCnt)}/${fmtInt(totalSnCnt)} SN`,
+      g1Big: fmtPct(badPct),
+      g1Pill: `Bad ${fmtCompactVnd(badRiskVal)}`,
+      g1PillNeg: badRiskVal > 0,
+      g1Pct: badPct,
       bar1Label: "Tổng Giá trị Tồn",
       bar1Val: fmtCompactVnd(totVal),
-      bar1Pct: shareAll,
-      bar2Label: "Hàng Hư Hỏng",
-      bar2Val: fmtCompactVnd(dmgVal),
-      bar2Pct: dmgPct,
-      g2Label: "Tỷ lệ Tồn Thông Thường",
-      g2Tag: `${fmtInt(clsCnt)} SN phân loại`,
-      g2Big: fmtPct(healthyPct),
-      g2Pill: `${fmtInt(badRiskCnt)} SN Bad Stock`,
-      g2PillNeg: badRiskCnt > 0,
-      g2Pct: healthyPct,
+      bar1Pct: 100,
+      bar2Label: "Giá trị Bad Stock",
+      bar2Val: fmtCompactVnd(badRiskVal),
+      bar2Pct: badPct,
+      g2Label: "Tồn lâu > 365 ngày / Tổng",
+      g2Tag: `${fmtInt(age365Qty)} units`,
+      g2Big: fmtPct(age365Pct),
+      g2Pill: `>365D: ${fmtCompactVnd(age365Val)}`,
+      g2PillNeg: age365Val > 0,
+      g2Pct: age365Pct,
       metrics: [
-        { l: "Tổng SL Tồn", v: `${fmtInt(totQty)} qty`, s: `${fmtInt(totalSnCnt)} Serial`, cls: "neutral" },
-        { l: "Bad Stock Rủi ro", v: fmtCompactVnd(badRiskVal), s: `${fmtInt(badRiskCnt)} SN chậm/xấu`, cls: "neg" },
-        { l: "Tồn > 365 ngày", v: fmtCompactVnd(age365Val), s: `${fmtInt(age365Qty)} units`, cls: "neg" },
-        { l: "Discontinued", v: fmtCompactVnd(discVal), s: `${fmtInt(discQty)} units`, cls: "neutral" },
+        { l: "Kho Tồn Nhiều Nhất", v: `${topInvSite.code} • ${fmtCompactVnd(topInvSite.val)}`, s: `${fmtInt(topInvSite.qty)} sp (${fmtPct(topInvSiteShare)} tổng)`, cls: "pos" },
+        { l: "Kho % Bad Stock Cao Nhất", v: `${worstBadSite.code} • ${fmtPct(worstBadSite.pct)}`, s: `Bad: ${fmtCompactVnd(worstBadSite.badVal)} / ${fmtCompactVnd(worstBadSite.totVal)}`, cls: "neg" },
+        { l: "", v: "", s: "", hidden: true },
+        { l: "", v: "", s: "", hidden: true },
       ],
       insets: [
-        { l: "Số Kho (Sites)", v: fmtInt(sites.size), s: `/ ${lookups.sites.length} kho`, cls: "pos" },
-        { l: "Unique SKUs", v: fmtInt(skus.size), s: `${fmtInt(rows.length)} BIN`, cls: "pos" },
-        { l: "Bán 30D (SKU)", v: fmtInt(vel30d), s: "units / 30D", cls: "pos" },
-        { l: "Master SKUs", v: fmtInt(mpCount), s: "danh mục gốc", cls: "neutral" },
+        { l: "SKU có bán 7D", v: fmtInt(cnt7d), s: `${fmtPct(pct7d)} / ${fmtInt(totVelSkus)} SKU`, cls: "pos" },
+        { l: "SKU có bán 30D", v: fmtInt(cnt30d), s: `${fmtPct(pct30d)} / ${fmtInt(totVelSkus)} SKU`, cls: "pos" },
+        { l: "SKU có bán 90D", v: fmtInt(cnt90d), s: `${fmtPct(pct90d)} / ${fmtInt(totVelSkus)} SKU`, cls: "pos" },
+        { l: "SKU có bán 180D", v: fmtInt(cnt180d), s: `${fmtPct(pct180d)} / ${fmtInt(totVelSkus)} SKU`, cls: "pos" },
       ],
     });
   }
@@ -1915,10 +2148,10 @@
       isStore: !(siteDirectory[s.code]?.region || "").startsWith("Non-Store"),
     })).sort((a, b) => b.sales - a.sales);
 
-    const top5Sales = list.slice(0, 5).reduce((a, b) => a + b.sales, 0);
-    const top5Share = totSales > 0 ? (top5Sales / totSales) * 100 : 0;
-    const top1 = list[0] || { code: "—", sales: 0 };
-    const top2 = list[1] || { code: "—", sales: 0 };
+    const retailSales = list.filter((s) => s.isStore).reduce((a, b) => a + b.sales, 0);
+    const nonStoreSales = Math.max(0, totSales - retailSales);
+    const retailShare = totSales > 0 ? (retailSales / totSales) * 100 : 0;
+    const nonStoreShare = totSales > 0 ? (nonStoreSales / totSales) * 100 : 0;
     const profCnt = list.filter((s) => s.gp > 0).length;
     const profRate = list.length ? (profCnt / list.length) * 100 : 0;
     const byGm = [...list].filter((s) => s.sales > 0).sort((a, b) => b.gm - a.gm);
@@ -1928,17 +2161,17 @@
 
     applySidebarSpec({
       title: "Site Report",
-      g1Label: "Tỷ trọng Top 5 Sites",
-      g1Tag: `${list.length} active sites`,
-      g1Big: fmtPct(top5Share),
-      g1Pill: `Top 5: ${fmtCompactVnd(top5Sales)}`,
-      g1Pct: top5Share,
-      bar1Label: `#1 ${top1.code}`,
-      bar1Val: fmtCompactVnd(top1.sales),
-      bar1Pct: totSales > 0 ? (top1.sales / totSales) * 100 : 0,
-      bar2Label: `#2 ${top2.code}`,
-      bar2Val: fmtCompactVnd(top2.sales),
-      bar2Pct: totSales > 0 ? (top2.sales / totSales) * 100 : 0,
+      g1Label: "Cửa hàng bán lẻ / Tổng số",
+      g1Tag: `${storeCnt}/${list.length} sites`,
+      g1Big: fmtPct(retailShare),
+      g1Pill: `CH: ${fmtCompactVnd(retailSales)}`,
+      g1Pct: retailShare,
+      bar1Label: "Cửa hàng bán lẻ (CH)",
+      bar1Val: fmtCompactVnd(retailSales),
+      bar1Pct: retailShare,
+      bar2Label: "Kênh Non-Store / Khác",
+      bar2Val: fmtCompactVnd(nonStoreSales),
+      bar2Pct: nonStoreShare,
       g2Label: "Tỷ lệ Site có lãi (GP>0)",
       g2Tag: `${profCnt}/${list.length} sites`,
       g2Big: fmtPct(profRate),
@@ -1976,23 +2209,27 @@
     const list = Array.from(byR.values()).sort((a, b) => b.sales - a.sales);
     const top1 = list[0] || { reg: "—", sales: 0 };
     const top2 = list[1] || { reg: "—", sales: 0 };
-    const top1Share = totSales > 0 ? (top1.sales / totSales) * 100 : 0;
+    const r264 = byR.get("264") || { reg: "264", sales: 0, gp: 0, qty: 0 };
+    const sales264 = r264.sales;
+    const restSales = Math.max(0, totSales - sales264);
+    const share264 = totSales > 0 ? (sales264 / totSales) * 100 : 0;
+    const restShare = totSales > 0 ? (restSales / totSales) * 100 : 0;
     const storeGm = storeSales > 0 ? (storeGp / storeSales) * 100 : 0;
     const storeRegCnt = list.filter((x) => !x.reg.startsWith("Non-Store")).length;
 
     applySidebarSpec({
       title: "Region Report",
-      g1Label: `Tỷ trọng #1 (${shortRegionLabel(top1.reg)})`,
-      g1Tag: `${list.length} vùng lọc`,
-      g1Big: fmtPct(top1Share),
-      g1Pill: fmtCompactVnd(top1.sales),
-      g1Pct: top1Share,
-      bar1Label: "Khối 5 Region CH",
-      bar1Val: fmtCompactVnd(storeSales),
-      bar1Pct: totSales > 0 ? (storeSales / totSales) * 100 : 0,
-      bar2Label: "Khối Non-Store",
-      bar2Val: fmtCompactVnd(nonSales),
-      bar2Pct: totSales > 0 ? (nonSales / totSales) * 100 : 0,
+      g1Label: "Region 264 so với Còn lại",
+      g1Tag: `264 vs ${Math.max(0, list.length - (byR.has("264") ? 1 : 0))} vùng khác`,
+      g1Big: fmtPct(share264),
+      g1Pill: `264: ${fmtCompactVnd(sales264)}`,
+      g1Pct: share264,
+      bar1Label: "Region 264 (CH 264 XNT)",
+      bar1Val: fmtCompactVnd(sales264),
+      bar1Pct: share264,
+      bar2Label: "Các Region còn lại",
+      bar2Val: fmtCompactVnd(restSales),
+      bar2Pct: restShare,
       g2Label: "Biên lợi nhuận Khối CH",
       g2Tag: "Store GM (%)",
       g2Big: fmtPct(storeGm),
@@ -2015,41 +2252,74 @@
 
   function renderSidebarChannel(rows) {
     const { lookups } = state.raw;
-    const byCh = new Map(), bySub = new Map(), byBr = new Map(), skus = new Set();
+    const bySeg = new Map(), byBr = new Map();
+    PRICE_SEGMENTS.forEach((seg) => bySeg.set(seg, { name: seg, sales: 0, qty: 0 }));
+
     let totSales = 0, totQty = 0;
+    let shopeeSales = 0, shopeeQty = 0;
+    let hddQty = 0, hddSales = 0;
+    let usbQty = 0, usbSales = 0;
+    let cableQty = 0, cableSales = 0;
+    let chargerQty = 0, chargerSales = 0;
+
     rows.forEach((r) => {
-      const ch = lookups.channels[r[C.CHANNEL]], sub = lookups.subcats[r[C.SUBCAT]], br = lookups.brands[r[C.BRAND]];
-      byCh.set(ch, (byCh.get(ch) || 0) + r[C.SALES]);
-      bySub.set(sub, (bySub.get(sub) || 0) + r[C.SALES]);
-      byBr.set(br, (byBr.get(br) || 0) + r[C.SALES]);
-      skus.add(r[C.SKU]);
-      totSales += r[C.SALES]; totQty += r[C.QTY];
+      const ch = lookups.channels[r[C.CHANNEL]] || "";
+      const sub = lookups.subcats[r[C.SUBCAT]] || "";
+      const br = lookups.brands[r[C.BRAND]] || "Khác";
+      const sal = r[C.SALES];
+      const qty = r[C.QTY];
+
+      byBr.set(br, (byBr.get(br) || 0) + sal);
+      totSales += sal;
+      totQty += qty;
+
+      // Price Segment classification
+      const unitP = qty !== 0 ? Math.abs(sal / qty) : 0;
+      const segName = PRICE_SEGMENTS[getPriceSegmentIndex(unitP)];
+      const segObj = bySeg.get(segName);
+      if (segObj) { segObj.sales += sal; segObj.qty += qty; }
+
+      // Shopee Mart sales
+      if (ch.toLowerCase().includes("shopee")) {
+        shopeeSales += sal;
+        shopeeQty += qty;
+      }
+
+      // Product item counts: Ổ cứng, USB, Dây cáp, Củ sạc
+      const itemBrk = getRowItemBreakdown(sub, br, qty, sal);
+      if (itemBrk) {
+        hddQty += itemBrk.hddQty; hddSales += itemBrk.hddSales;
+        usbQty += itemBrk.usbQty; usbSales += itemBrk.usbSales;
+        cableQty += itemBrk.cableQty; cableSales += itemBrk.cableSales;
+        chargerQty += itemBrk.chargerQty; chargerSales += itemBrk.chargerSales;
+      }
     });
-    const chList = Array.from(byCh.entries()).sort((a, b) => b[1] - a[1]);
-    const subList = Array.from(bySub.entries()).sort((a, b) => b[1] - a[1]);
+
+    const segList = Array.from(bySeg.values()).filter((s) => s.sales > 0).sort((a, b) => b.sales - a.sales);
     const brList = Array.from(byBr.entries()).sort((a, b) => b[1] - a[1]);
 
-    const topCh = chList[0] || ["—", 0];
-    const topSub = subList[0] || ["—", 0];
+    const topSeg1 = segList[0] || { name: "—", sales: 0, qty: 0 };
+    const topSeg2 = segList[1] || { name: "—", sales: 0, qty: 0 };
     const topBr1 = brList[0] || ["—", 0];
     const topBr2 = brList[1] || ["—", 0];
-    const topChShare = totSales > 0 ? (topCh[1] / totSales) * 100 : 0;
+    const topSegShare = totSales > 0 ? (topSeg1.sales / totSales) * 100 : 0;
+    const topSeg2Share = totSales > 0 ? (topSeg2.sales / totSales) * 100 : 0;
     const top3BrSales = brList.slice(0, 3).reduce((s, x) => s + x[1], 0);
     const top3BrShare = totSales > 0 ? (top3BrSales / totSales) * 100 : 0;
 
     applySidebarSpec({
-      title: "Channel & Brand",
-      g1Label: `Top Channel (${topCh[0]})`,
-      g1Tag: `${chList.length} kênh bán`,
-      g1Big: fmtPct(topChShare),
-      g1Pill: fmtCompactVnd(topCh[1]),
-      g1Pct: topChShare,
-      bar1Label: `Kênh #1: ${topCh[0]}`,
-      bar1Val: fmtCompactVnd(topCh[1]),
-      bar1Pct: topChShare,
-      bar2Label: `Nhóm #1: ${topSub[0].slice(0, 18)}`,
-      bar2Val: fmtCompactVnd(topSub[1]),
-      bar2Pct: totSales > 0 ? (topSub[1] / totSales) * 100 : 0,
+      title: "Brand & Segment",
+      g1Label: `Segment Tốt Nhất (${topSeg1.name})`,
+      g1Tag: `${segList.length} khúc giá`,
+      g1Big: fmtPct(topSegShare),
+      g1Pill: fmtCompactVnd(topSeg1.sales),
+      g1Pct: topSegShare,
+      bar1Label: `#1 Giá: ${topSeg1.name}`,
+      bar1Val: fmtCompactVnd(topSeg1.sales),
+      bar1Pct: topSegShare,
+      bar2Label: `#2 Giá: ${topSeg2.name}`,
+      bar2Val: fmtCompactVnd(topSeg2.sales),
+      bar2Pct: topSeg2Share,
       g2Label: "Tỷ trọng Top 3 Brands",
       g2Tag: `${brList.length} brands`,
       g2Big: fmtPct(top3BrShare),
@@ -2058,14 +2328,14 @@
       metrics: [
         { l: "Top #1 Brand", v: topBr1[0].slice(0, 12), s: fmtCompactVnd(topBr1[1]), cls: "pos" },
         { l: "Top #2 Brand", v: topBr2[0].slice(0, 12), s: fmtCompactVnd(topBr2[1]), cls: "neutral" },
-        { l: "Top #1 Subcat", v: fmtCompactVnd(topSub[1]), s: topSub[0].slice(0, 14), cls: "pos" },
+        { l: "Doanh số ShopeeMart", v: fmtCompactVnd(shopeeSales), s: `${fmtInt(shopeeQty)} sp bán ra`, cls: "pos" },
         { l: "Giá bán TB (ASP)", v: fmtCompactVnd(totQty ? totSales / totQty : 0), s: "VND / unit", cls: "neutral" },
       ],
       insets: [
-        { l: "Channels", v: fmtInt(chList.length), s: "kênh phân phối", cls: "pos" },
-        { l: "Subcat 2", v: fmtInt(subList.length), s: "nhóm hàng", cls: "pos" },
-        { l: "Brands", v: fmtInt(brList.length), s: "thương hiệu", cls: "pos" },
-        { l: "Unique SKUs", v: fmtInt(skus.size), s: "mã phát sinh", cls: "neutral" },
+        { l: "Số Ổ cứng đã bán", v: fmtInt(Math.round(hddQty)), s: fmtCompactVnd(hddSales), cls: "pos" },
+        { l: "Số USB đã bán", v: fmtInt(Math.round(usbQty)), s: fmtCompactVnd(usbSales), cls: "pos" },
+        { l: "Số Dây cáp đã bán", v: fmtInt(Math.round(cableQty)), s: fmtCompactVnd(cableSales), cls: "pos" },
+        { l: "Số Củ sạc đã bán", v: fmtInt(Math.round(chargerQty)), s: fmtCompactVnd(chargerSales), cls: "pos" },
       ],
     });
   }
@@ -2122,27 +2392,34 @@
   function renderSidebar(rows) {
     const { meta, lookups } = state.raw;
     let sales = 0, qty = 0, cogs = 0, gp = 0, exportRows = 0, returnRows = 0;
-    const sites = new Set(), regions = new Set(), months = new Set();
+    let sales2026 = 0, sales2025 = 0;
+    const sites = new Set(), regions = new Set(), months = new Set(), months2026 = new Set();
     const retIdx = lookups.orderTypes.indexOf("don_nhap_hoan_ban");
 
     for (let i = 0; i < rows.length; i++) {
       const r = rows[i];
       const cnt = r.length > C.COUNT ? (r[C.COUNT] || 1) : 1;
+      const mStr = r[C.MONTH] || "";
       sales += r[C.SALES];
       qty += r[C.QTY];
       cogs += r[C.COGS];
       gp += r[C.GP];
+      if (mStr.startsWith("2026")) {
+        sales2026 += r[C.SALES];
+        months2026.add(mStr);
+      } else if (mStr.startsWith("2025")) {
+        sales2025 += r[C.SALES];
+      }
       if (r[C.ORDER_TYPE] === retIdx) returnRows += cnt;
       else exportRows += cnt;
       sites.add(r[C.SITE]);
       regions.add(r[C.REGION]);
-      months.add(r[C.MONTH]);
+      months.add(mStr);
     }
 
     const totalRows = exportRows + returnRows;
     const gm = sales !== 0 ? (gp / sales) * 100 : 0;
     const fulfillRate = totalRows > 0 ? (exportRows / totalRows) * 100 : 0;
-    const salesShare = meta.totals.sales ? (sales / meta.totals.sales) * 100 : 0;
     const avgMonthSales = months.size > 0 ? sales / months.size : 0;
     const avgMonthQty = months.size > 0 ? qty / months.size : 0;
     const asp = qty !== 0 ? sales / qty : 0;
@@ -2159,10 +2436,124 @@
       activeTargetLabel = `Kế hoạch ${fmtCompactVnd(activeTargetTr * 1e6)}`;
     }
 
+    // Use 2026 YTD sales against 2026 YTD Target when 2026 data is included in filter
+    const effectiveSalesForTarget = sales2026 > 0 ? sales2026 : sales;
     const targetVnd = activeTargetTr * 1e6;
-    const vsTargetPct = targetVnd > 0 ? (sales / targetVnd) * 100 : 0;
-    const targetGap = targetVnd - sales;
+    const vsTargetPct = targetVnd > 0 ? (effectiveSalesForTarget / targetVnd) * 100 : 0;
+    const targetGap = targetVnd - effectiveSalesForTarget;
     const targetGapLabel = targetGap > 0 ? `Thiếu -${fmtCompactVnd(targetGap)}` : `Vượt +${fmtCompactVnd(-targetGap)}`;
+
+    // Calculate daily & YoY / MoM same-period telemetry for bottom 4 inset cards
+    const dailyRows = getFilteredDailyRows(false);
+    const byDate = new Map();
+    const byMonthDaily = new Map();
+    dailyRows.forEach((d) => {
+      const dt = d[C.DATE];
+      const m = d[C.MONTH];
+      byDate.set(dt, (byDate.get(dt) || 0) + d[C.SALES]);
+      byMonthDaily.set(m, (byMonthDaily.get(m) || 0) + d[C.SALES]);
+    });
+
+    // Scale factor if site / channel / orderType filter is active
+    const byMonthCube = new Map();
+    rows.forEach((r) => {
+      const m = r[C.MONTH];
+      byMonthCube.set(m, (byMonthCube.get(m) || 0) + r[C.SALES]);
+    });
+    const getMonthScale = (m) => {
+      if (!state.site && !state.channel && !state.orderType) return 1;
+      const dSum = byMonthDaily.get(m) || 0;
+      const cSum = byMonthCube.get(m) || 0;
+      return dSum !== 0 ? cSum / dSum : 0;
+    };
+
+    const sortedDates = Array.from(byDate.keys()).sort();
+    const latestDateStr = sortedDates[sortedDates.length - 1] || (meta?.dateMax || "2026-11-21");
+    const latestMonthStr = latestDateStr.slice(0, 7);
+    const latestDayNum = Number(latestDateStr.slice(8, 10)) || 21;
+    const latestDaySales = (byDate.get(latestDateStr) || 0) * getMonthScale(latestMonthStr);
+    const latestDateVn = latestDateStr.length === 10
+      ? `${latestDateStr.slice(8, 10)}/${latestDateStr.slice(5, 7)}/${latestDateStr.slice(0, 4)}`
+      : latestDateStr;
+
+    // 2026 Daily Average
+    let totSales2026Daily = 0, days2026Cnt = 0;
+    sortedDates.forEach((dt) => {
+      if (dt.startsWith("2026-")) {
+        const m = dt.slice(0, 7);
+        const val = (byDate.get(dt) || 0) * getMonthScale(m);
+        if (val !== 0 || byDate.get(dt) !== 0) {
+          totSales2026Daily += val;
+          days2026Cnt++;
+        }
+      }
+    });
+    if (state.site || state.channel || state.orderType) {
+      totSales2026Daily = sales2026;
+    }
+    const avgDaily2026 = days2026Cnt > 0 ? totSales2026Daily / days2026Cnt : 0;
+
+    // MoM Same-Period Growth (e.g. Nov 01..21 vs Oct 01..21)
+    const active2026Months = Array.from(byMonthCube.keys()).filter((m) => m.startsWith("2026")).sort();
+    const curM = state.clickedMonth || active2026Months[active2026Months.length - 1] || latestMonthStr;
+    const curY = Number(curM.slice(0, 4)) || 2026;
+    const curMM = Number(curM.slice(5, 7)) || 11;
+    const prevM = curMM > 1 ? `${curY}-${String(curMM - 1).padStart(2, "0")}` : `${curY - 1}-12`;
+    let curMaxDay = 31;
+    sortedDates.forEach((dt) => {
+      if (dt.startsWith(curM)) curMaxDay = Math.max(1, Number(dt.slice(8, 10)) || 31);
+    });
+    let curPeriodSales = 0, prevPeriodSales = 0;
+    sortedDates.forEach((dt) => {
+      const dayN = Number(dt.slice(8, 10)) || 1;
+      if (dt.startsWith(curM) && dayN <= curMaxDay) {
+        curPeriodSales += (byDate.get(dt) || 0) * getMonthScale(curM);
+      } else if (dt.startsWith(prevM) && dayN <= curMaxDay) {
+        prevPeriodSales += (byDate.get(dt) || 0) * getMonthScale(prevM);
+      }
+    });
+    const momSamePct = prevPeriodSales > 0 ? ((curPeriodSales - prevPeriodSales) / prevPeriodSales) * 100 : 0;
+    const momSubLabel = `${curMaxDay} ngày T${String(curMM).padStart(2, "0")} vs T${prevM.slice(5, 7)}`;
+
+    // YoY Same-Period Growth (2026 vs cùng kỳ 2025)
+    let yoyPct = TARGET_BENCHMARK.total.vsLyPct;
+    let yoySubLabel = "2026 vs cùng kỳ 2025";
+    const hasSubFilter = Boolean(state.region || state.site || state.channel || state.globalSubcat || state.clickedMonth || state.orderType || state.excludeBulk || state.storeRegionsOnly);
+    if (!hasSubFilter) {
+      if (state.globalCat && TARGET_BENCHMARK.categories[state.globalCat]) {
+        yoyPct = TARGET_BENCHMARK.categories[state.globalCat].vsLyPct;
+      } else {
+        yoyPct = TARGET_BENCHMARK.total.vsLyPct;
+      }
+    } else if (state.clickedMonth) {
+      const lyM = `2025-${curM.slice(5, 7)}`;
+      let lyMonthSameSales = 0;
+      sortedDates.forEach((dt) => {
+        const dayN = Number(dt.slice(8, 10)) || 1;
+        if (dt.startsWith(lyM) && dayN <= curMaxDay) {
+          lyMonthSameSales += (byDate.get(dt) || 0) * getMonthScale(lyM);
+        }
+      });
+      yoyPct = lyMonthSameSales > 0 ? ((curPeriodSales - lyMonthSameSales) / lyMonthSameSales) * 100 : 0;
+      yoySubLabel = `T${curM.slice(5, 7)}/26 vs T${curM.slice(5, 7)}/25`;
+    } else {
+      const cutoffMmDd = latestDateStr.slice(5, 10) || "11-21";
+      let ytd26 = 0, ytd25 = 0;
+      sortedDates.forEach((dt) => {
+        const mmdd = dt.slice(5, 10);
+        const m = dt.slice(0, 7);
+        if (dt.startsWith("2026-") && mmdd <= cutoffMmDd) {
+          ytd26 += (byDate.get(dt) || 0) * getMonthScale(m);
+        } else if (dt.startsWith("2025-") && mmdd <= cutoffMmDd) {
+          ytd25 += (byDate.get(dt) || 0) * getMonthScale(m);
+        }
+      });
+      if (ytd25 > 0) {
+        yoyPct = ((ytd26 - ytd25) / ytd25) * 100;
+      } else if (sales2025 > 0) {
+        yoyPct = ((sales2026 - sales2025) / sales2025) * 100;
+      }
+    }
 
     applySidebarSpec({
       title: "Dashboard",
@@ -2171,8 +2562,8 @@
       g1Big: `${vsTargetPct.toFixed(1)}%`,
       g1Pill: targetGapLabel,
       g1Pct: Math.min(100, Math.max(0, vsTargetPct)),
-      bar1Label: "Doanh số Thực đạt",
-      bar1Val: fmtCompactVnd(sales),
+      bar1Label: "Doanh số Thực đạt (2026)",
+      bar1Val: fmtCompactVnd(effectiveSalesForTarget),
       bar1Pct: Math.min(100, Math.max(0, vsTargetPct)),
       bar2Label: `Kế hoạch Target (${activeCatTitle})`,
       bar2Val: fmtCompactVnd(targetVnd),
@@ -2189,10 +2580,10 @@
         { l: "Lợi nhuận GP (Phụ)", v: fmtCompactVnd(gp), s: `GM ${fmtPct(gm)} (chỉ số phụ)`, cls: "pos" },
       ],
       insets: [
-        { l: "Active Sites", v: fmtInt(sites.size), s: `/ ${lookups.sites.length} sites`, cls: "pos" },
-        { l: "Active Regions", v: fmtInt(regions.size), s: "vùng lọc", cls: "pos" },
-        { l: "Đơn Xuất bán", v: fmtInt(exportRows), s: fmtPct(fulfillRate), cls: "pos" },
-        { l: "Đơn Hoàn bán", v: fmtInt(returnRows), s: totalRows ? fmtPct((returnRows / totalRows) * 100) : "0.0%", cls: "neg" },
+        { l: "Tăng trưởng YoY", v: `${yoyPct >= 0 ? "+" : ""}${yoyPct.toFixed(1)}%`, s: yoySubLabel, cls: yoyPct >= 0 ? "pos" : "neg" },
+        { l: "Tăng trưởng MoM", v: `${momSamePct >= 0 ? "+" : ""}${momSamePct.toFixed(1)}%`, s: momSubLabel, cls: momSamePct >= 0 ? "pos" : "neg" },
+        { l: "DS Ngày gần nhất", v: fmtCompactVnd(latestDaySales), s: `Ngày ${latestDateVn}`, cls: "pos" },
+        { l: "DS TB Ngày (2026)", v: fmtCompactVnd(avgDaily2026), s: `${fmtInt(days2026Cnt)} ngày năm 2026`, cls: "pos" },
       ],
     });
   }
@@ -2500,12 +2891,14 @@
       ];
       totalRow = { ...TARGET_BENCHMARK.total };
     } else {
-      // 2. Dynamic Filtered Calculation
+      // 2. Dynamic Filtered Calculation (use 2026 YTD rows when 2026 is present in filter)
       const { lookups } = state.raw || { lookups: { subcats: [] } };
+      const has2026 = rows.some((r) => String(r[C.MONTH] || "").startsWith("2026"));
       const catSales = { NH06: 0, NH11: 0, NH93: 0 };
 
       for (let i = 0; i < rows.length; i++) {
         const r = rows[i];
+        if (has2026 && !String(r[C.MONTH] || "").startsWith("2026")) continue;
         const sc = lookups.subcats[r[C.SUBCAT]] || "";
         const m = sc.match(/^(NH\d{2})/i);
         const code = m ? m[1].toUpperCase() : "";
@@ -3053,6 +3446,187 @@
   }
 
   // =========================================================================
+  // 6B. YEAR-OVER-YEAR MONTHLY LINE COMPARISON (2025 - 2026 - 2027)
+  // =========================================================================
+  function renderYearlyComparisonChart() {
+    if (!charts.yearlyCompare || !state.raw) return;
+    const { lookups, rows } = state.raw;
+    const metric = state.yearlyCompareMetric || "sales"; // sales | qty | gp
+
+    // Filter rows by active category/subcat/region/site/channel/orderType/bulk, ignoring month range so all years compare fairly
+    const catIdx = state.globalCat && lookups.categories ? lookups.categories.indexOf(state.globalCat) : -1;
+    const subIdx = state.globalSubcat ? lookups.subcats.indexOf(state.globalSubcat) : -1;
+    const regIdx = state.region ? lookups.regions.indexOf(state.region) : -1;
+    const siteIdx = state.site ? lookups.sites.indexOf(state.site) : -1;
+    const chIdx = state.channel ? lookups.channels.indexOf(state.channel) : -1;
+    const ordIdx = state.orderType ? lookups.orderTypes.indexOf(state.orderType) : -1;
+    const catsL = lookups.categories || [];
+
+    const storeRegSet = new Set();
+    if (state.storeRegionsOnly) {
+      lookups.regions.forEach((n, idx) => { if (!n.startsWith("Non-Store")) storeRegSet.add(idx); });
+    }
+
+    // yearMap: year -> Array(12) of { sales, qty, gp, hasData }
+    const yearMap = new Map();
+    ["2025", "2026", "2027"].forEach((y) => {
+      yearMap.set(y, Array.from({ length: 12 }, () => ({ sales: 0, qty: 0, gp: 0, hasData: false })));
+    });
+
+    for (let i = 0; i < rows.length; i++) {
+      const r = rows[i];
+      if (r.length > C.CAT) {
+        const cCode = String(catsL[r[C.CAT]] || "").toUpperCase();
+        if (HIDDEN_GLOBAL_CATS.has(cCode)) continue;
+        if (state.globalCat && (catIdx === -1 || r[C.CAT] !== catIdx)) continue;
+      } else {
+        const sc = String(lookups.subcats[r[C.SUBCAT]] || "");
+        const cCode = sc.slice(0, 4).toUpperCase();
+        if (HIDDEN_GLOBAL_CATS.has(cCode)) continue;
+        if (state.globalCat && !sc.startsWith(state.globalCat)) continue;
+      }
+      if (state.globalSubcat && (subIdx === -1 || r[C.SUBCAT] !== subIdx)) continue;
+      if (regIdx !== -1 && r[C.REGION] !== regIdx) continue;
+      if (siteIdx !== -1 && r[C.SITE] !== siteIdx) continue;
+      if (chIdx !== -1 && r[C.CHANNEL] !== chIdx) continue;
+      if (ordIdx !== -1 && r[C.ORDER_TYPE] !== ordIdx) continue;
+      if (state.excludeBulk) {
+        const isBulk = r.length > C.IS_BULK ? r[C.IS_BULK] === 1 : Math.abs(r[C.QTY]) >= 100;
+        if (isBulk) continue;
+      }
+      if (state.storeRegionsOnly && !storeRegSet.has(r[C.REGION])) continue;
+
+      const mStr = r[C.MONTH] || "";
+      const yStr = mStr.slice(0, 4);
+      const mIdx = Number(mStr.slice(5, 7)) - 1;
+      if (mIdx < 0 || mIdx > 11) continue;
+      if (!yearMap.has(yStr)) {
+        yearMap.set(yStr, Array.from({ length: 12 }, () => ({ sales: 0, qty: 0, gp: 0, hasData: false })));
+      }
+      const bucket = yearMap.get(yStr)[mIdx];
+      bucket.sales += r[C.SALES];
+      bucket.qty += r[C.QTY];
+      bucket.gp += r[C.GP];
+      bucket.hasData = true;
+    }
+
+    // Only keep years that actually have data (if 2027 has no data, do not display it)
+    const activeYears = Array.from(yearMap.keys())
+      .sort()
+      .filter((y) => yearMap.get(y).some((b) => b.hasData && (b.sales !== 0 || b.qty !== 0)));
+
+    const badgeEl = document.getElementById("yearlyCompareYearsBadge");
+    if (badgeEl) {
+      badgeEl.textContent = activeYears.length ? activeYears.join(" vs ") : "2025 vs 2026";
+    }
+
+    if (activeYears.length === 0) {
+      charts.yearlyCompare.clear();
+      charts.yearlyCompare.setOption(emptyOption("Không có dữ liệu so sánh theo năm"));
+      return;
+    }
+
+    const monthLabels = ["T01", "T02", "T03", "T04", "T05", "T06", "T07", "T08", "T09", "T10", "T11", "T12"];
+    const yearColors = {
+      "2025": "#8492A6",
+      "2026": "#1D7AFC",
+      "2027": "#12D37A",
+    };
+
+    const series = activeYears.map((y, idx) => {
+      const buckets = yearMap.get(y);
+      const color = yearColors[y] || FALLBACK_COLORS[idx % FALLBACK_COLORS.length];
+      const isLatestYear = idx === activeYears.length - 1;
+      const data = buckets.map((b) => {
+        if (!b.hasData) return null;
+        return metric === "qty" ? b.qty : metric === "gp" ? Math.round(b.gp) : Math.round(b.sales);
+      });
+
+      return {
+        name: `Năm ${y}`,
+        type: "line",
+        smooth: 0.25,
+        symbol: "circle",
+        symbolSize: isLatestYear ? 7 : 5,
+        data,
+        lineStyle: {
+          width: isLatestYear ? 3 : 2,
+          color,
+          type: y === "2025" ? "dashed" : "solid",
+        },
+        itemStyle: { color },
+        areaStyle: isLatestYear
+          ? {
+              color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
+                { offset: 0, color: "rgba(29, 122, 252, 0.28)" },
+                { offset: 1, color: "rgba(29, 122, 252, 0.01)" },
+              ]),
+            }
+          : undefined,
+      };
+    });
+
+    const fmtVal = (v) => (metric === "qty" ? `${fmtInt(v)} sp` : fmtVndFull(v));
+
+    charts.yearlyCompare.setOption({
+      backgroundColor: "transparent",
+      tooltip: {
+        trigger: "axis",
+        backgroundColor: COLORS.tooltipBg,
+        borderColor: COLORS.tooltipBorder,
+        textStyle: { color: "#F1F5F9", fontSize: 12 },
+        formatter: (params) => {
+          if (!params || !params.length) return "";
+          const mIdx = params[0].dataIndex;
+          const mLbl = monthLabels[mIdx];
+          let html = `<div style="font-family:JetBrains Mono;color:#38BDF8;font-weight:700;margin-bottom:4px">Tháng ${mLbl.slice(1)}</div>`;
+          params.forEach((p) => {
+            if (p.value === null || p.value === undefined) return;
+            html += `<div style="display:flex;justify-content:space-between;gap:14px"><span>${p.marker} ${esc(p.seriesName)}:</span><strong style="font-family:JetBrains Mono">${fmtVal(p.value)}</strong></div>`;
+          });
+          if (yearMap.has("2025") && yearMap.has("2026")) {
+            const b25 = yearMap.get("2025")[mIdx];
+            const b26 = yearMap.get("2026")[mIdx];
+            const v25 = metric === "qty" ? b25.qty : metric === "gp" ? b25.gp : b25.sales;
+            const v26 = metric === "qty" ? b26.qty : metric === "gp" ? b26.gp : b26.sales;
+            if (b25.hasData && b26.hasData && v25 > 0) {
+              const yoy = ((v26 - v25) / v25) * 100;
+              const col = yoy >= 0 ? "#12D37A" : "#FF4D6D";
+              html += `<div style="margin-top:4px;padding-top:4px;border-top:1px solid rgba(255,255,255,0.1);display:flex;justify-content:space-between;gap:14px"><span>Tăng trưởng 2026 vs 2025:</span><strong style="font-family:JetBrains Mono;color:${col}">${yoy >= 0 ? "+" : ""}${yoy.toFixed(1)}%</strong></div>`;
+            }
+          }
+          return html;
+        },
+      },
+      legend: {
+        top: 0,
+        right: 12,
+        icon: "circle",
+        textStyle: { color: "#CBD5E1", fontSize: 11 },
+      },
+      grid: { left: 56, right: 24, top: 32, bottom: 28 },
+      xAxis: {
+        type: "category",
+        boundaryGap: false,
+        data: monthLabels,
+        axisLine: { lineStyle: { color: COLORS.axisLine } },
+        axisLabel: { color: "#CBD5E1", fontFamily: "JetBrains Mono", fontSize: 11 },
+      },
+      yAxis: {
+        type: "value",
+        axisLabel: {
+          color: COLORS.axisLabel,
+          fontFamily: "JetBrains Mono",
+          fontSize: 10.5,
+          formatter: (v) => (metric === "qty" ? fmtInt(v) : fmtAxisVnd(v)),
+        },
+        splitLine: { lineStyle: { color: COLORS.gridLine } },
+      },
+      series,
+    }, true);
+  }
+
+  // =========================================================================
   // 7. DEEP VIEWS (BLUE RAIL PAGES 2–6)
   // =========================================================================
   function renderDeepMonthly(rowsInput) {
@@ -3137,6 +3711,205 @@
           itemStyle: { color: COLORS.amber },
         },
       ],
+    }, true);
+  }
+
+  function renderMonthlyDailyChart() {
+    if (!charts.monthlyDaily || !state.raw) return;
+
+    const mdSelect = document.getElementById("monthlyDailyMonthSelect");
+    if (state.clickedMonth && state.monthsAll.includes(state.clickedMonth)) {
+      state.monthlyDailyMonth = state.clickedMonth;
+    }
+    if (!state.monthlyDailyMonth || !state.monthsAll.includes(state.monthlyDailyMonth)) {
+      state.monthlyDailyMonth = state.monthsAll[state.monthsAll.length - 1] || "";
+    }
+    if (mdSelect && mdSelect.value !== state.monthlyDailyMonth) {
+      mdSelect.value = state.monthlyDailyMonth;
+    }
+
+    const selMonth = state.monthlyDailyMonth;
+    const badgeEl = document.getElementById("monthlyDailyActiveBadge");
+    if (badgeEl) badgeEl.textContent = selMonth ? `THÁNG ${selMonth.slice(5)}/${selMonth.slice(0, 4)}` : "--";
+
+    // Get daily rows for the selected month (ignoring global monthFrom/monthTo so the user's selected month in the dropdown always loads!)
+    const daily = state.raw.salesDaily || [];
+    const { lookups } = state.raw;
+    const datesL = lookups.dates || [];
+    const catIdx = state.globalCat && lookups.categories ? lookups.categories.indexOf(state.globalCat) : -1;
+    const subIdx = state.globalSubcat && lookups.subcats ? lookups.subcats.indexOf(state.globalSubcat) : -1;
+    const regIdx = state.region ? lookups.regions.indexOf(state.region) : -1;
+    const storeRegSet = new Set();
+    if (state.storeRegionsOnly) {
+      lookups.regions.forEach((n, idx) => { if (!n.startsWith("Non-Store")) storeRegSet.add(idx); });
+    }
+
+    const dayMap = new Map();
+    let rawDailyMonthSales = 0, rawDailyMonthQty = 0;
+
+    for (let i = 0; i < daily.length; i++) {
+      const d = daily[i];
+      // Compact 8-col: [0:dIdx, 1:catIdx, 2:subIdx, 3:regIdx, 4:isBulk, 5:qty, 6:sales, 7:gp]
+      const cCode = String((lookups.categories || [])[d[1]] || "").toUpperCase();
+      if (HIDDEN_GLOBAL_CATS.has(cCode)) continue;
+      if (state.globalCat && (catIdx === -1 || d[1] !== catIdx)) continue;
+      if (state.globalSubcat && (subIdx === -1 || d[2] !== subIdx)) continue;
+      if (regIdx !== -1 && d[3] !== regIdx) continue;
+      if (state.excludeBulk && d[4] === 1) continue;
+      if (state.storeRegionsOnly && !storeRegSet.has(d[3])) continue;
+      const dStr = datesL[d[0]] || "";
+      if (!dStr.startsWith(selMonth)) continue;
+
+      let o = dayMap.get(dStr);
+      if (!o) { o = { sales: 0, qty: 0, gp: 0 }; dayMap.set(dStr, o); }
+      o.qty += d[5];
+      o.sales += d[6];
+      o.gp += d[7];
+      rawDailyMonthSales += d[6];
+      rawDailyMonthQty += d[5];
+    }
+
+    // If site / channel / orderType filter is active, scale daily values so monthly sum matches exact filtered monthly total
+    let scaleS = 1, scaleQ = 1;
+    if (state.site || state.channel || state.orderType) {
+      const cubeRows = getFilteredRows(true).filter((r) => r[C.MONTH] === selMonth);
+      const cubeSales = cubeRows.reduce((s, r) => s + r[C.SALES], 0);
+      const cubeQty = cubeRows.reduce((s, r) => s + r[C.QTY], 0);
+      scaleS = rawDailyMonthSales !== 0 ? cubeSales / rawDailyMonthSales : 0;
+      scaleQ = rawDailyMonthQty !== 0 ? cubeQty / rawDailyMonthQty : 0;
+    }
+
+    const days = Array.from(dayMap.keys()).sort();
+    const hintEl = document.getElementById("monthlyDailySummaryHint");
+
+    if (days.length === 0 || (scaleS === 0 && scaleQ === 0)) {
+      if (hintEl) hintEl.textContent = `Không có dữ liệu phát sinh trong tháng ${selMonth} với bộ lọc hiện tại`;
+      charts.monthlyDaily.clear();
+      charts.monthlyDaily.setOption(emptyOption(`Không có dữ liệu ngày trong tháng ${selMonth}`));
+      return;
+    }
+
+    let totS = 0, totQ = 0, peakDay = days[0], peakS = -Infinity;
+    const salesArr = [];
+    const qtyArr = [];
+    days.forEach((dt) => {
+      const o = dayMap.get(dt);
+      const sVal = Math.round(o.sales * scaleS);
+      const qVal = Math.round(o.qty * scaleQ);
+      salesArr.push(sVal);
+      qtyArr.push(qVal);
+      totS += sVal;
+      totQ += qVal;
+      if (sVal > peakS) { peakS = sVal; peakDay = dt; }
+    });
+
+    const avgS = days.length > 0 ? Math.round(totS / days.length) : 0;
+    if (hintEl) {
+      hintEl.innerHTML = `Tháng <strong>${selMonth}</strong> (${days.length} ngày): Tổng Sales <strong class="mono" style="color:#38BDF8">${fmtVndFull(totS)}</strong> • Tổng Qty <strong class="mono" style="color:#F59E0B">${fmtInt(totQ)} sp</strong> • TB/ngày <strong class="mono" style="color:#12D37A">${fmtCompactVnd(avgS)}</strong> • Đỉnh ngày <strong>${peakDay.slice(8, 10)}/${peakDay.slice(5, 7)}</strong> (${fmtCompactVnd(peakS)})`;
+    }
+
+    const mode = state.monthlyDailyMetric || "sales_qty";
+    const xLabels = days.map((dt) => `${dt.slice(8, 10)}/${dt.slice(5, 7)}`);
+
+    const series = [];
+    if (mode === "sales_qty" || mode === "sales") {
+      series.push({
+        name: "Doanh số Ngày (VND)",
+        type: mode === "sales" ? "line" : "bar",
+        yAxisIndex: 0,
+        barMaxWidth: 28,
+        smooth: 0.25,
+        data: salesArr,
+        itemStyle: { color: COLORS.blue, borderRadius: [3, 3, 0, 0] },
+        lineStyle: { width: 2.5, color: COLORS.blue },
+        areaStyle: mode === "sales" ? {
+          color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
+            { offset: 0, color: "rgba(29, 122, 252, 0.35)" },
+            { offset: 1, color: "rgba(29, 122, 252, 0.02)" },
+          ]),
+        } : undefined,
+        label: {
+          show: true,
+          position: "top",
+          color: "#93C5FD",
+          fontFamily: "JetBrains Mono",
+          fontSize: 9.5,
+          formatter: (p) => fmtCompactVnd(p.value),
+        },
+        markLine: {
+          symbol: "none",
+          label: { color: COLORS.emerald, fontFamily: "JetBrains Mono", fontSize: 10, formatter: () => `TB: ${fmtCompactVnd(avgS)}` },
+          lineStyle: { color: COLORS.emerald, type: "dashed", width: 1.5 },
+          data: [{ yAxis: avgS }],
+        },
+      });
+    }
+
+    if (mode === "sales_qty" || mode === "qty") {
+      series.push({
+        name: "Sản lượng Ngày (QTY)",
+        type: "line",
+        yAxisIndex: mode === "sales_qty" ? 1 : 0,
+        smooth: 0.25,
+        symbol: "circle",
+        symbolSize: 6,
+        data: qtyArr,
+        lineStyle: { width: 2.5, color: COLORS.amber },
+        itemStyle: { color: COLORS.amber },
+        label: mode === "qty" ? {
+          show: true,
+          position: "top",
+          color: "#FCD34D",
+          fontFamily: "JetBrains Mono",
+          fontSize: 10,
+          formatter: (p) => fmtInt(p.value),
+        } : undefined,
+      });
+    }
+
+    charts.monthlyDaily.setOption({
+      tooltip: {
+        trigger: "axis",
+        axisPointer: { type: "shadow" },
+        backgroundColor: COLORS.tooltipBg,
+        borderColor: COLORS.tooltipBorder,
+        textStyle: { color: "#F1F5F9", fontSize: 12 },
+        formatter: (params) => {
+          if (!params || !params.length) return "";
+          const idx = params[0].dataIndex;
+          const dt = days[idx];
+          const sVal = salesArr[idx];
+          const qVal = qtyArr[idx];
+          const dPct = totS > 0 ? ((sVal / totS) * 100).toFixed(1) : "0.0";
+          return `
+            <div style="font-family:JetBrains Mono;color:#38BDF8;font-weight:700;margin-bottom:4px">Ngày ${dt.slice(8, 10)}/${dt.slice(5, 7)}/${dt.slice(0, 4)}</div>
+            <div style="display:flex;justify-content:space-between;gap:14px"><span>Doanh số:</span><strong style="font-family:JetBrains Mono">${fmtVndFull(sVal)} (${dPct}%)</strong></div>
+            <div style="display:flex;justify-content:space-between;gap:14px"><span>Số lượng (QTY):</span><strong style="font-family:JetBrains Mono;color:#F59E0B">${fmtInt(qVal)} sp</strong></div>
+            <div style="display:flex;justify-content:space-between;gap:14px"><span>So với TB ngày:</span><strong style="font-family:JetBrains Mono;color:${sVal >= avgS ? "#12D37A" : "#FF4D6D"}">${avgS > 0 ? `${sVal >= avgS ? "+" : ""}${(((sVal - avgS) / avgS) * 100).toFixed(1)}%` : "—"}</strong></div>
+          `;
+        },
+      },
+      legend: { top: 0, textStyle: { color: "#CBD5E1" } },
+      grid: { left: 60, right: mode === "sales_qty" ? 60 : 28, top: 38, bottom: 32 },
+      xAxis: {
+        type: "category",
+        data: xLabels,
+        axisLabel: { color: "#CBD5E1", fontFamily: "JetBrains Mono", fontSize: 10.5 },
+      },
+      yAxis: mode === "sales_qty"
+        ? [
+            { type: "value", name: "Sales", axisLabel: { color: COLORS.axisLabel, formatter: fmtAxisVnd }, splitLine: { lineStyle: { color: COLORS.gridLine } } },
+            { type: "value", name: "Qty", axisLabel: { color: COLORS.amber, formatter: fmtInt }, splitLine: { show: false } },
+          ]
+        : [
+            {
+              type: "value",
+              name: mode === "qty" ? "Qty" : "Sales",
+              axisLabel: { color: mode === "qty" ? COLORS.amber : COLORS.axisLabel, formatter: mode === "qty" ? fmtInt : fmtAxisVnd },
+              splitLine: { lineStyle: { color: COLORS.gridLine } },
+            },
+          ],
+      series,
     }, true);
   }
 
@@ -3275,15 +4048,49 @@
     });
 
     const regs = Array.from(agg.entries()).sort((a, b) => b[1] - a[1]);
+    const totalRegSales = regs.reduce((sum, [, v]) => sum + v, 0);
 
     charts.deepRegionPie.setOption({
-      tooltip: { trigger: "item", backgroundColor: COLORS.tooltipBg, borderColor: COLORS.tooltipBorder, textStyle: { color: "#F1F5F9" }, valueFormatter: fmtVndFull },
-      legend: { bottom: 0, textStyle: { color: "#94A3B8", fontSize: 11 } },
+      tooltip: {
+        trigger: "item",
+        backgroundColor: COLORS.tooltipBg,
+        borderColor: COLORS.tooltipBorder,
+        textStyle: { color: "#F1F5F9" },
+        formatter: (p) => `<strong>${esc(p.name)}</strong><br/>Doanh số: <b>${fmtVndFull(p.value)}</b> (${p.percent}%)`,
+      },
+      legend: {
+        orient: "vertical",
+        right: 8,
+        top: "middle",
+        itemWidth: 10,
+        itemHeight: 10,
+        itemGap: 10,
+        textStyle: { color: "#E2E8F0", fontSize: 11, fontFamily: "JetBrains Mono" },
+        formatter: (name) => {
+          const found = regs.find(([n]) => n === name);
+          const val = found ? found[1] : 0;
+          const pct = totalRegSales > 0 ? ((val / totalRegSales) * 100).toFixed(1) : "0.0";
+          const shortN = shortRegionLabel(name);
+          return `${shortN.padEnd(13, " ")} ${fmtCompactVnd(val)} (${pct}%)`;
+        },
+      },
       series: [{
         type: "pie",
-        radius: ["48%", "74%"],
-        center: ["50%", "44%"],
-        label: { color: "#E2E8F0", formatter: "{b}\n{d}%" },
+        radius: ["40%", "66%"],
+        center: ["28%", "50%"],
+        avoidLabelOverlap: true,
+        minShowLabelAngle: 6,
+        label: {
+          color: "#E2E8F0",
+          fontSize: 11,
+          fontFamily: "JetBrains Mono",
+          formatter: "{d}%",
+        },
+        labelLine: {
+          length: 8,
+          length2: 8,
+          smooth: true,
+        },
         data: regs.map(([name, val], i) => ({
           name,
           value: Math.round(val),
@@ -3313,7 +4120,158 @@
     const { lookups, siteDirectory } = state.raw;
 
     const titleEl = document.getElementById("channelPanelTitle");
-    if (state.channelDim === "site") {
+    if (state.channelDim === "segment") {
+      if (titleEl) titleEl.textContent = "Phân tích theo Brand và Segment giá";
+      const segAgg = PRICE_SEGMENTS.map((name, idx) => ({
+        name,
+        idx,
+        sales: 0,
+        qty: 0,
+        gp: 0,
+        brands: new Map(),
+      }));
+      let totSales = 0;
+
+      rows.forEach((r) => {
+        const sal = r[C.SALES], qty = r[C.QTY], gp = r[C.GP];
+        const br = lookups.brands[r[C.BRAND]] || "Khác";
+        const unitP = qty !== 0 ? Math.abs(sal / qty) : 0;
+        const sIdx = getPriceSegmentIndex(unitP);
+        const bucket = segAgg[sIdx];
+        bucket.sales += sal;
+        bucket.qty += qty;
+        bucket.gp += gp;
+        bucket.brands.set(br, (bucket.brands.get(br) || 0) + sal);
+        totSales += sal;
+      });
+
+      charts.deepChannel.setOption({
+        tooltip: {
+          trigger: "axis",
+          axisPointer: { type: "shadow" },
+          backgroundColor: COLORS.tooltipBg,
+          borderColor: COLORS.tooltipBorder,
+          textStyle: { color: "#F1F5F9", fontSize: 12 },
+          formatter: (params) => {
+            if (!params || !params.length) return "";
+            const idx = params[0].dataIndex;
+            const b = segAgg[idx];
+            const share = totSales > 0 ? ((b.sales / totSales) * 100).toFixed(1) : "0.0";
+            const topBrands = Array.from(b.brands.entries())
+              .sort((x, y) => y[1] - x[1])
+              .slice(0, 3)
+              .map(([bn, bv]) => `${esc(bn)} (${fmtCompactVnd(bv)})`)
+              .join(", ");
+            return `
+              <div style="font-weight:700;color:#38BDF8;margin-bottom:4px">Segment giá: ${esc(b.name)}</div>
+              <div>Doanh số: <strong class="mono">${fmtVndFull(b.sales)} (${share}%)</strong></div>
+              <div>Số lượng (QTY): <strong class="mono" style="color:#F59E0B">${fmtInt(b.qty)} sp</strong></div>
+              ${topBrands ? `<div style="margin-top:4px;font-size:11px;color:#94A3B8">Top Brands: ${topBrands}</div>` : ""}
+            `;
+          },
+        },
+        legend: { top: 0, textStyle: { color: "#CBD5E1", fontSize: 11 } },
+        grid: { left: 58, right: 54, top: 32, bottom: 34 },
+        xAxis: {
+          type: "category",
+          data: segAgg.map((d) => d.name),
+          axisLabel: { color: "#E2E8F0", fontFamily: "JetBrains Mono", fontSize: 10.5 },
+        },
+        yAxis: [
+          { type: "value", name: "Sales", axisLabel: { color: COLORS.axisLabel, formatter: fmtAxisVnd }, splitLine: { lineStyle: { color: COLORS.gridLine } } },
+          { type: "value", name: "Qty", axisLabel: { color: COLORS.amber, formatter: fmtInt }, splitLine: { show: false } },
+        ],
+        series: [
+          {
+            name: "Doanh số (Sales)",
+            type: "bar",
+            barMaxWidth: 42,
+            data: segAgg.map((d, i) => ({
+              value: Math.round(d.sales),
+              itemStyle: { color: PRICE_SEGMENT_COLORS[i % PRICE_SEGMENT_COLORS.length], borderRadius: [3, 3, 0, 0] },
+            })),
+            label: {
+              show: true,
+              position: "top",
+              color: "#CBD5E1",
+              fontFamily: "JetBrains Mono",
+              fontSize: 9.5,
+              formatter: (p) => (totSales > 0 && p.value > 0 ? `${((p.value / totSales) * 100).toFixed(0)}%` : ""),
+            },
+          },
+          {
+            name: "Số lượng (Qty)",
+            type: "line",
+            yAxisIndex: 1,
+            smooth: 0.25,
+            data: segAgg.map((d) => d.qty),
+            lineStyle: { color: COLORS.amber, width: 2.5 },
+            itemStyle: { color: COLORS.amber },
+          },
+        ],
+      }, true);
+    } else if (state.channelDim === "brand_segment") {
+      if (titleEl) titleEl.textContent = "Phân tích Brand × Segment giá (Top 12 Brands)";
+      const brandMap = new Map();
+      rows.forEach((r) => {
+        const br = lookups.brands[r[C.BRAND]] || "Khác";
+        const sal = r[C.SALES], qty = r[C.QTY];
+        const sIdx = getPriceSegmentIndex(qty !== 0 ? Math.abs(sal / qty) : 0);
+        let bObj = brandMap.get(br);
+        if (!bObj) {
+          bObj = { brand: br, total: 0, qty: 0, segs: Array(PRICE_SEGMENTS.length).fill(0) };
+          brandMap.set(br, bObj);
+        }
+        bObj.total += sal;
+        bObj.qty += qty;
+        bObj.segs[sIdx] += sal;
+      });
+
+      const topBrands = Array.from(brandMap.values())
+        .sort((a, b) => b.total - a.total)
+        .slice(0, 12)
+        .reverse();
+
+      charts.deepChannel.setOption({
+        tooltip: {
+          trigger: "axis",
+          axisPointer: { type: "shadow" },
+          backgroundColor: COLORS.tooltipBg,
+          borderColor: COLORS.tooltipBorder,
+          textStyle: { color: "#F1F5F9", fontSize: 11.5 },
+          formatter: (params) => {
+            if (!params || !params.length) return "";
+            const idx = params[0].dataIndex;
+            const bObj = topBrands[idx];
+            let html = `<div style="font-weight:700;color:#38BDF8;margin-bottom:4px">${esc(bObj.brand)} — Tổng: ${fmtCompactVnd(bObj.total)} (${fmtInt(bObj.qty)} sp)</div>`;
+            params.forEach((p) => {
+              if (!p.value) return;
+              const pct = bObj.total > 0 ? ((p.value / bObj.total) * 100).toFixed(1) : "0.0";
+              html += `<div style="display:flex;justify-content:space-between;gap:12px"><span>${p.marker} ${esc(p.seriesName)}:</span><strong class="mono">${fmtCompactVnd(p.value)} (${pct}%)</strong></div>`;
+            });
+            return html;
+          },
+        },
+        legend: {
+          bottom: 0,
+          type: "scroll",
+          itemWidth: 10,
+          itemHeight: 10,
+          textStyle: { color: "#94A3B8", fontSize: 10.5 },
+        },
+        grid: { left: 105, right: 24, top: 12, bottom: 42 },
+        xAxis: { type: "value", axisLabel: { color: COLORS.axisLabel, formatter: fmtAxisVnd }, splitLine: { lineStyle: { color: COLORS.gridLine } } },
+        yAxis: { type: "category", data: topBrands.map((b) => b.brand), axisLabel: { color: "#E2E8F0", width: 95, overflow: "truncate", fontSize: 11 } },
+        series: PRICE_SEGMENTS.map((segName, sIdx) => ({
+          name: segName,
+          type: "bar",
+          stack: "total",
+          barMaxWidth: 18,
+          itemStyle: { color: PRICE_SEGMENT_COLORS[sIdx % PRICE_SEGMENT_COLORS.length] },
+          data: topBrands.map((b) => Math.round(b.segs[sIdx])),
+        })),
+      }, true);
+    } else if (state.channelDim === "site") {
       if (titleEl) titleEl.textContent = "Cơ cấu theo Site - Store (Top 15)";
       const sAgg = new Map();
       rows.forEach((r) => {

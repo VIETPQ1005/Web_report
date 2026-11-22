@@ -51,9 +51,9 @@
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M12 3v9l6.5 3.5"/></svg>
           <span>Region<br/>Report</span>
         </button>
-        <button class="rail-item" data-view="channel" title="Sales Channel & Nhóm hàng">
+        <button class="rail-item" data-view="channel" title="Phân tích Brand &amp; Segment giá">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="5" r="2.5"/><circle cx="5" cy="18" r="2.5"/><circle cx="19" cy="18" r="2.5"/><path d="M10.8 7.2L6.2 15.8M13.2 7.2l4.6 8.6M7.5 18h9"/></svg>
-          <span>Channel<br/>&amp; Brand</span>
+          <span>Brand &amp;<br/>Segment</span>
         </button>
         <button class="rail-item" data-view="ledger" title="Bảng dữ liệu chi tiết & Export CSV">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 10h18M9 4v16"/></svg>
@@ -153,24 +153,24 @@
       <!-- 2x2 INSET DARK CARDS -->
       <div class="inset-grid-2">
         <div class="inset-card">
-          <div class="metric-name" id="iLbl1">Active Sites</div>
+          <div class="metric-name" id="iLbl1">Tăng trưởng YoY</div>
           <div class="inset-val mono" id="mActiveSites">--</div>
-          <div class="metric-delta pos mono" id="mActiveSitesSub">/ 31 sites</div>
+          <div class="metric-delta pos mono" id="mActiveSitesSub">vs cùng kỳ năm trước</div>
         </div>
         <div class="inset-card">
-          <div class="metric-name" id="iLbl2">Active Regions</div>
+          <div class="metric-name" id="iLbl2">Tăng trưởng MoM</div>
           <div class="inset-val mono" id="mActiveRegions">--</div>
-          <div class="metric-delta pos mono" id="mActiveRegionsSub">vùng lọc</div>
+          <div class="metric-delta pos mono" id="mActiveRegionsSub">vs cùng kỳ tháng trước</div>
         </div>
         <div class="inset-card">
-          <div class="metric-name" id="iLbl3">Đơn Xuất bán</div>
+          <div class="metric-name" id="iLbl3">DS Ngày gần nhất</div>
           <div class="inset-val mono" id="mExportRows">--</div>
-          <div class="metric-delta pos mono" id="mExportPct">--%</div>
+          <div class="metric-delta pos mono" id="mExportPct">ngày gần nhất</div>
         </div>
         <div class="inset-card">
-          <div class="metric-name" id="iLbl4">Đơn Hoàn bán</div>
+          <div class="metric-name" id="iLbl4">DS TB Ngày (2026)</div>
           <div class="inset-val mono" id="mReturnRows">--</div>
-          <div class="metric-delta neg mono" id="mReturnPct">--%</div>
+          <div class="metric-delta pos mono" id="mReturnPct">TB ngày năm 2026</div>
         </div>
       </div>
     </aside>
@@ -378,7 +378,7 @@
             <!-- UPPER: REGION NAME BREAKDOWN (DIALOGUE VOLUME BY MODALITY SLOT) -->
             <div class="panel-block modality-block">
               <div class="panel-header">
-                <h2 class="panel-title">Phân bổ theo Region Name</h2>
+                <h2 class="panel-title">Phân bổ theo Region</h2>
                 <div class="seg-tabs" id="regionModalityMetric">
                   <button class="seg-btn active" data-val="sales">Sales</button>
                   <button class="seg-btn" data-val="qty">Qty</button>
@@ -415,6 +415,28 @@
             </div>
           </div>
         </div>
+
+        <!-- YEAR-OVER-YEAR MONTHLY LINE COMPARISON (2025 - 2026 - 2027) -->
+        <div class="panel-block yearly-compare-block" id="dashboardYearlyCompareBlock">
+          <div class="panel-header">
+            <div class="panel-title-group">
+              <h2 class="panel-title">
+                📈 Biểu đồ Line theo Tháng so sánh các Năm
+                <span class="badge-blue mono" id="yearlyCompareYearsBadge">2025 vs 2026</span>
+              </h2>
+              <span class="panel-hint">So sánh xu hướng từng tháng (T01 – T12) giữa các năm có dữ liệu (năm chưa có dữ liệu tự động ẩn)</span>
+            </div>
+            <div class="panel-controls">
+              <div class="seg-tabs" id="yearlyCompareMetricGroup">
+                <button class="seg-btn active" data-val="sales">Sales (VND)</button>
+                <button class="seg-btn" data-val="qty">Qty</button>
+                <button class="seg-btn" data-val="gp">GP</button>
+              </div>
+              <button class="btn-mini" data-export-chart="yearlyCompare" title="Tải ảnh biểu đồ PNG">PNG</button>
+            </div>
+          </div>
+          <div id="chartYearlyCompare" class="chart-canvas hero-canvas"></div>
+        </div>
       </section>
 
       <!-- ================================================================
@@ -441,6 +463,31 @@
             </div>
           </div>
           <div id="chartDeepMonthly" class="chart-canvas deep-canvas"></div>
+        </div>
+
+        <!-- DAILY SALES TREND WITHIN SELECTED MONTH -->
+        <div class="panel-block" style="margin-top: 16px;">
+          <div class="panel-header">
+            <div class="panel-title-group">
+              <h2 class="panel-title">
+                📅 Xu hướng Bán theo Ngày trong Tháng
+                <span class="badge-blue mono" id="monthlyDailyActiveBadge">--</span>
+              </h2>
+              <span class="panel-hint" id="monthlyDailySummaryHint">Chọn tháng để xem chi tiết doanh số &amp; sản lượng chính xác từng ngày trong tháng</span>
+            </div>
+            <div class="panel-controls">
+              <label for="monthlyDailyMonthSelect" class="gmf-label" style="font-size:11px;">CHỌN THÁNG:</label>
+              <select id="monthlyDailyMonthSelect" class="dark-select" title="Chọn tháng để xem xu hướng bán theo từng ngày">
+              </select>
+              <div class="seg-tabs" id="monthlyDailyMetricGroup">
+                <button class="seg-btn active" data-val="sales_qty">Sales + Qty</button>
+                <button class="seg-btn" data-val="sales">Chỉ Sales</button>
+                <button class="seg-btn" data-val="qty">Chỉ Qty</button>
+              </div>
+              <button class="btn-mini" data-export-chart="monthlyDaily" title="Tải ảnh biểu đồ PNG">PNG</button>
+            </div>
+          </div>
+          <div id="chartMonthlyDaily" class="chart-canvas deep-canvas"></div>
         </div>
       </section>
 
@@ -513,10 +560,12 @@
         <div class="two-col-deep">
           <div class="panel-block">
             <div class="panel-header">
-              <h2 class="panel-title" id="channelPanelTitle">Cơ cấu Sales Channel</h2>
+              <h2 class="panel-title" id="channelPanelTitle">Phân tích theo Brand và Segment giá</h2>
               <div class="panel-controls">
                 <div class="seg-tabs" id="channelDimGroup">
-                  <button class="seg-btn active" data-val="channel">Sales Channel</button>
+                  <button class="seg-btn active" data-val="segment">Segment giá</button>
+                  <button class="seg-btn" data-val="brand_segment">Brand × Segment</button>
+                  <button class="seg-btn" data-val="channel">Sales Channel</button>
                   <button class="seg-btn" data-val="site">Site - Store</button>
                 </div>
                 <button class="btn-mini" data-export-chart="deepChannel">PNG</button>
@@ -828,7 +877,6 @@
           <div class="lookup-hero-head">
             <div>
               <h2 class="lookup-hero-title">🔍 Công cụ Tra cứu 360° theo SKU hoặc Serial Number</h2>
-              <p class="lookup-hero-sub">Hợp nhất tức thì từ <strong>Master Product (4,068 SKUs)</strong> • <strong>Inventory Details</strong> • <strong>SKU Level (7D/30D/90D/180D)</strong> • <strong>Branch Level</strong> • <strong>Serial Details (520 SN)</strong> • <strong>Bad Stock</strong> • <strong>Sales 2026</strong></p>
             </div>
           </div>
 

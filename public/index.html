@@ -45,6 +45,10 @@
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 2L3 7l9 5 9-5-9-5z"/><path d="M3 12l9 5 9-5"/><path d="M3 17l9 5 9-5"/></svg>
           <span>Tồn Kho<br/>Inventory</span>
         </button>
+        <button class="rail-item" data-view="badstock" title="Báo cáo chuyên sâu SKU & Serial Tồn Xấu / Tồn Rất Xấu (Pivot theo Site & Serial)">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.85"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+          <span>Bad<br/>Stock</span>
+        </button>
         <button class="rail-item" data-view="lookup" title="Công cụ Tra cứu 360° theo mã SKU hoặc số Serial">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><circle cx="11" cy="11" r="7"/><path d="M20 20l-4.35-4.35"/></svg>
           <span>Tra cứu<br/>SKU/SN</span>
@@ -1064,6 +1068,98 @@
                 <tbody id="lkBinTableBody"></tbody>
               </table>
             </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ================================================================
+           VIEW 9: BAD STOCK REPORT (SKU TỒN XẤU / TỒN RẤT XẤU -> PIVOT SITE & SERIAL)
+           ================================================================ -->
+      <section class="view-pane" id="view-badstock">
+        <!-- BAD STOCK LOCAL FILTER BAR -->
+        <div class="inv-filter-bar">
+          <div class="topbar-filters">
+            <span class="local-filter-tag">LỌC RIÊNG BAD STOCK:</span>
+            <select id="bsFilterBadType" class="dark-select" title="Lọc theo Loại tồn (Mặc định: Tồn xấu & Tồn rất xấu)">
+              <option value="">Tồn xấu &amp; Tồn rất xấu (Mặc định)</option>
+            </select>
+            <select id="bsFilterSite" class="dark-select" title="Lọc theo Mã Kho / Site Code">
+              <option value="">Tất cả Site Kho</option>
+            </select>
+            <select id="bsFilterStatus" class="dark-select" title="Lọc theo Tình trạng mua hàng">
+              <option value="">Tất cả TT Mua</option>
+            </select>
+            <select id="bsFilterRange" class="dark-select" title="Lọc theo Range sản phẩm">
+              <option value="">Tất cả Range</option>
+            </select>
+            <select id="bsFilterBinType" class="dark-select" title="Lọc theo Loại BIN">
+              <option value="">Tất cả BIN Type</option>
+            </select>
+            <select id="bsFilterBinZone" class="dark-select" title="Lọc theo Khu vực BIN Zone">
+              <option value="">Tất cả BIN Zone</option>
+            </select>
+            <select id="bsFilterBrand" class="dark-select" title="Lọc theo Thương hiệu (Brand)">
+              <option value="">Tất cả Brand</option>
+            </select>
+            <div class="seg-tabs" id="bsScopeGroup" title="Tiêu chí xác định Loại tồn Bad Stock">
+              <button type="button" class="seg-btn active" data-val="company">Theo Cty</button>
+              <button type="button" class="seg-btn" data-val="site">Theo Site</button>
+              <button type="button" class="seg-btn" data-val="either">Cty hoặc Site</button>
+            </div>
+            <button type="button" class="btn-reset-mini" id="bsResetBtn">↺ Reset Bad Stock</button>
+          </div>
+        </div>
+
+        <!-- BAD STOCK CHIPS & INSIGHT -->
+        <div class="chips-strip">
+          <div class="chips-list" id="bsActiveChips"></div>
+          <div class="insight-inline" id="bsInsightText">Đang tải dữ liệu Bad Stock...</div>
+        </div>
+
+        <!-- 4 SUMMARY KPI CARDS FOR BAD STOCK -->
+        <div class="bs-kpi-grid">
+          <div class="inv-kpi-card accent-crimson">
+            <div class="inv-kpi-lbl">Tổng SKU Tồn Xấu / Rất Xấu</div>
+            <div class="inv-kpi-val mono" id="bsKpiSkus">--</div>
+            <div class="inv-kpi-sub mono" id="bsKpiSkusSub">-- Serial • -- Site có tồn</div>
+          </div>
+          <div class="inv-kpi-card accent-amber">
+            <div class="inv-kpi-lbl">Tổng Giá trị Bad Stock</div>
+            <div class="inv-kpi-val mono" id="bsKpiTotalVal">--</div>
+            <div class="inv-kpi-sub mono" id="bsKpiTotalValSub">Số lượng: -- SN</div>
+          </div>
+          <div class="inv-kpi-card accent-crimson">
+            <div class="inv-kpi-lbl">Tồn Rất Xấu (Very Bad Stock)</div>
+            <div class="inv-kpi-val mono" id="bsKpiVeryBadVal">--</div>
+            <div class="inv-kpi-sub mono neg" id="bsKpiVeryBadSub">-- SN • --% tổng Bad Stock</div>
+          </div>
+          <div class="inv-kpi-card accent-violet">
+            <div class="inv-kpi-lbl">Tồn Xấu &amp; Tuổi Tồn Đỉnh</div>
+            <div class="inv-kpi-val mono" id="bsKpiBadVal">--</div>
+            <div class="inv-kpi-sub mono warn" id="bsKpiBadSub">-- SN • Max tuổi Cty: -- ngày</div>
+          </div>
+        </div>
+
+        <!-- MAIN EXPANDABLE SKU -> SITE/SERIAL PIVOT TABLE -->
+        <div class="panel-block">
+          <div class="panel-header">
+            <div class="panel-title-group">
+              <h2 class="panel-title">Danh sách SKU Tồn Xấu / Tồn Rất Xấu <span class="badge-blue" id="bsScopeBadge">THEO CÔNG TY</span></h2>
+              <span class="panel-hint" id="bsTableCountInfo">Click vào từng dòng SKU để xổ ra bảng Pivot chi tiết các Serial, Site, Tuổi Site, Ngày nhập Site và Sức bán theo Site (7D / 30D / 90D / 180D)</span>
+            </div>
+            <div class="panel-controls">
+              <button type="button" class="btn-mini" id="bsExpandAllBtn" title="Mở rộng hoặc thu gọn toàn bộ SKU trong trang hiện tại">⊞ Mở rộng trang</button>
+              <input type="search" id="bsSearchInput" class="dark-search" placeholder="Tìm SKU, Tên SP, Serial, Site, Brand..." />
+              <div class="pagination" id="bsTablePagination"></div>
+              <button type="button" class="btn-primary-blue" id="bsExportCsvBtn">⬇ Export CSV</button>
+            </div>
+          </div>
+
+          <div class="table-wrap bs-table-wrap">
+            <table class="dark-table bs-master-table">
+              <thead id="bsTableHead"></thead>
+              <tbody id="bsTableBody"></tbody>
+            </table>
           </div>
         </div>
       </section>

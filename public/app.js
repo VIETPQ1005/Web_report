@@ -382,6 +382,24 @@
       idxSalesBySku: new Map(),
       lastExport: { headers: [], rows: [], filename: "sku_profile.csv" },
     },
+    // Bad Stock Report sub-state (SKU Tồn xấu / Tồn rất xấu -> Pivot Site & Serial)
+    badstock: {
+      badType: "",                  // "" means default: Tồn rất xấu + Tồn xấu
+      scope: "company",             // company | site | either
+      site: "",
+      status: "",
+      range: "",
+      binType: "",
+      binZone: "",
+      brand: "",
+      search: "",
+      sortCol: "qty",               // qty | val | agingComp | firstDate | s7d | s30d | s90d | s180d | sku
+      sortDir: "desc",
+      page: 1,
+      pageSize: 25,
+      expandedSkus: new Set(),
+      lastExport: { headers: [], rows: [], filename: "bad_stock_sku_serial_pivot.csv" },
+    },
     // Filters
     region: "",
     site: "",
@@ -717,11 +735,14 @@
       buildLookupIndexes();
       initMeta();
       populateInventoryFilters();
+      populateBadStockFilters();
       renderLookupQuickPicks();
       if (state.activeView === "lookup" && state.lookup.selectedSku) {
         renderLookupProfile(state.lookup.selectedSku, state.lookup.selectedSerial);
       } else if (state.activeView === "inventory" && (state.inv.tableTab === "serials" || state.inv.tableTab === "master")) {
         renderInvTable(getFilteredInvRows(), getFilteredSerialRows());
+      } else if (state.activeView === "badstock") {
+        renderBadStockView();
       }
       return true;
     } catch {
@@ -856,11 +877,13 @@
     populateGlobalMasterFilter();
     populateFilters();
     populateInventoryFilters();
+    populateBadStockFilters();
     initAllMultiSelectDropdowns();
     syncAllMultiSelectUIs();
     initCharts();
     bindEvents();
     bindInventoryEvents();
+    bindBadStockEvents();
     bindLookupEvents();
     bindUpdateModalEvents();
     renderLookupQuickPicks();
@@ -965,7 +988,9 @@
     populateGlobalMasterFilter();
     populateFilters();
     populateInventoryFilters();
+    populateBadStockFilters();
     resetInvFilters(false);
+    resetBadStockFilters(false);
     renderLookupQuickPicks();
     if (state.lookup.selectedSku) {
       renderLookupProfile(state.lookup.selectedSku, state.lookup.selectedSerial);
@@ -1070,6 +1095,13 @@
     syncMultiSelectUI("invFilterBinType", state.inv.binType);
     syncMultiSelectUI("invFilterBinZone", state.inv.binZone);
     syncMultiSelectUI("invFilterBrand", state.inv.brand);
+    syncMultiSelectUI("bsFilterBadType", state.badstock.badType);
+    syncMultiSelectUI("bsFilterSite", state.badstock.site);
+    syncMultiSelectUI("bsFilterStatus", state.badstock.status);
+    syncMultiSelectUI("bsFilterRange", state.badstock.range);
+    syncMultiSelectUI("bsFilterBinType", state.badstock.binType);
+    syncMultiSelectUI("bsFilterBinZone", state.badstock.binZone);
+    syncMultiSelectUI("bsFilterBrand", state.badstock.brand);
   }
 
   function initMultiSelectDropdown(selectId, getValFn, onChangeFn) {
@@ -1290,6 +1322,23 @@
         id,
         () => state.inv[prop],
         (val) => { state.inv[prop] = val; state.inv.tablePage = 1; renderInventoryView(); }
+      );
+    });
+
+    const bsProps = [
+      ["bsFilterBadType", "badType"],
+      ["bsFilterSite", "site"],
+      ["bsFilterStatus", "status"],
+      ["bsFilterRange", "range"],
+      ["bsFilterBinType", "binType"],
+      ["bsFilterBinZone", "binZone"],
+      ["bsFilterBrand", "brand"],
+    ];
+    bsProps.forEach(([id, prop]) => {
+      initMultiSelectDropdown(
+        id,
+        () => state.badstock[prop],
+        (val) => { state.badstock[prop] = val; state.badstock.page = 1; renderBadStockView(); }
       );
     });
   }
@@ -1699,8 +1748,9 @@
     const pane = document.getElementById(`view-${view}`);
     if (pane) pane.classList.add("active");
 
-    const isInvOrLookup = view === "inventory" || view === "lookup";
-    document.getElementById("appShell")?.classList.toggle("hide-sidebar", view === "lookup");
+    const isInvOrLookup = view === "inventory" || view === "lookup" || view === "badstock";
+    const hideSidebar = view === "lookup" || view === "badstock";
+    document.getElementById("appShell")?.classList.toggle("hide-sidebar", hideSidebar);
     document.getElementById("salesTopFilters")?.classList.toggle("hidden", isInvOrLookup);
     document.getElementById("activeChipsBar")?.classList.toggle("hidden", isInvOrLookup);
     document.getElementById("invTopBanner")?.classList.toggle("hidden", !isInvOrLookup);
@@ -1709,11 +1759,13 @@
     if (bannerTitle) {
       bannerTitle.textContent = view === "lookup"
         ? "🔍 TRA CỨU 360° SKU & SERIAL NUMBER"
-        : "📦 BÁO CÁO TỒN KHO & BAD STOCK";
+        : view === "badstock"
+          ? "⚠️ BÁO CÁO CHUYÊN SÂU BAD STOCK (TỒN XẤU / TỒN RẤT XẤU)"
+          : "📦 BÁO CÁO TỒN KHO & BAD STOCK";
     }
     document.getElementById("jumpToLookupBtn")?.classList.toggle("hidden", view === "lookup");
 
-    if (view === "lookup" && !state.shardsLoaded) {
+    if ((view === "lookup" || view === "badstock") && !state.shardsLoaded) {
       ensureLookupShardsLoaded();
     }
 
@@ -2149,6 +2201,8 @@
       renderLedgerTable(filtered);
     } else if (state.activeView === "inventory") {
       renderInventoryView();
+    } else if (state.activeView === "badstock") {
+      renderBadStockView();
     } else if (state.activeView === "lookup") {
       if (state.lookup.selectedSku) {
         renderLookupProfile(state.lookup.selectedSku, state.lookup.selectedSerial);
@@ -2340,7 +2394,7 @@
 
   function renderSidebarForView(salesRows) {
     const v = state.activeView;
-    if (v === "lookup") return; // Sidebar hidden on Tra cứu SKU/SN
+    if (v === "lookup" || v === "badstock") return; // Sidebar hidden on Tra cứu SKU/SN & Bad Stock
     if (v === "inventory") { renderSidebarInventory(); return; }
     if (v === "monthly") { renderSidebarMonthly(salesRows); return; }
     if (v === "site") { renderSidebarSite(salesRows); return; }
@@ -8219,6 +8273,904 @@
       const { headers, rows, filename } = state.lookup.lastExport;
       downloadCsv(headers, rows, filename);
     });
+  }
+
+  // =========================================================================
+  // 9B. BAD STOCK REPORT ENGINE (SKU TỒN XẤU / TỒN RẤT XẤU -> PIVOT SITE & SERIAL)
+  // =========================================================================
+  function populateBadStockFilters() {
+    const inv = state.raw?.inventory;
+    const mp = state.raw?.masterProducts;
+    const ms = state.raw?.masterSummary;
+    const sn = state.raw?.invSerials;
+    const sc = state.raw?.invSerialCube;
+
+    const fill = (id, allLabel, items, labelFn = (x) => x) => {
+      const el = document.getElementById(id);
+      if (!el) return;
+      const prev = el.value;
+      el.innerHTML = `<option value="">${allLabel}</option>`;
+      items.forEach((v) => el.add(new Option(labelFn(v), v)));
+      if (prev && items.includes(prev)) el.value = prev;
+      if (msRegistry.has(id)) msRegistry.get(id).rebuild();
+    };
+
+    const badItems = ["Tồn rất xấu", "Tồn xấu", "Tồn lâu", "Tồn bán chậm", "Tồn thông thường"];
+    fill("bsFilterBadType", "Tồn xấu & Tồn rất xấu (Mặc định)", badItems);
+
+    const statusSet = new Set([
+      ...(inv?.lookups?.purchaseStatuses || []),
+      ...(mp?.lookups?.purchaseStatuses || []),
+      ...(ms?.lookups?.purchaseStatuses || []),
+      ...(sn?.lookups?.purchaseStatuses || []),
+    ]);
+    fill("bsFilterStatus", `Tất cả TT Mua (${statusSet.size})`, [...statusSet].sort());
+
+    const rangeSet = new Set([
+      ...(inv?.lookups?.ranges || ["No"]),
+      ...(mp?.lookups?.ranges || []),
+      ...(ms?.lookups?.ranges || []),
+      ...(sn?.lookups?.ranges || []),
+    ]);
+    fill("bsFilterRange", `Tất cả Range (${rangeSet.size})`, [...rangeSet].sort());
+
+    const siteDirectory = inv?.siteDirectory || {};
+    const siteSet = new Set([
+      ...(inv?.lookups?.sites || []),
+      ...(sn?.lookups?.sites || []),
+      ...(sc?.lookups?.sites || []),
+    ]);
+    fill(
+      "bsFilterSite",
+      `Tất cả Site Kho (${siteSet.size})`,
+      [...siteSet].sort(),
+      (code) => {
+        const info = siteDirectory[code];
+        return info && info.siteName && info.siteName !== code ? `${code} — ${info.siteName}` : code;
+      }
+    );
+
+    const binTypeSet = new Set([
+      ...(inv?.lookups?.binTypes || []),
+      ...(sn?.lookups?.binTypes || []),
+      ...(sc?.lookups?.binTypes || []),
+    ]);
+    fill("bsFilterBinType", `Tất cả BIN Type (${binTypeSet.size})`, [...binTypeSet].sort());
+
+    const binZoneSet = new Set([
+      ...(inv?.lookups?.binZones || []),
+      ...(sn?.lookups?.binZones || []),
+      ...(sc?.lookups?.binZones || []),
+    ]);
+    fill("bsFilterBinZone", `Tất cả BIN Zone (${binZoneSet.size})`, [...binZoneSet].sort());
+
+    const brandSet = new Set([
+      ...(inv?.lookups?.brands || []),
+      ...(sn?.lookups?.brands || []),
+      ...(sc?.lookups?.brands || []),
+    ]);
+    fill("bsFilterBrand", `Tất cả Brand (${brandSet.size})`, [...brandSet].sort());
+  }
+
+  function resetBadStockFilters(shouldRender = true) {
+    const bs = state.badstock;
+    bs.badType = "";
+    bs.scope = "company";
+    bs.site = "";
+    bs.status = "";
+    bs.range = "";
+    bs.binType = "";
+    bs.binZone = "";
+    bs.brand = "";
+    bs.search = "";
+    bs.page = 1;
+    bs.expandedSkus.clear();
+
+    const setVal = (id, v) => { const el = document.getElementById(id); if (el) el.value = v; };
+    setVal("bsFilterBadType", "");
+    setVal("bsFilterSite", "");
+    setVal("bsFilterStatus", "");
+    setVal("bsFilterRange", "");
+    setVal("bsFilterBinType", "");
+    setVal("bsFilterBinZone", "");
+    setVal("bsFilterBrand", "");
+    setVal("bsSearchInput", "");
+
+    const scopeEl = document.getElementById("bsScopeGroup");
+    if (scopeEl) {
+      scopeEl.querySelectorAll(".seg-btn").forEach((b) => {
+        b.classList.toggle("active", b.dataset.val === "company");
+      });
+    }
+
+    syncAllMultiSelectUIs();
+    if (shouldRender && state.activeView === "badstock") renderBadStockView();
+  }
+
+  function bindBadStockEvents() {
+    const onSelect = (id, prop) => {
+      const el = document.getElementById(id);
+      if (!el) return;
+      el.addEventListener("change", (e) => {
+        state.badstock[prop] = e.target.value;
+        state.badstock.page = 1;
+        renderBadStockView();
+      });
+    };
+
+    onSelect("bsFilterBadType", "badType");
+    onSelect("bsFilterSite", "site");
+    onSelect("bsFilterStatus", "status");
+    onSelect("bsFilterRange", "range");
+    onSelect("bsFilterBinType", "binType");
+    onSelect("bsFilterBinZone", "binZone");
+    onSelect("bsFilterBrand", "brand");
+
+    const scopeEl = document.getElementById("bsScopeGroup");
+    scopeEl?.addEventListener("click", (e) => {
+      const btn = e.target.closest(".seg-btn");
+      if (!btn) return;
+      scopeEl.querySelectorAll(".seg-btn").forEach((b) => b.classList.remove("active"));
+      btn.classList.add("active");
+      state.badstock.scope = btn.dataset.val;
+      state.badstock.page = 1;
+      renderBadStockView();
+    });
+
+    document.getElementById("bsResetBtn")?.addEventListener("click", () => resetBadStockFilters(true));
+
+    document.getElementById("bsSearchInput")?.addEventListener("input", (e) => {
+      state.badstock.search = e.target.value.trim().toLowerCase();
+      state.badstock.page = 1;
+      renderBadStockView();
+    });
+
+    document.getElementById("bsExpandAllBtn")?.addEventListener("click", () => {
+      const bs = state.badstock;
+      const currentRows = Array.from(document.querySelectorAll("#bsTableBody tr.bs-sku-row[data-bs-sku]"));
+      const pageSkus = currentRows.map((tr) => tr.dataset.bsSku).filter(Boolean);
+      const allExpanded = pageSkus.length > 0 && pageSkus.every((sku) => bs.expandedSkus.has(sku));
+      if (allExpanded) {
+        pageSkus.forEach((sku) => bs.expandedSkus.delete(sku));
+      } else {
+        pageSkus.forEach((sku) => bs.expandedSkus.add(sku));
+      }
+      renderBadStockView();
+    });
+
+    document.getElementById("bsExportCsvBtn")?.addEventListener("click", () => {
+      const { headers, rows, filename } = state.badstock.lastExport;
+      if (rows && rows.length) downloadCsv(headers, rows, filename);
+    });
+  }
+
+  function parseVnOrIsoDateSortable(dStr) {
+    if (!dStr) return "9999-99-99";
+    const s = String(dStr).trim();
+    // YYYY-MM-DD
+    if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0, 10);
+    // DD/MM/YYYY or DD.MM.YYYY
+    const m = s.match(/^(\d{1,2})[./-](\d{1,2})[./-](\d{2,4})/);
+    if (m) {
+      let d = m[1].padStart(2, "0");
+      let mo = m[2].padStart(2, "0");
+      let y = m[3].length === 2 ? `20${m[3]}` : m[3];
+      return `${y}-${mo}-${d}`;
+    }
+    return s;
+  }
+
+  function renderBadStockView() {
+    const bs = state.badstock;
+    const sn = state.raw?.invSerials;
+    const tbody = document.getElementById("bsTableBody");
+    const thead = document.getElementById("bsTableHead");
+    if (!tbody || !thead) return;
+
+    if (!sn || !Array.isArray(sn.rows)) {
+      ensureLookupShardsLoaded();
+      tbody.innerHTML = `<tr><td colspan="9" class="muted" style="padding:26px;text-align:center">Đang tải dữ liệu 40.726 Serial &amp; Bad Stock chi tiết... vui lòng chờ 1 giây.</td></tr>`;
+      return;
+    }
+
+    const snL = sn.lookups;
+    const invSiteDir = state.raw?.inventory?.siteDirectory || {};
+    const lk = state.lookup;
+    if (lk.idxSkuVel.size === 0 && state.raw?.invSkuLevel?.rows?.length) {
+      buildLookupIndexes();
+    }
+
+    // Build fast Branch-level velocity index: "SKU|SITE" -> { s7d, s30d, s90d, s180d, sdays, invQty, invVal }
+    const branchVelMap = new Map();
+    const brData = state.raw?.invBranchLevel;
+    if (brData && Array.isArray(brData.rows) && brData.lookups) {
+      const brL = brData.lookups;
+      for (let i = 0; i < brData.rows.length; i++) {
+        const br = brData.rows[i];
+        const siteCode = brL.sites[br[BR_C.SITE]] || "";
+        const key = `${br[BR_C.SKU]}|${siteCode}`;
+        branchVelMap.set(key, {
+          siteName: brL.siteNames[br[BR_C.SITE_NAME]] || "",
+          s7d: br[BR_C.S7D] || 0,
+          s30d: br[BR_C.S30D] || 0,
+          s90d: br[BR_C.S90D] || 0,
+          s180d: br[BR_C.S180D] || 0,
+          sdays: br[BR_C.SDAYS],
+          invQty: br[BR_C.INV_QTY] || 0,
+          invVal: br[BR_C.INV_VAL] || 0,
+        });
+      }
+    }
+
+    // Update Scope Badge
+    const scopeBadge = document.getElementById("bsScopeBadge");
+    if (scopeBadge) {
+      scopeBadge.textContent =
+        bs.scope === "site" ? "THEO CHI NHÁNH (SITE)" :
+        bs.scope === "either" ? "THEO CÔNG TY HOẶC SITE" : "THEO CÔNG TY";
+    }
+
+    // Determine active Bad Stock Types (default: Tồn rất xấu + Tồn xấu)
+    const activeBadTypes = bs.badType ? splitMulti(bs.badType) : ["Tồn rất xấu", "Tồn xấu"];
+    const activeBadSet = new Set(activeBadTypes);
+
+    const catIdxSet = getLookupIdxSet(state.globalCat, snL.categories);
+    const gSubIdxSet = getLookupIdxSet(state.globalSubcat, snL.subcats);
+    const siteIdxSet = getLookupIdxSet(bs.site, snL.sites);
+    const stIdxSet = getLookupIdxSet(bs.status, snL.purchaseStatuses);
+    const rngIdxSet = getLookupIdxSet(bs.range, snL.ranges || []);
+    const btIdxSet = getLookupIdxSet(bs.binType, snL.binTypes);
+    const bzIdxSet = getLookupIdxSet(bs.binZone, snL.binZones);
+    const brIdxSet = getLookupIdxSet(bs.brand, snL.brands);
+
+    // Render Active Filter Chips
+    const chipsWrap = document.getElementById("bsActiveChips");
+    if (chipsWrap) {
+      const chips = [];
+      const add = (label, cls, fn) => chips.push({ label, cls, fn });
+
+      splitMulti(state.globalCat).forEach((cat) => {
+        add(`Cat: ${cat}`, "amber", () => {
+          state.globalCat = removeMultiVal(state.globalCat, cat);
+          populateGlobalMasterFilter();
+          renderAll();
+        });
+      });
+      splitMulti(state.globalSubcat).forEach((sc) => {
+        add(`Subcat 2: ${sc}`, "amber", () => {
+          setGlobalSubcat(removeMultiVal(state.globalSubcat, sc));
+        });
+      });
+      splitMulti(bs.badType).forEach((v) => {
+        add(`Loại tồn: ${v}`, "amber", () => {
+          bs.badType = removeMultiVal(bs.badType, v);
+          syncMultiSelectUI("bsFilterBadType", bs.badType);
+          renderBadStockView();
+        });
+      });
+      splitMulti(bs.site).forEach((v) => {
+        add(`Site: ${v}`, "", () => {
+          bs.site = removeMultiVal(bs.site, v);
+          syncMultiSelectUI("bsFilterSite", bs.site);
+          renderBadStockView();
+        });
+      });
+      splitMulti(bs.status).forEach((v) => {
+        add(`TT Mua: ${v}`, "amber", () => {
+          bs.status = removeMultiVal(bs.status, v);
+          syncMultiSelectUI("bsFilterStatus", bs.status);
+          renderBadStockView();
+        });
+      });
+      splitMulti(bs.range).forEach((v) => {
+        add(`Range: ${v}`, "", () => {
+          bs.range = removeMultiVal(bs.range, v);
+          syncMultiSelectUI("bsFilterRange", bs.range);
+          renderBadStockView();
+        });
+      });
+      splitMulti(bs.binType).forEach((v) => {
+        add(`BIN Type: ${v}`, "", () => {
+          bs.binType = removeMultiVal(bs.binType, v);
+          syncMultiSelectUI("bsFilterBinType", bs.binType);
+          renderBadStockView();
+        });
+      });
+      splitMulti(bs.binZone).forEach((v) => {
+        add(`BIN Zone: ${v}`, "", () => {
+          bs.binZone = removeMultiVal(bs.binZone, v);
+          syncMultiSelectUI("bsFilterBinZone", bs.binZone);
+          renderBadStockView();
+        });
+      });
+      splitMulti(bs.brand).forEach((v) => {
+        add(`Brand: ${v}`, "", () => {
+          bs.brand = removeMultiVal(bs.brand, v);
+          syncMultiSelectUI("bsFilterBrand", bs.brand);
+          renderBadStockView();
+        });
+      });
+
+      chipsWrap.innerHTML = "";
+      if (!chips.length) {
+        chipsWrap.innerHTML = `<span class="chip muted-chip">Mặc định: Tồn xấu &amp; Tồn rất xấu • Nhấp vào từng dòng SKU để xổ bảng Pivot Serial &amp; Site</span>`;
+      } else {
+        chips.forEach((c) => {
+          const el = document.createElement("span");
+          el.className = `chip ${c.cls}`;
+          el.innerHTML = `<span>${esc(c.label)}</span><button type="button" aria-label="Xóa">×</button>`;
+          el.querySelector("button").addEventListener("click", c.fn);
+          chipsWrap.appendChild(el);
+        });
+      }
+    }
+
+    // Group matching Bad Stock serials by SKU -> Site -> Serials
+    const skuMap = new Map();
+    const allSitesSet = new Set();
+    let totalBadSn = 0, totalBadVal = 0;
+    let totalVeryBadSn = 0, totalVeryBadVal = 0;
+    let totalOnlyBadSn = 0, totalOnlyBadVal = 0;
+    let globalMaxAgingComp = 0;
+
+    for (let i = 0; i < sn.rows.length; i++) {
+      const r = sn.rows[i];
+      if (!r[SN_C.IN_BAD_FILE]) continue;
+
+      if (state.globalCat) {
+        if (r.length > SN_C.CAT) {
+          if (!catIdxSet || !catIdxSet.has(r[SN_C.CAT])) continue;
+        } else if (!hasMultiPrefix(state.globalCat, snL.subcats[r[SN_C.SUBCAT]])) {
+          continue;
+        }
+      }
+      if (gSubIdxSet && !gSubIdxSet.has(r[SN_C.SUBCAT])) continue;
+      if (siteIdxSet && !siteIdxSet.has(r[SN_C.SITE])) continue;
+      if (stIdxSet && !stIdxSet.has(r[SN_C.STATUS])) continue;
+      if (rngIdxSet && !rngIdxSet.has(r[SN_C.RANGE])) continue;
+      if (btIdxSet && !btIdxSet.has(r[SN_C.BIN_TYPE])) continue;
+      if (bzIdxSet && !bzIdxSet.has(r[SN_C.BIN_ZONE])) continue;
+      if (brIdxSet && !brIdxSet.has(r[SN_C.BRAND])) continue;
+
+      const badCompLbl = snL.badComp[r[SN_C.BAD_COMP]] || "Khác";
+      const badSiteLbl = snL.badSite[r[SN_C.BAD_SITE]] || "Khác";
+
+      let matchesBadType = false;
+      if (bs.scope === "company") {
+        matchesBadType = activeBadSet.has(badCompLbl);
+      } else if (bs.scope === "site") {
+        matchesBadType = activeBadSet.has(badSiteLbl);
+      } else {
+        matchesBadType = activeBadSet.has(badCompLbl) || activeBadSet.has(badSiteLbl);
+      }
+      if (!matchesBadType) continue;
+
+      const sku = r[SN_C.SKU];
+      const siteCode = snL.sites[r[SN_C.SITE]] || "—";
+      const val = r[SN_C.INV_VAL] || 0;
+      const agingComp = r[SN_C.AGING_COMP] >= 0 ? r[SN_C.AGING_COMP] : 0;
+      const agingSite = r[SN_C.AGING_SITE] >= 0 ? r[SN_C.AGING_SITE] : 0;
+      const firstDate = r[SN_C.FIRST_DATE] || "";
+      const lastDate = r[SN_C.LAST_DATE] || "";
+      const firstIso = parseVnOrIsoDateSortable(firstDate);
+      const lastIso = parseVnOrIsoDateSortable(lastDate);
+
+      let skuObj = skuMap.get(sku);
+      if (!skuObj) {
+        const velRow = lk.idxSkuVel.get(sku) || null;
+        const mpRow = lk.idxMaster.get(sku) || null;
+        const mpL = state.raw?.masterProducts?.lookups;
+        const s7d = velRow ? (velRow[SKU_C.S7D] || 0) : 0;
+        const s30d = velRow ? (velRow[SKU_C.S30D] || 0) : (mpRow ? (mpRow[MP_C.SALES_30D] || 0) : 0);
+        const s90d = velRow ? (velRow[SKU_C.S90D] || 0) : 0;
+        const s180d = velRow ? (velRow[SKU_C.S180D] || 0) : 0;
+        const compInvQty = velRow ? (velRow[SKU_C.INV_QTY] || 0) : (mpRow ? (mpRow[MP_C.INV_QTY] || 0) : 0);
+        const statusStr = snL.purchaseStatuses[r[SN_C.STATUS]] || (velRow ? velRow[SKU_C.STATUS] : (mpRow && mpL ? mpL.purchaseStatuses[mpRow[MP_C.STATUS]] : "Normal"));
+        const rangeStr = (snL.ranges && snL.ranges[r[SN_C.RANGE]]) || (velRow ? velRow[SKU_C.RANGE] : "No");
+
+        skuObj = {
+          sku,
+          name: r[SN_C.SKU_NAME] || (velRow ? velRow[SKU_C.NAME] : "") || (mpRow ? mpRow[MP_C.NAME] : ""),
+          brand: snL.brands[r[SN_C.BRAND]] || (velRow ? velRow[SKU_C.BRAND] : "Khác"),
+          subcat: snL.subcats[r[SN_C.SUBCAT]] || (velRow ? velRow[SKU_C.SUBCAT] : ""),
+          status: statusStr,
+          range: rangeStr,
+          qty: 0,
+          val: 0,
+          compInvQty,
+          veryBadCnt: 0,
+          veryBadVal: 0,
+          badCnt: 0,
+          badVal: 0,
+          otherBadCnt: 0,
+          maxAgingComp: -1,
+          minAgingComp: Infinity,
+          sumAgingComp: 0,
+          earliestCompIso: "9999-99-99",
+          earliestCompDate: "",
+          latestCompIso: "",
+          latestCompDate: "",
+          s7d,
+          s30d,
+          s90d,
+          s180d,
+          sitesMap: new Map(),
+        };
+        skuMap.set(sku, skuObj);
+      }
+
+      skuObj.qty += 1;
+      skuObj.val += val;
+      skuObj.sumAgingComp += agingComp;
+      if (agingComp > skuObj.maxAgingComp) skuObj.maxAgingComp = agingComp;
+      if (agingComp < skuObj.minAgingComp) skuObj.minAgingComp = agingComp;
+      if (firstDate && firstIso < skuObj.earliestCompIso) {
+        skuObj.earliestCompIso = firstIso;
+        skuObj.earliestCompDate = firstDate;
+      }
+      if (firstDate && firstIso > skuObj.latestCompIso) {
+        skuObj.latestCompIso = firstIso;
+        skuObj.latestCompDate = firstDate;
+      }
+
+      const primaryLbl = bs.scope === "site" ? badSiteLbl : badCompLbl;
+      if (primaryLbl === "Tồn rất xấu" || (bs.scope === "either" && (badCompLbl === "Tồn rất xấu" || badSiteLbl === "Tồn rất xấu"))) {
+        skuObj.veryBadCnt += 1;
+        skuObj.veryBadVal += val;
+      } else if (primaryLbl === "Tồn xấu" || (bs.scope === "either" && (badCompLbl === "Tồn xấu" || badSiteLbl === "Tồn xấu"))) {
+        skuObj.badCnt += 1;
+        skuObj.badVal += val;
+      } else {
+        skuObj.otherBadCnt += 1;
+      }
+
+      // Group into Site inside this SKU
+      let siteObj = skuObj.sitesMap.get(siteCode);
+      if (!siteObj) {
+        const brVel = branchVelMap.get(`${sku}|${siteCode}`) || null;
+        const sName = brVel?.siteName || invSiteDir[siteCode]?.siteName || siteCode;
+        siteObj = {
+          siteCode,
+          siteName: sName,
+          qty: 0,
+          val: 0,
+          siteTotalInvQty: brVel ? brVel.invQty : 0,
+          maxAgingSite: -1,
+          minAgingSite: Infinity,
+          sumAgingSite: 0,
+          earliestSiteIso: "9999-99-99",
+          earliestSiteDate: "",
+          latestSiteIso: "",
+          latestSiteDate: "",
+          s7d: brVel ? brVel.s7d : 0,
+          s30d: brVel ? brVel.s30d : 0,
+          s90d: brVel ? brVel.s90d : 0,
+          s180d: brVel ? brVel.s180d : 0,
+          serials: [],
+        };
+        skuObj.sitesMap.set(siteCode, siteObj);
+      }
+
+      siteObj.qty += 1;
+      siteObj.val += val;
+      siteObj.sumAgingSite += agingSite;
+      if (agingSite > siteObj.maxAgingSite) siteObj.maxAgingSite = agingSite;
+      if (agingSite < siteObj.minAgingSite) siteObj.minAgingSite = agingSite;
+      if (lastDate && lastIso < siteObj.earliestSiteIso) {
+        siteObj.earliestSiteIso = lastIso;
+        siteObj.earliestSiteDate = lastDate;
+      }
+      if (lastDate && lastIso > siteObj.latestSiteIso) {
+        siteObj.latestSiteIso = lastIso;
+        siteObj.latestSiteDate = lastDate;
+      }
+
+      siteObj.serials.push({
+        sn: r[SN_C.SN],
+        siteCode,
+        loc: snL.locations[r[SN_C.LOC]] || "—",
+        binType: snL.binTypes[r[SN_C.BIN_TYPE]] || "—",
+        binZone: snL.binZones[r[SN_C.BIN_ZONE]] || "—",
+        supplier: snL.suppliers[r[SN_C.SUPPLIER]] || "—",
+        badComp: badCompLbl,
+        badSite: badSiteLbl,
+        agingComp: r[SN_C.AGING_COMP],
+        agingSite: r[SN_C.AGING_SITE],
+        firstDate: firstDate || "—",
+        lastDate: lastDate || "—",
+        val,
+      });
+    }
+
+    // Filter by Search query (matches SKU, Name, Brand, Subcat, Site, or Serial Number)
+    let skuList = Array.from(skuMap.values());
+    const q = bs.search;
+    if (q) {
+      skuList = skuList.filter((item) => {
+        if (
+          item.sku.toLowerCase().includes(q) ||
+          item.name.toLowerCase().includes(q) ||
+          item.brand.toLowerCase().includes(q) ||
+          item.subcat.toLowerCase().includes(q)
+        ) {
+          return true;
+        }
+        for (const sObj of item.sitesMap.values()) {
+          if (sObj.siteCode.toLowerCase().includes(q) || sObj.siteName.toLowerCase().includes(q)) return true;
+          if (sObj.serials.some((sr) => sr.sn.toLowerCase().includes(q))) {
+            bs.expandedSkus.add(item.sku);
+            return true;
+          }
+        }
+        return false;
+      });
+    }
+
+    // Recompute summary KPIs from filtered SKU list
+    skuList.forEach((item) => {
+      totalBadSn += item.qty;
+      totalBadVal += item.val;
+      totalVeryBadSn += item.veryBadCnt;
+      totalVeryBadVal += item.veryBadVal;
+      totalOnlyBadSn += item.badCnt;
+      totalOnlyBadVal += item.badVal;
+      if (item.maxAgingComp > globalMaxAgingComp) globalMaxAgingComp = item.maxAgingComp;
+      for (const sc of item.sitesMap.keys()) allSitesSet.add(sc);
+    });
+
+    const veryBadShare = totalBadVal > 0 ? ((totalVeryBadVal / totalBadVal) * 100).toFixed(1) : "0.0";
+    const setTxt = (id, t) => { const el = document.getElementById(id); if (el) el.textContent = t; };
+    setTxt("bsKpiSkus", `${fmtInt(skuList.length)} SKUs`);
+    setTxt("bsKpiSkusSub", `${fmtInt(totalBadSn)} Serial • ${fmtInt(allSitesSet.size)} Site có tồn`);
+    setTxt("bsKpiTotalVal", fmtCompactVnd(totalBadVal));
+    setTxt("bsKpiTotalValSub", `Tổng SL: ${fmtInt(totalBadSn)} Serial tồn xấu`);
+    setTxt("bsKpiVeryBadVal", fmtCompactVnd(totalVeryBadVal));
+    setTxt("bsKpiVeryBadSub", `${fmtInt(totalVeryBadSn)} SN • ${veryBadShare}% tổng Bad Stock`);
+    setTxt("bsKpiBadVal", fmtCompactVnd(totalOnlyBadVal));
+    setTxt("bsKpiBadSub", `${fmtInt(totalOnlyBadSn)} SN Tồn xấu • Max tuổi Cty: ${fmtInt(globalMaxAgingComp)} ngày`);
+
+    const insightEl = document.getElementById("bsInsightText");
+    if (insightEl) {
+      if (!skuList.length) {
+        insightEl.textContent = "Không có SKU Tồn xấu / Tồn rất xấu nào khớp bộ lọc hiện tại.";
+      } else {
+        const zeroSale30Skus = skuList.filter((x) => x.s30d === 0).length;
+        insightEl.textContent =
+          `Phát hiện ${fmtInt(skuList.length)} SKU (${fmtInt(totalBadSn)} SN = ${fmtCompactVnd(totalBadVal)}) • Có ${fmtInt(zeroSale30Skus)}/${fmtInt(skuList.length)} SKU không phát sinh bán trong 30D`;
+      }
+    }
+
+    // Sort SKU list
+    const dir = bs.sortDir === "asc" ? 1 : -1;
+    const colGetters = {
+      sku: (x) => x.sku,
+      qty: (x) => x.qty,
+      val: (x) => x.val,
+      agingComp: (x) => x.maxAgingComp,
+      firstDate: (x) => x.earliestCompIso,
+      s7d: (x) => x.s7d,
+      s30d: (x) => x.s30d,
+      s90d: (x) => x.s90d,
+      s180d: (x) => x.s180d,
+    };
+    const getter = colGetters[bs.sortCol] || colGetters.qty;
+    skuList.sort((a, b) => {
+      const va = getter(a), vb = getter(b);
+      if (typeof va === "string") {
+        const cmp = va.localeCompare(vb);
+        return cmp !== 0 ? cmp * dir : b.val - a.val;
+      }
+      return (va - vb) !== 0 ? (va - vb) * dir : b.val - a.val;
+    });
+
+    // Render Table Header
+    const headCols = [
+      { key: "sku", label: "SKU — Sản phẩm & Phân loại Tồn" },
+      { key: "qty", label: "Số lượng (SN)", num: true },
+      { key: "val", label: "Giá trị Bad Stock", num: true },
+      { key: "agingComp", label: "Tuổi Cty", num: true },
+      { key: "firstDate", label: "Ngày nhập Cty" },
+      { key: "s7d", label: "Sức bán 7D", num: true },
+      { key: "s30d", label: "Sức bán 30D", num: true },
+      { key: "s90d", label: "Sức bán 90D", num: true },
+      { key: "s180d", label: "Sức bán 180D", num: true },
+    ];
+    thead.innerHTML = `<tr>${headCols.map((c) => {
+      const sorted = bs.sortCol === c.key;
+      const arrow = sorted ? (bs.sortDir === "asc" ? " ▲" : " ▼") : "";
+      return `<th class="${c.num ? "num" : ""}" data-bs-sort="${c.key}">${esc(c.label)}${arrow}</th>`;
+    }).join("")}</tr>`;
+
+    thead.querySelectorAll("th[data-bs-sort]").forEach((th) => {
+      th.addEventListener("click", () => {
+        const k = th.dataset.bsSort;
+        if (bs.sortCol === k) bs.sortDir = bs.sortDir === "asc" ? "desc" : "asc";
+        else {
+          bs.sortCol = k;
+          bs.sortDir = k === "firstDate" || k === "sku" ? "asc" : "desc";
+        }
+        renderBadStockView();
+      });
+    });
+
+    // Pagination (25 SKUs / page)
+    const totalPages = Math.max(1, Math.ceil(skuList.length / bs.pageSize));
+    bs.page = Math.min(Math.max(1, bs.page), totalPages);
+    const start = (bs.page - 1) * bs.pageSize;
+    const pageItems = skuList.slice(start, start + bs.pageSize);
+
+    setTxt(
+      "bsTableCountInfo",
+      skuList.length
+        ? `Hiển thị ${fmtInt(start + 1)}–${fmtInt(Math.min(start + pageItems.length, skuList.length))} / ${fmtInt(skuList.length)} SKU (${fmtInt(totalBadSn)} Serial) • Nhấp vào dòng SKU để xổ bảng Pivot Serial & Site`
+        : "Không có SKU nào khớp bộ lọc"
+    );
+
+    const pag = document.getElementById("bsTablePagination");
+    if (pag) {
+      pag.innerHTML = `
+        <button class="page-btn" id="bsPrevP" ${bs.page <= 1 ? "disabled" : ""}>◀</button>
+        <span class="mono" style="font-size:11px;color:var(--text-secondary)">Trang ${bs.page}/${totalPages}</span>
+        <button class="page-btn" id="bsNextP" ${bs.page >= totalPages ? "disabled" : ""}>▶</button>`;
+      pag.querySelector("#bsPrevP")?.addEventListener("click", () => {
+        if (bs.page > 1) { bs.page--; renderBadStockView(); }
+      });
+      pag.querySelector("#bsNextP")?.addEventListener("click", () => {
+        if (bs.page < totalPages) { bs.page++; renderBadStockView(); }
+      });
+    }
+
+    const expAllBtn = document.getElementById("bsExpandAllBtn");
+    if (expAllBtn) {
+      const allPageExp = pageItems.length > 0 && pageItems.every((it) => bs.expandedSkus.has(it.sku));
+      expAllBtn.textContent = allPageExp ? "⊟ Thu gọn trang" : "⊞ Mở rộng trang";
+    }
+
+    if (!pageItems.length) {
+      tbody.innerHTML = `<tr><td colspan="9" class="muted" style="padding:26px;text-align:center">Không có SKU Tồn xấu / Tồn rất xấu nào khớp điều kiện lọc.</td></tr>`;
+      bs.lastExport = { headers: [], rows: [], filename: "bad_stock_sku_serial_pivot.csv" };
+      return;
+    }
+
+    const fmtVel = (v) => `<span class="bs-vel-num ${v > 0 ? "has-sale" : "zero-sale"}">${fmtInt(v)}</span>`;
+
+    // Build rows HTML (Master SKU Row + Expandable Site/Serial Pivot Sub-table)
+    let bodyHtml = "";
+    pageItems.forEach((item) => {
+      const isExp = bs.expandedSkus.has(item.sku);
+      const avgAgeComp = item.qty > 0 ? Math.round(item.sumAgingComp / item.qty) : 0;
+      const ageCompDisplay = item.qty > 1 && item.maxAgingComp !== item.minAgingComp
+        ? `<div><span class="aging-tag old">${fmtInt(item.maxAgingComp)} ngày</span></div><div class="mono muted" style="font-size:10px">TB: ${fmtInt(avgAgeComp)}d (${fmtInt(item.minAgingComp)}–${fmtInt(item.maxAgingComp)}d)</div>`
+        : `<span class="aging-tag ${item.maxAgingComp > 180 ? "old" : "mid"}">${fmtInt(item.maxAgingComp)} ngày</span>`;
+
+      const dateCompDisplay = item.earliestCompDate
+        ? (item.latestCompDate && item.latestCompDate !== item.earliestCompDate
+            ? `<div class="mono"><strong>${esc(item.earliestCompDate)}</strong></div><div class="mono muted" style="font-size:10px">→ ${esc(item.latestCompDate)}</div>`
+            : `<span class="mono"><strong>${esc(item.earliestCompDate)}</strong></span>`)
+        : "—";
+
+      const badBadges = [];
+      if (item.veryBadCnt > 0) badBadges.push(`<span class="inv-badge bad-verybad">Tồn rất xấu: ${fmtInt(item.veryBadCnt)}</span>`);
+      if (item.badCnt > 0) badBadges.push(`<span class="inv-badge bad-bad">Tồn xấu: ${fmtInt(item.badCnt)}</span>`);
+      if (item.otherBadCnt > 0) badBadges.push(`<span class="inv-badge bad-long">Khác: ${fmtInt(item.otherBadCnt)}</span>`);
+
+      bodyHtml += `
+        <tr class="bs-sku-row ${isExp ? "expanded" : ""}" data-bs-sku="${esc(item.sku)}" title="Nhấp để ${isExp ? "thu gọn" : "xổ ra"} bảng Pivot chi tiết các Serial & Site của SKU ${esc(item.sku)}">
+          <td>
+            <div class="bs-sku-main-cell">
+              <span class="bs-expand-icon">▶</span>
+              <div class="bs-sku-info">
+                <div class="bs-sku-top-line">
+                  <span class="bs-sku-code">${esc(item.sku)}</span>
+                  ${badBadges.join("")}
+                  <span class="inv-badge ${statusBadgeClass(item.status)}">${esc(item.status)}</span>
+                  <span class="inv-badge ${String(item.range).toLowerCase() === "yes" ? "range-yes" : "range-no"}">Range: ${esc(item.range)}</span>
+                  <button type="button" class="bs-inspect-mini-btn" data-bs-open-lookup="${esc(item.sku)}" title="Mở hồ sơ Tra cứu 360° cho SKU ${esc(item.sku)}">🔍 360°</button>
+                </div>
+                <div class="bs-sku-name">${esc(item.name)}</div>
+                <div class="bs-sku-meta">Brand: <strong>${esc(item.brand)}</strong> • Subcat 2: ${esc(item.subcat)}</div>
+              </div>
+            </div>
+          </td>
+          <td class="num">
+            <div class="mono" style="font-size:13px;font-weight:800;color:#00E5FF">${fmtInt(item.qty)} SN</div>
+            <div class="mono muted" style="font-size:10px">${item.compInvQty > 0 ? `/ Tổng tồn ${fmtInt(item.compInvQty)} • ` : ""}${item.sitesMap.size} Site</div>
+          </td>
+          <td class="num">
+            <strong class="mono">${fmtInt(item.val)}</strong>
+            <div class="mono muted" style="font-size:10px">${fmtCompactVnd(item.val)}</div>
+          </td>
+          <td class="num">${ageCompDisplay}</td>
+          <td>${dateCompDisplay}</td>
+          <td class="num">${fmtVel(item.s7d)}</td>
+          <td class="num">${fmtVel(item.s30d)}</td>
+          <td class="num">${fmtVel(item.s90d)}</td>
+          <td class="num">${fmtVel(item.s180d)}</td>
+        </tr>`;
+
+      if (isExp) {
+        const sortedSites = Array.from(item.sitesMap.values()).sort((a, b) => b.qty - a.qty || b.maxAgingSite - a.maxAgingSite);
+        let pivotRowsHtml = "";
+
+        sortedSites.forEach((sGroup) => {
+          const avgSiteAge = sGroup.qty > 0 ? Math.round(sGroup.sumAgingSite / sGroup.qty) : 0;
+          const siteAgeText = sGroup.qty > 1 && sGroup.maxAgingSite !== sGroup.minAgingSite
+            ? `Max ${fmtInt(sGroup.maxAgingSite)}d (TB ${fmtInt(avgSiteAge)}d)`
+            : `${fmtInt(sGroup.maxAgingSite)} ngày`;
+          const siteDateText = sGroup.earliestSiteDate
+            ? (sGroup.latestSiteDate && sGroup.latestSiteDate !== sGroup.earliestSiteDate
+                ? `${sGroup.earliestSiteDate} → ${sGroup.latestSiteDate}`
+                : sGroup.earliestSiteDate)
+            : "—";
+
+          // Level 2A: Site Pivot Group Header Row
+          pivotRowsHtml += `
+            <tr class="bs-site-group-row">
+              <td>📍 Site: <span class="mono">${esc(sGroup.siteCode)}</span> — ${esc(sGroup.siteName)}</td>
+              <td>Tổng hợp tại Site (${fmtInt(sGroup.qty)} Serial Bad Stock${sGroup.siteTotalInvQty ? ` / Tổng tồn Site: ${fmtInt(sGroup.siteTotalInvQty)}` : ""})</td>
+              <td><span class="inv-badge other">${fmtInt(sGroup.qty)} SN tại ${esc(sGroup.siteCode)}</span></td>
+              <td class="num mono" style="color:#00E5FF">${fmtInt(sGroup.qty)}</td>
+              <td class="num mono">${fmtInt(sGroup.val)}</td>
+              <td class="num mono"><span class="aging-tag old">${esc(siteAgeText)}</span></td>
+              <td class="mono">${esc(siteDateText)}</td>
+              <td class="num">${fmtVel(sGroup.s7d)}</td>
+              <td class="num">${fmtVel(sGroup.s30d)}</td>
+              <td class="num">${fmtVel(sGroup.s90d)}</td>
+              <td class="num">${fmtVel(sGroup.s180d)}</td>
+            </tr>`;
+
+          // Level 2B: Individual Serial Rows within this Site
+          const sortedSerials = [...sGroup.serials].sort((a, b) => b.agingSite - a.agingSite || b.agingComp - a.agingComp);
+          sortedSerials.forEach((sr) => {
+            const hlSn = q && sr.sn.toLowerCase().includes(q) ? "row-highlight" : "";
+            const ageS = sr.agingSite >= 0 ? `${fmtInt(sr.agingSite)} ngày` : "—";
+            const ageC = sr.agingComp >= 0 ? `${fmtInt(sr.agingComp)}d` : "—";
+            pivotRowsHtml += `
+              <tr class="bs-serial-sub-row ${hlSn}">
+                <td class="bs-serial-indent mono">
+                  <button type="button" class="link-sku-btn" data-bs-open-sn="${esc(sr.sn)}" data-bs-parent-sku="${esc(item.sku)}" title="Mở Tra cứu 360° cho Serial ${esc(sr.sn)}">${esc(sr.sn)}</button>
+                </td>
+                <td>
+                  <span class="mono"><strong>${esc(sGroup.siteCode)}</strong></span> • BIN: <span class="mono">${esc(sr.loc)}</span>
+                  <span class="inv-badge ${binBadgeClass(sr.binType)}">${esc(sr.binType)}</span>
+                </td>
+                <td>
+                  <span class="inv-badge ${badStockBadgeClass(sr.badComp)}" title="Loại tồn Công ty">Cty: ${esc(sr.badComp)}</span>
+                  <span class="inv-badge ${badStockBadgeClass(sr.badSite)}" title="Loại tồn Chi nhánh">Site: ${esc(sr.badSite)}</span>
+                </td>
+                <td class="num mono">1</td>
+                <td class="num mono"><strong>${fmtInt(sr.val)}</strong></td>
+                <td class="num">
+                  <span class="aging-tag ${sr.agingSite > 180 ? "old" : "mid"}">${ageS}</span>
+                  <span class="mono muted" style="font-size:10px;margin-left:4px">(Cty: ${ageC})</span>
+                </td>
+                <td class="mono">
+                  <strong>${esc(sr.lastDate)}</strong>
+                  <span class="muted" style="font-size:10px;margin-left:4px">(Cty: ${esc(sr.firstDate)})</span>
+                </td>
+                <td class="num">${fmtVel(sGroup.s7d)}</td>
+                <td class="num">${fmtVel(sGroup.s30d)}</td>
+                <td class="num">${fmtVel(sGroup.s90d)}</td>
+                <td class="num">${fmtVel(sGroup.s180d)}</td>
+              </tr>`;
+          });
+        });
+
+        bodyHtml += `
+          <tr class="bs-pivot-tr">
+            <td colspan="9">
+              <div class="bs-pivot-box">
+                <div class="bs-pivot-header">
+                  <div class="bs-pivot-title">
+                    <span>↳ Bảng Pivot Chi tiết Serial &amp; Phân bổ theo Site — SKU <strong class="mono">${esc(item.sku)}</strong> (${fmtInt(item.qty)} Serial tại ${fmtInt(item.sitesMap.size)} Site)</span>
+                  </div>
+                  <span class="panel-hint">Sức bán 7D / 30D / 90D / 180D bên dưới là sức bán thực tế của SKU tại từng Site tương ứng</span>
+                </div>
+                <table class="bs-pivot-table">
+                  <thead>
+                    <tr>
+                      <th>Site / Serial Number</th>
+                      <th>Kho &amp; Vị trí BIN</th>
+                      <th>Phân loại Bad Stock (Cty / Site)</th>
+                      <th class="num">Số lượng</th>
+                      <th class="num">Giá trị (VND)</th>
+                      <th class="num">Tuổi Site (kèm Tuổi Cty)</th>
+                      <th>Ngày nhập Site (kèm Nhập Cty)</th>
+                      <th class="num">Bán Site 7D</th>
+                      <th class="num">Bán Site 30D</th>
+                      <th class="num">Bán Site 90D</th>
+                      <th class="num">Bán Site 180D</th>
+                    </tr>
+                  </thead>
+                  <tbody>${pivotRowsHtml}</tbody>
+                </table>
+              </div>
+            </td>
+          </tr>`;
+      }
+    });
+
+    tbody.innerHTML = bodyHtml;
+
+    // Bind row expand/collapse and 360° lookup links
+    tbody.querySelectorAll("tr.bs-sku-row[data-bs-sku]").forEach((tr) => {
+      tr.addEventListener("click", (e) => {
+        if (e.target.closest("[data-bs-open-lookup]")) return;
+        const sku = tr.dataset.bsSku;
+        if (bs.expandedSkus.has(sku)) bs.expandedSkus.delete(sku);
+        else bs.expandedSkus.add(sku);
+        renderBadStockView();
+      });
+    });
+
+    tbody.querySelectorAll("[data-bs-open-lookup]").forEach((btn) => {
+      btn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        openSkuOrSerialInspector(btn.dataset.bsOpenLookup, "");
+      });
+    });
+
+    tbody.querySelectorAll("[data-bs-open-sn]").forEach((btn) => {
+      btn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        openSkuOrSerialInspector(btn.dataset.bsParentSku, btn.dataset.bsOpenSn);
+      });
+    });
+
+    // Prepare comprehensive CSV export (flattened SKU + Site + Serial rows)
+    const exportRows = [];
+    skuList.forEach((item) => {
+      const sortedSites = Array.from(item.sitesMap.values()).sort((a, b) => b.qty - a.qty);
+      sortedSites.forEach((sGroup) => {
+        sGroup.serials.forEach((sr) => {
+          exportRows.push([
+            item.sku,
+            item.name,
+            item.brand,
+            item.subcat,
+            item.status,
+            item.range,
+            item.qty,
+            Math.round(item.val),
+            item.maxAgingComp,
+            item.earliestCompDate,
+            item.s7d,
+            item.s30d,
+            item.s90d,
+            item.s180d,
+            sr.sn,
+            sGroup.siteCode,
+            sGroup.siteName,
+            sr.loc,
+            sr.binType,
+            sr.badComp,
+            sr.badSite,
+            1,
+            Math.round(sr.val),
+            sr.agingSite,
+            sr.lastDate,
+            sGroup.s7d,
+            sGroup.s30d,
+            sGroup.s90d,
+            sGroup.s180d,
+          ]);
+        });
+      });
+    });
+
+    bs.lastExport = {
+      headers: [
+        "SKU", "Tên Sản phẩm", "Brand", "Subcat 2", "TT Mua", "Range",
+        "Tổng SL Bad Stock (SKU)", "Tổng Giá trị Bad Stock (SKU)", "Max Tuổi Cty (Ngày)", "Ngày nhập Cty sớm nhất",
+        "Sức bán Cty 7D", "Sức bán Cty 30D", "Sức bán Cty 90D", "Sức bán Cty 180D",
+        "Serial Number", "Site Code", "Tên Site", "Vị trí BIN", "BIN Type",
+        "Loại tồn (Cty)", "Loại tồn (Site)", "SL Serial", "Giá trị Serial (VND)",
+        "Tuổi Site (Ngày)", "Ngày nhập Site",
+        "Sức bán Site 7D", "Sức bán Site 30D", "Sức bán Site 90D", "Sức bán Site 180D",
+      ],
+      rows: exportRows,
+      filename: `bad_stock_sku_serial_pivot_${new Date().toISOString().slice(0, 10)}.csv`,
+    };
   }
 
   // =========================================================================

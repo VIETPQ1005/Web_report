@@ -338,7 +338,7 @@
   // --- LOCAL INDEXEDDB CACHE (FALLBACK + SAVED SOURCE DIRECTORY HANDLE) ---
   const IDB_NAME = "cyberpulse_sales_db";
   const IDB_STORE = "datasets";
-  const IDB_KEY = "latest_v3_6nh";
+  const IDB_KEY = "latest_v3_storage";
   const IDB_DIR_KEY = "source_dir_handle";
 
   function openLocalDb() {
@@ -596,6 +596,7 @@
   function shouldPreferOverride(candidate, baseline) {
     if (!isValidDataset(candidate)) return false;
     if (!isValidDataset(baseline)) return true;
+    if (baseline.storageReport && !candidate.storageReport) return false;
     // Never let an old 1-NH dataset override a multi-NH baseline dataset
     const candCats = countDatasetCategories(candidate);
     const baseCats = countDatasetCategories(baseline);
@@ -610,8 +611,9 @@
 
   // --- INIT ---
   async function init() {
-    // Purge legacy v1/v2 IndexedDB cache key so stale 1-NH data never persists
+    // Purge legacy v1/v2/v3 IndexedDB cache keys so stale data never persists
     idbDeleteKey("latest");
+    idbDeleteKey("latest_v3_6nh");
 
     const isHttp = location.protocol === "http:" || location.protocol === "https:";
     let baseline = null;
@@ -973,9 +975,6 @@
     charts.deepRegionStack = make("chartDeepRegionStack");
     charts.deepChannel = make("chartDeepChannel");
     charts.deepDriver = make("chartDeepDriver");
-    charts.storageCap = document.getElementById("chartStorageCap") ? make("chartStorageCap") : null;
-    charts.storageBrand = document.getElementById("chartStorageBrand") ? make("chartStorageBrand") : null;
-    charts.storagePrice = document.getElementById("chartStoragePrice") ? make("chartStoragePrice") : null;
     charts.invBadStock = make("chartInvBadStock");
     charts.invStatusRange = make("chartInvStatusRange");
     charts.invSite = make("chartInvSite");
@@ -1040,28 +1039,6 @@
       if (chEl) chEl.value = state.channel;
       renderAll();
     });
-
-    if (charts.storageCap) {
-      charts.storageCap.on("click", (params) => {
-        if (!params.name) return;
-        state.storage.cap = state.storage.cap === params.name ? "" : params.name;
-        renderStorageReport();
-      });
-    }
-    if (charts.storageBrand) {
-      charts.storageBrand.on("click", (params) => {
-        if (!params.name) return;
-        state.storage.brand = state.storage.brand === params.name ? "" : params.name;
-        renderStorageReport();
-      });
-    }
-    if (charts.storagePrice) {
-      charts.storagePrice.on("click", (params) => {
-        if (!params.name) return;
-        state.storage.priceBand = state.storage.priceBand === params.name ? "" : params.name;
-        renderStorageReport();
-      });
-    }
 
     // Inventory cross-filter clicks
     charts.invBadStock.on("click", (params) => {
@@ -3033,6 +3010,33 @@
     if (!modal) return;
     state.storage.open = true;
     modal.classList.add("open");
+
+    // Lazy initialize charts when modal is visible with layout dimensions
+    if (!charts.storageCap && document.getElementById("chartStorageCap")) {
+      charts.storageCap = echarts.init(document.getElementById("chartStorageCap"), null, { renderer: "canvas" });
+      charts.storageCap.on("click", (params) => {
+        if (!params.name) return;
+        state.storage.cap = state.storage.cap === params.name ? "" : params.name;
+        renderStorageReport();
+      });
+    }
+    if (!charts.storageBrand && document.getElementById("chartStorageBrand")) {
+      charts.storageBrand = echarts.init(document.getElementById("chartStorageBrand"), null, { renderer: "canvas" });
+      charts.storageBrand.on("click", (params) => {
+        if (!params.name) return;
+        state.storage.brand = state.storage.brand === params.name ? "" : params.name;
+        renderStorageReport();
+      });
+    }
+    if (!charts.storagePrice && document.getElementById("chartStoragePrice")) {
+      charts.storagePrice = echarts.init(document.getElementById("chartStoragePrice"), null, { renderer: "canvas" });
+      charts.storagePrice.on("click", (params) => {
+        if (!params.name) return;
+        state.storage.priceBand = state.storage.priceBand === params.name ? "" : params.name;
+        renderStorageReport();
+      });
+    }
+
     renderStorageReport();
     setTimeout(() => {
       charts.storageCap?.resize();
@@ -6835,6 +6839,8 @@
       lookups: payload.lookups,
       siteDirectory: payload.siteDirectory,
       salesCube: payload.salesCube,
+      salesDaily: payload.salesDaily,
+      storageReport: payload.storageReport,
       inventory: payload.inventory,
       invSkuLevel: payload.invSkuLevel,
       invBranchLevel: payload.invBranchLevel,

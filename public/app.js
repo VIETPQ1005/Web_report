@@ -370,6 +370,9 @@
     lookup: {
       selectedSku: "",
       selectedSerial: "",
+      serialPage: 1,
+      binPage: 1,
+      pageSize: 20,
       idxMaster: new Map(),
       idxSkuVel: new Map(),
       idxBranches: new Map(),
@@ -1207,12 +1210,12 @@
 
     // Cross-filter click listeners
     charts.hero.on("click", (params) => {
-      if (state.heroMode === "region_grouped" && params.seriesName) {
-        toggleRegionFilter(params.seriesName);
-        return;
-      }
       if (state.heroGranularity === "month" && params.name) {
-        const m = params.name.startsWith("20") ? params.name : "";
+        let m = params.name.startsWith("20") ? params.name : "";
+        if (!m && /^T\d{2}$/.test(params.name)) {
+          const curY = (state.monthTo || "2026-11").slice(0, 4);
+          m = `${curY}-${params.name.slice(1)}`;
+        }
         if (m) {
           state.clickedMonth = state.clickedMonth === m ? "" : m;
           state.tablePage = 1;
@@ -2792,33 +2795,130 @@
       state.heroGranularity === "day" ? C.DATE :
       state.heroGranularity === "week" ? C.WEEK : C.MONTH;
 
-    if (state.heroMode === "region_grouped") {
-      // Exact multi-colored grouped vertical bars matching the reference's Dialogue Volume!
-      const buckets = Array.from(new Set(rows.map((r) => r[bucketCol]))).sort();
-      const regTotals = new Map();
-      const mat = new Map();
-
-      for (let i = 0; i < rows.length; i++) {
-        const r = rows[i];
-        const b = r[bucketCol];
-        const reg = lookups.regions[r[C.REGION]];
-        regTotals.set(reg, (regTotals.get(reg) || 0) + r[C.SALES]);
-        const key = `${reg}__${b}`;
-        mat.set(key, (mat.get(key) || 0) + r[C.SALES]);
+    if (state.heroMode === "compare_ly") {
+      // Compare current selected period vs same period Last Year (Month / Week / Day)
+      let allRows = [];
+      if (state.heroGranularity !== "month") {
+        allRows = getFilteredDailyRows(Boolean(state.clickedMonth), true);
+        if (state.site || state.channel || state.orderType) {
+          const filteredMonthlyAll = getFilteredRows(Boolean(state.clickedMonth), true);
+          const monthFilterSales = new Map();
+          filteredMonthlyAll.forEach((r) => {
+            monthFilterSales.set(r[C.MONTH], (monthFilterSales.get(r[C.MONTH]) || 0) + r[C.SALES]);
+          });
+          const monthDailyTotal = new Map();
+          allRows.forEach((r) => {
+            monthDailyTotal.set(r[C.MONTH], (monthDailyTotal.get(r[C.MONTH]) || 0) + r[C.SALES]);
+          });
+          allRows = allRows.map((r) => {
+            const mTot = monthDailyTotal.get(r[C.MONTH]) || 0;
+            const fTot = monthFilterSales.get(r[C.MONTH]) || 0;
+            const ratio = mTot > 0 ? fTot / mTot : 0;
+            if (ratio === 1) return r;
+            const copy = [...r];
+            copy[C.QTY] = Math.round(r[C.QTY] * ratio);
+            copy[C.SALES] = r[C.SALES] * ratio;
+            copy[C.GP] = r[C.GP] * ratio;
+            return copy;
+          });
+        }
+      } else {
+        allRows = getFilteredRows(Boolean(state.clickedMonth), true);
       }
 
-      const regs = Array.from(regTotals.entries()).sort((a, b) => b[1] - a[1]).map(([k]) => k);
-      const series = regs.map((reg, idx) => ({
-        name: reg,
-        type: "bar",
-        barGap: "18%",
-        barMaxWidth: 14,
+      // Determine comparison years (default: max year in active rows vs curYear - 1)
+      const activeYears = Array.from(new Set(rows.map((r) => String(r[C.MONTH] || "").slice(0, 4)).filter(Boolean))).sort();
+      const curYear = activeYears.length ? activeYears[activeYears.length - 1] : ((state.monthTo || "2026-11").slice(0, 4) || "2026");
+      const prevYear = String(Number(curYear) - 1);
+
+      const extractUnitKey = (rawKey) => {
+        const s = String(rawKey || "");
+        if (state.heroGranularity === "month") return s.slice(5, 7); // "MM"
+        if (state.heroGranularity === "week") {
+          const idx = s.indexOf("W");
+          return idx !== -1 ? s.slice(idx) : s.slice(5); // "W01"
+        }
+        return s.slice(5); // "MM-DD"
+      };
+
+      const formatUnitLabel = (u) => {
+        if (state.heroGranularity === "month") return `T${u}`;
+        if (state.heroGranularity === "week") return u;
+        const parts = u.split("-");
+        return parts.length === 2 ? `${parts[1]}/${parts[0]}` : u;
+      };
+
+      // Collect active unit keys from current filtered rows
+      const unitSet = new Set();
+      for (let i = 0; i < rows.length; i++) {
+        const r = rows[i];
+        const y = String(r[C.MONTH] || "").slice(0, 4);
+        if (y === curYear || activeYears.length === 1) {
+          const u = extractUnitKey(r[bucketCol]);
+          if (u) unitSet.add(u);
+        }
+      }
+      if (unitSet.size === 0) {
+        rows.forEach((r) => {
+          const u = extractUnitKey(r[bucketCol]);
+          if (u) unitSet.add(u);
+        });
+      }
+      const units = Array.from(unitSet).sort();
+
+      const curMap = new Map();
+      const lyMap = new Map();
+      for (let i = 0; i < allRows.length; i++) {
+        const r = allRows[i];
+        const rawB = String(r[bucketCol] || "");
+        const y = rawB.slice(0, 4) || String(r[C.MONTH] || "").slice(0, 4);
+        if (y !== curYear && y !== prevYear) continue;
+        const u = extractUnitKey(rawB);
+        if (!unitSet.has(u)) continue;
+        const targetMap = y === curYear ? curMap : lyMap;
+        let agg = targetMap.get(u);
+        if (!agg) {
+          agg = { sales: 0, qty: 0, gp: 0 };
+          targetMap.set(u, agg);
+        }
+        agg.sales += r[C.SALES];
+        agg.qty += r[C.QTY];
+        agg.gp += r[C.GP];
+      }
+
+      const xLabels = units.map(formatUnitLabel);
+      const curSalesData = units.map((u) => {
+        const monthKey = `${curYear}-${u}`;
+        const sel = state.heroGranularity === "month" && state.clickedMonth === monthKey;
+        const dim = state.heroGranularity === "month" && state.clickedMonth && !sel;
+        return {
+          value: Math.round(curMap.get(u)?.sales || 0),
+          itemStyle: {
+            color: sel
+              ? "#00E5FF"
+              : new echarts.graphic.LinearGradient(0, 0, 0, 1, [
+                  { offset: 0, color: "#00E5FF" },
+                  { offset: 1, color: "#1068DF" },
+                ]),
+            opacity: dim ? 0.35 : 0.95,
+            borderRadius: [3, 3, 0, 0],
+          },
+        };
+      });
+      const lySalesData = units.map((u) => ({
+        value: Math.round(lyMap.get(u)?.sales || 0),
         itemStyle: {
-          color: REGION_COLORS[reg] || FALLBACK_COLORS[idx % FALLBACK_COLORS.length],
-          borderRadius: [2, 2, 0, 0],
+          color: "#8B5CF6",
+          opacity: 0.78,
+          borderRadius: [3, 3, 0, 0],
         },
-        data: buckets.map((b) => Math.round(mat.get(`${reg}__${b}`) || 0)),
       }));
+      const yoyData = units.map((u) => {
+        const cS = curMap.get(u)?.sales || 0;
+        const lS = lyMap.get(u)?.sales || 0;
+        if (lS > 0) return Number((((cS - lS) / lS) * 100).toFixed(1));
+        return null;
+      });
 
       charts.hero.setOption({
         backgroundColor: "transparent",
@@ -2828,7 +2928,25 @@
           backgroundColor: COLORS.tooltipBg,
           borderColor: COLORS.tooltipBorder,
           textStyle: { color: "#F1F5F9", fontSize: 12 },
-          valueFormatter: (v) => fmtVndFull(v),
+          formatter: (params) => {
+            const idx = params[0]?.dataIndex ?? 0;
+            const u = units[idx];
+            const lbl = xLabels[idx];
+            const c = curMap.get(u) || { sales: 0, qty: 0, gp: 0 };
+            const l = lyMap.get(u) || { sales: 0, qty: 0, gp: 0 };
+            const diff = c.sales - l.sales;
+            const yoy = l.sales > 0 ? ((c.sales - l.sales) / l.sales) * 100 : null;
+            const yoyColor = yoy === null ? "#94A3B8" : yoy >= 0 ? "#12D37A" : "#FB7185";
+            const yoyText = yoy === null ? "N/A (Năm trước = 0)" : `${yoy >= 0 ? "+" : ""}${yoy.toFixed(1)}%`;
+            return `
+              <div style="min-width:225px">
+                <div style="font-family:JetBrains Mono;color:#38BDF8;font-weight:700;margin-bottom:5px">${lbl} (${curYear} vs ${prevYear})</div>
+                <div style="display:flex;justify-content:space-between;gap:14px"><span>Năm ${curYear}:</span><strong style="font-family:JetBrains Mono;color:#00E5FF">${fmtVndFull(c.sales)} (${fmtInt(c.qty)} sp)</strong></div>
+                <div style="display:flex;justify-content:space-between;gap:14px"><span>Cùng kỳ ${prevYear}:</span><strong style="font-family:JetBrains Mono;color:#C4B5FD">${fmtVndFull(l.sales)} (${fmtInt(l.qty)} sp)</strong></div>
+                <div style="display:flex;justify-content:space-between;gap:14px;margin-top:3px;padding-top:3px;border-top:1px solid rgba(255,255,255,0.12)"><span>Chênh lệch:</span><strong style="font-family:JetBrains Mono;color:${diff >= 0 ? "#12D37A" : "#FB7185"}">${diff >= 0 ? "+" : ""}${fmtCompactVnd(diff)}</strong></div>
+                <div style="display:flex;justify-content:space-between;gap:14px"><span>Tăng trưởng YoY:</span><strong style="font-family:JetBrains Mono;color:${yoyColor}">${yoyText}</strong></div>
+              </div>`;
+          },
         },
         legend: {
           bottom: 0,
@@ -2836,26 +2954,72 @@
           itemWidth: 8,
           itemHeight: 8,
           textStyle: { color: COLORS.textMuted, fontSize: 11 },
-          formatter: (n) => shortRegionLabel(n),
         },
-        grid: { left: 54, right: 16, top: 14, bottom: 48 },
+        grid: { left: 54, right: 54, top: 24, bottom: 44 },
         xAxis: {
           type: "category",
-          data: buckets,
+          data: xLabels,
           axisLine: { lineStyle: { color: COLORS.axisLine } },
           axisLabel: { color: COLORS.textSub, fontFamily: "JetBrains Mono", fontSize: 10.5 },
         },
-        yAxis: {
-          type: "value",
-          axisLabel: { color: COLORS.axisLabel, fontFamily: "JetBrains Mono", fontSize: 10.5, formatter: fmtAxisVnd },
-          splitLine: { lineStyle: { color: COLORS.gridLine } },
-        },
-        series,
+        yAxis: [
+          {
+            type: "value",
+            axisLabel: { color: COLORS.axisLabel, fontFamily: "JetBrains Mono", fontSize: 10.5, formatter: fmtAxisVnd },
+            splitLine: { lineStyle: { color: COLORS.gridLine } },
+          },
+          {
+            type: "value",
+            axisLabel: {
+              color: COLORS.amber,
+              fontFamily: "JetBrains Mono",
+              fontSize: 10.5,
+              formatter: (v) => `${v > 0 ? "+" : ""}${Math.round(v)}%`,
+            },
+            splitLine: { show: false },
+          },
+        ],
+        series: [
+          {
+            name: `Doanh số ${curYear}`,
+            type: "bar",
+            yAxisIndex: 0,
+            barMaxWidth: 26,
+            barGap: "18%",
+            data: curSalesData,
+            label: {
+              show: units.length <= 13,
+              position: "top",
+              color: COLORS.textSub,
+              fontFamily: "JetBrains Mono",
+              fontSize: 9.5,
+              formatter: (p) => (p.value > 0 ? fmtCompactVnd(p.value) : ""),
+            },
+          },
+          {
+            name: `Cùng kỳ ${prevYear}`,
+            type: "bar",
+            yAxisIndex: 0,
+            barMaxWidth: 26,
+            data: lySalesData,
+          },
+          {
+            name: "Tăng trưởng YoY (%)",
+            type: "line",
+            yAxisIndex: 1,
+            smooth: 0.3,
+            symbol: "circle",
+            symbolSize: units.length > 35 ? 4 : 7,
+            data: yoyData,
+            lineStyle: { width: 2.5, color: COLORS.amber },
+            itemStyle: { color: COLORS.amber, borderColor: COLORS.pieBorder, borderWidth: 1.5 },
+          },
+        ],
       }, true);
       return;
     }
 
-    // Sales + Qty OR Sales + GP
+    // Sales + Qty combo
     const map = new Map();
     for (let i = 0; i < rows.length; i++) {
       const r = rows[i];
@@ -2883,46 +3047,34 @@
       };
     });
 
-    const isGp = state.heroMode === "sales_gp";
-    const series = isGp
-      ? [
-          { name: "Sales (VND)", type: "bar", barMaxWidth: 26, data: salesBars },
-          {
-            name: "Gross Profit (GP)",
-            type: "bar",
-            barMaxWidth: 26,
-            data: keys.map((k) => Math.round(map.get(k).gp)),
-            itemStyle: { color: COLORS.emerald, borderRadius: [3, 3, 0, 0] },
-          },
-        ]
-      : [
-          {
-            name: "Sales (VND)",
-            type: "bar",
-            yAxisIndex: 0,
-            barMaxWidth: 34,
-            data: salesBars,
-            label: {
-              show: keys.length <= 13,
-              position: "top",
-              color: COLORS.textSub,
-              fontFamily: "JetBrains Mono",
-              fontSize: 10,
-              formatter: (p) => fmtCompactVnd(p.value),
-            },
-          },
-          {
-            name: "Sales QTY",
-            type: "line",
-            yAxisIndex: 1,
-            smooth: 0.3,
-            symbol: "circle",
-            symbolSize: keys.length > 35 ? 4 : 7,
-            data: keys.map((k) => map.get(k).qty),
-            lineStyle: { width: 2.5, color: COLORS.amber },
-            itemStyle: { color: COLORS.amber, borderColor: COLORS.pieBorder, borderWidth: 1.5 },
-          },
-        ];
+    const series = [
+      {
+        name: "Sales (VND)",
+        type: "bar",
+        yAxisIndex: 0,
+        barMaxWidth: 34,
+        data: salesBars,
+        label: {
+          show: keys.length <= 13,
+          position: "top",
+          color: COLORS.textSub,
+          fontFamily: "JetBrains Mono",
+          fontSize: 10,
+          formatter: (p) => fmtCompactVnd(p.value),
+        },
+      },
+      {
+        name: "Sales QTY",
+        type: "line",
+        yAxisIndex: 1,
+        smooth: 0.3,
+        symbol: "circle",
+        symbolSize: keys.length > 35 ? 4 : 7,
+        data: keys.map((k) => map.get(k).qty),
+        lineStyle: { width: 2.5, color: COLORS.amber },
+        itemStyle: { color: COLORS.amber, borderColor: COLORS.pieBorder, borderWidth: 1.5 },
+      },
+    ];
 
     charts.hero.setOption({
       backgroundColor: "transparent",
@@ -2952,31 +3104,25 @@
         itemHeight: 8,
         textStyle: { color: COLORS.textMuted, fontSize: 11 },
       },
-      grid: { left: 54, right: isGp ? 20 : 54, top: 24, bottom: 44 },
+      grid: { left: 54, right: 54, top: 24, bottom: 44 },
       xAxis: {
         type: "category",
         data: keys,
         axisLine: { lineStyle: { color: COLORS.axisLine } },
         axisLabel: { color: COLORS.textSub, fontFamily: "JetBrains Mono", fontSize: 10.5 },
       },
-      yAxis: isGp
-        ? {
-            type: "value",
-            axisLabel: { color: COLORS.axisLabel, fontFamily: "JetBrains Mono", fontSize: 10.5, formatter: fmtAxisVnd },
-            splitLine: { lineStyle: { color: COLORS.gridLine } },
-          }
-        : [
-            {
-              type: "value",
-              axisLabel: { color: COLORS.axisLabel, fontFamily: "JetBrains Mono", fontSize: 10.5, formatter: fmtAxisVnd },
-              splitLine: { lineStyle: { color: COLORS.gridLine } },
-            },
-            {
-              type: "value",
-              axisLabel: { color: COLORS.amber, fontFamily: "JetBrains Mono", fontSize: 10.5, formatter: fmtInt },
-              splitLine: { show: false },
-            },
-          ],
+      yAxis: [
+        {
+          type: "value",
+          axisLabel: { color: COLORS.axisLabel, fontFamily: "JetBrains Mono", fontSize: 10.5, formatter: fmtAxisVnd },
+          splitLine: { lineStyle: { color: COLORS.gridLine } },
+        },
+        {
+          type: "value",
+          axisLabel: { color: COLORS.amber, fontFamily: "JetBrains Mono", fontSize: 10.5, formatter: fmtInt },
+          splitLine: { show: false },
+        },
+      ],
       series,
     }, true);
   }
@@ -7214,8 +7360,12 @@
     renderLookupProfile(sku, serial);
   }
 
-  function renderLookupProfile(skuCode, serialNum = "") {
+  function renderLookupProfile(skuCode, serialNum = "", keepPages = false) {
     const lk = state.lookup;
+    if (!keepPages || lk.selectedSku !== skuCode) {
+      lk.serialPage = 1;
+      lk.binPage = 1;
+    }
     lk.selectedSku = skuCode;
     lk.selectedSerial = serialNum;
 
@@ -7290,9 +7440,22 @@
     const stEl = document.getElementById("lkSkuStatusBadge");
     stEl.className = `inv-badge ${statusBadgeClass(status)}`;
     stEl.textContent = `TT Mua: ${status}`;
-    document.getElementById("lkSkuRangeBadge").textContent = `Range: ${rng}`;
-    document.getElementById("lkSkuListingBadge").textContent = `Listing: ${listing}`;
-    document.getElementById("lkSkuSerialFlag").textContent = hasSerial || `${serialRows.length} Serial`;
+
+    const rngEl = document.getElementById("lkSkuRangeBadge");
+    const isRangeYes = String(rng || "").toLowerCase() === "yes";
+    rngEl.className = `inv-badge ${isRangeYes ? "range-yes" : "range-no"}`;
+    rngEl.textContent = `Range: ${rng}`;
+
+    const listEl = document.getElementById("lkSkuListingBadge");
+    const isListingActive = String(listing || "").toLowerCase() === "active";
+    listEl.className = `inv-badge ${isListingActive ? "listing-active" : "listing-inactive"}`;
+    listEl.textContent = `Listing: ${listing}`;
+
+    const serFlagEl = document.getElementById("lkSkuSerialFlag");
+    const hasSerialBool = mpRow ? Boolean(mpRow[MP_C.HAS_SERIAL]) : serialRows.length > 0;
+    serFlagEl.className = `inv-badge ${hasSerialBool ? "serial-yes" : "serial-no"}`;
+    serFlagEl.textContent = hasSerial || (serialRows.length > 0 ? `Quản lý Serial: Có (${serialRows.length} SN)` : "Không Serial");
+
     document.getElementById("lkSkuName").textContent = skuName;
     document.getElementById("lkSkuMetaLine").textContent = `Brand: ${brand} • Subcat 2: ${subcat}${subcat3 ? ` • Subcat 3: ${subcat3}` : ""}`;
 
@@ -7450,16 +7613,25 @@
       brBody.innerHTML = `<tr><td colspan="9" class="muted">SKU này hiện không có dòng tồn/bán trong Inventory_Branch_Level.</td></tr>`;
     }
 
-    // 7. SERIAL & BAD STOCK TABLE FOR THIS SKU
-    document.getElementById("lkSerialListInfo").textContent = `${fmtInt(serialRows.length)} Serial đang tồn (${fmtInt(badSnCount)} Bad Stock rủi ro)`;
+    // 7. SERIAL & BAD STOCK TABLE FOR THIS SKU (Paginated: 20 rows/page)
+    const pageSize = lk.pageSize || 20;
     const snBody = document.getElementById("lkSerialTableBody");
+    const snPag = document.getElementById("lkSerialPagination");
     if (serialRows.length && snL) {
       const sortedSn = [...serialRows].sort((a, b) => {
         if (serialNum && a[SN_C.SN].toLowerCase() === serialNum.toLowerCase()) return -1;
         if (serialNum && b[SN_C.SN].toLowerCase() === serialNum.toLowerCase()) return 1;
         return b[SN_C.AGING_COMP] - a[SN_C.AGING_COMP];
       });
-      snBody.innerHTML = sortedSn.map((r) => {
+      const totalSnPages = Math.max(1, Math.ceil(sortedSn.length / pageSize));
+      lk.serialPage = Math.min(Math.max(1, lk.serialPage || 1), totalSnPages);
+      const snStart = (lk.serialPage - 1) * pageSize;
+      const pageSnRows = sortedSn.slice(snStart, snStart + pageSize);
+
+      document.getElementById("lkSerialListInfo").textContent =
+        `Hiển thị ${fmtInt(snStart + 1)}–${fmtInt(Math.min(snStart + pageSnRows.length, sortedSn.length))} / ${fmtInt(sortedSn.length)} Serial đang tồn (${fmtInt(badSnCount)} Bad Stock rủi ro)`;
+
+      snBody.innerHTML = pageSnRows.map((r) => {
         const isHl = serialNum && r[SN_C.SN].toLowerCase() === serialNum.toLowerCase();
         const bt = snL.binTypes[r[SN_C.BIN_TYPE]];
         const bc = snL.badComp[r[SN_C.BAD_COMP]];
@@ -7483,17 +7655,39 @@
           </tr>`;
       }).join("");
       snBody.querySelectorAll("[data-sn-focus]").forEach((b) => {
-        b.addEventListener("click", () => renderLookupProfile(skuCode, b.dataset.snFocus));
+        b.addEventListener("click", () => renderLookupProfile(skuCode, b.dataset.snFocus, false));
       });
+      if (snPag) {
+        snPag.innerHTML = `
+          <button class="page-btn" id="lkSnPrevP" ${lk.serialPage <= 1 ? "disabled" : ""}>◀</button>
+          <span class="mono" style="font-size:11px;color:var(--text-secondary)">Trang ${lk.serialPage}/${totalSnPages}</span>
+          <button class="page-btn" id="lkSnNextP" ${lk.serialPage >= totalSnPages ? "disabled" : ""}>▶</button>`;
+        snPag.querySelector("#lkSnPrevP")?.addEventListener("click", () => {
+          if (lk.serialPage > 1) { lk.serialPage--; renderLookupProfile(skuCode, serialNum, true); }
+        });
+        snPag.querySelector("#lkSnNextP")?.addEventListener("click", () => {
+          if (lk.serialPage < totalSnPages) { lk.serialPage++; renderLookupProfile(skuCode, serialNum, true); }
+        });
+      }
     } else {
+      document.getElementById("lkSerialListInfo").textContent = "0 Serial đang tồn";
       snBody.innerHTML = `<tr><td colspan="12" class="muted">Không có Serial nào đang tồn cho SKU này.</td></tr>`;
+      if (snPag) snPag.innerHTML = "";
     }
 
-    // 8. BIN-LEVEL TABLE (Inventory_Details)
-    document.getElementById("lkBinListInfo").textContent = `${fmtInt(binRows.length)} dòng vị trí BIN`;
+    // 8. BIN-LEVEL TABLE (Inventory_Details — Paginated: 20 rows/page)
     const binBody = document.getElementById("lkBinTableBody");
+    const binPag = document.getElementById("lkBinPagination");
     if (binRows.length && invL) {
-      binBody.innerHTML = binRows.map((r) => {
+      const totalBinPages = Math.max(1, Math.ceil(binRows.length / pageSize));
+      lk.binPage = Math.min(Math.max(1, lk.binPage || 1), totalBinPages);
+      const binStart = (lk.binPage - 1) * pageSize;
+      const pageBinRows = binRows.slice(binStart, binStart + pageSize);
+
+      document.getElementById("lkBinListInfo").textContent =
+        `Hiển thị ${fmtInt(binStart + 1)}–${fmtInt(Math.min(binStart + pageBinRows.length, binRows.length))} / ${fmtInt(binRows.length)} dòng vị trí BIN`;
+
+      binBody.innerHTML = pageBinRows.map((r) => {
         const bt = invL.binTypes[r[INV_C.BIN_TYPE]];
         return `
           <tr>
@@ -7509,8 +7703,22 @@
             <td class="num"><strong>${fmtInt(r[INV_C.VALUE])}</strong></td>
           </tr>`;
       }).join("");
+      if (binPag) {
+        binPag.innerHTML = `
+          <button class="page-btn" id="lkBinPrevP" ${lk.binPage <= 1 ? "disabled" : ""}>◀</button>
+          <span class="mono" style="font-size:11px;color:var(--text-secondary)">Trang ${lk.binPage}/${totalBinPages}</span>
+          <button class="page-btn" id="lkBinNextP" ${lk.binPage >= totalBinPages ? "disabled" : ""}>▶</button>`;
+        binPag.querySelector("#lkBinPrevP")?.addEventListener("click", () => {
+          if (lk.binPage > 1) { lk.binPage--; renderLookupProfile(skuCode, serialNum, true); }
+        });
+        binPag.querySelector("#lkBinNextP")?.addEventListener("click", () => {
+          if (lk.binPage < totalBinPages) { lk.binPage++; renderLookupProfile(skuCode, serialNum, true); }
+        });
+      }
     } else {
+      document.getElementById("lkBinListInfo").textContent = "0 dòng vị trí BIN";
       binBody.innerHTML = `<tr><td colspan="10" class="muted">Không có dòng tồn BIN nào trong Inventory_Details.</td></tr>`;
+      if (binPag) binPag.innerHTML = "";
     }
 
     // Prepare CSV export for this SKU

@@ -281,8 +281,7 @@
             <div class="panel-controls">
               <div class="seg-tabs" id="heroModeGroup">
                 <button class="seg-btn active" data-val="sales_qty">Sales + Qty</button>
-                <button class="seg-btn" data-val="region_grouped">Region × Month</button>
-                <button class="seg-btn" data-val="sales_gp">Sales + GP</button>
+                <button class="seg-btn" data-val="compare_ly">Compare Last Year</button>
               </div>
               <div class="seg-tabs" id="heroGranularityGroup">
                 <button class="seg-btn active" data-val="month">Month</button>
@@ -1007,7 +1006,10 @@
                 <h3 class="panel-title">Danh sách Serial tồn kho &amp; Phân loại Bad Stock</h3>
                 <span class="panel-hint" id="lkSerialListInfo">-- serial</span>
               </div>
-              <button type="button" class="btn-mini" id="lkExportSkuBtn">⬇ Export Hồ sơ CSV</button>
+              <div class="panel-controls">
+                <div class="pagination" id="lkSerialPagination"></div>
+                <button type="button" class="btn-mini" id="lkExportSkuBtn">⬇ Export Hồ sơ CSV</button>
+              </div>
             </div>
             <div class="table-wrap">
               <table class="dark-table">
@@ -1038,6 +1040,9 @@
               <div class="panel-title-group">
                 <h3 class="panel-title">Chi tiết vị trí BIN (Inventory Details)</h3>
                 <span class="panel-hint" id="lkBinListInfo">-- dòng BIN</span>
+              </div>
+              <div class="panel-controls">
+                <div class="pagination" id="lkBinPagination"></div>
               </div>
             </div>
             <div class="table-wrap">

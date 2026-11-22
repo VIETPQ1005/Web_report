@@ -1883,20 +1883,23 @@ html, body {
 .inv-chart-mid { height: 300px; }
 
 .inv-badge {
-  display: inline-block;
-  padding: 2px 7px;
-  border-radius: 3px;
-  font-size: 10.5px;
-  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 9px;
+  border-radius: 5px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
   white-space: nowrap;
+  border: 1px solid transparent;
 }
 
-.inv-badge.sellable { background: rgba(18, 211, 122, 0.16); color: #34D399; }
-.inv-badge.damaged { background: rgba(229, 62, 81, 0.18); color: #FB7185; }
-.inv-badge.warranty { background: rgba(29, 122, 252, 0.18); color: #60A5FA; }
-.inv-badge.other { background: rgba(148, 163, 184, 0.15); color: #CBD5E1; }
-.inv-badge.disc { background: rgba(245, 158, 11, 0.18); color: #FCD34D; }
-.inv-badge.normal { background: rgba(20, 184, 166, 0.15); color: #5EEAD4; }
+.inv-badge.sellable { background: rgba(16, 185, 129, 0.24); color: #6EE7B7; border-color: rgba(52, 211, 153, 0.55); }
+.inv-badge.damaged { background: rgba(244, 63, 94, 0.25); color: #FDA4AF; border-color: rgba(251, 113, 133, 0.55); }
+.inv-badge.warranty { background: rgba(59, 130, 246, 0.25); color: #93C5FD; border-color: rgba(96, 165, 250, 0.55); }
+.inv-badge.other { background: rgba(100, 116, 139, 0.32); color: #F1F5F9; border-color: rgba(148, 163, 184, 0.55); }
+.inv-badge.disc { background: rgba(245, 158, 11, 0.26); color: #FDE68A; border-color: rgba(251, 191, 36, 0.6); }
+.inv-badge.normal { background: rgba(20, 184, 166, 0.25); color: #5EEAD4; border-color: rgba(45, 212, 191, 0.55); }
 
 .aging-tag {
   font-family: var(--font-mono);
@@ -2193,12 +2196,75 @@ html, body {
 .lookup-vel-chart { height: 260px; }
 .lookup-subtable-wrap { max-height: 260px; overflow-y: auto; }
 
-.inv-badge.bad-normal { background: rgba(18, 211, 122, 0.16); color: #34D399; }
-.inv-badge.bad-slow { background: rgba(56, 189, 248, 0.18); color: #7DD3FC; }
-.inv-badge.bad-long { background: rgba(245, 158, 11, 0.18); color: #FCD34D; }
-.inv-badge.bad-bad { background: rgba(249, 115, 22, 0.22); color: #FDBA74; }
-.inv-badge.bad-verybad { background: rgba(229, 62, 81, 0.24); color: #FDA4AF; }
-.inv-badge.status-shortage { background: rgba(124, 58, 237, 0.24); color: #C4B5FD; }
+.inv-badge.bad-normal { background: rgba(16, 185, 129, 0.24); color: #6EE7B7; border-color: rgba(52, 211, 153, 0.55); }
+.inv-badge.bad-slow { background: rgba(14, 165, 233, 0.25); color: #BAE6FD; border-color: rgba(56, 189, 248, 0.55); }
+.inv-badge.bad-long { background: rgba(245, 158, 11, 0.26); color: #FDE68A; border-color: rgba(251, 191, 36, 0.6); }
+.inv-badge.bad-bad { background: rgba(249, 115, 22, 0.28); color: #FED7AA; border-color: rgba(251, 146, 60, 0.65); }
+.inv-badge.bad-verybad { background: rgba(225, 29, 72, 0.30); color: #FECDD3; border-color: rgba(251, 113, 133, 0.65); }
+.inv-badge.status-shortage { background: rgba(139, 92, 246, 0.32); color: #EDE9FE; border-color: rgba(167, 139, 250, 0.72); }
+.inv-badge.range-yes { background: rgba(16, 185, 129, 0.28); color: #A7F3D0; border-color: rgba(52, 211, 153, 0.68); }
+.inv-badge.range-no { background: rgba(244, 63, 94, 0.26); color: #FECDD3; border-color: rgba(251, 113, 133, 0.62); }
+.inv-badge.listing-active { background: rgba(14, 165, 233, 0.28); color: #BAE6FD; border-color: rgba(56, 189, 248, 0.7); }
+.inv-badge.listing-inactive { background: rgba(245, 158, 11, 0.28); color: #FDE68A; border-color: rgba(251, 191, 36, 0.65); }
+.inv-badge.serial-yes { background: rgba(245, 158, 11, 0.28); color: #FEF08A; border-color: rgba(251, 191, 36, 0.68); }
+.inv-badge.serial-no { background: rgba(100, 116, 139, 0.32); color: #E2E8F0; border-color: rgba(148, 163, 184, 0.6); }
+
+/* Light mode high-contrast badge overrides */
+body.theme-light .inv-badge.sellable,
+body.theme-light .inv-badge.bad-normal,
+body.theme-light .inv-badge.range-yes {
+  background: #D1FAE5;
+  color: #065F46;
+  border-color: #10B981;
+}
+body.theme-light .inv-badge.normal {
+  background: #CCFBF1;
+  color: #115E59;
+  border-color: #14B8A6;
+}
+body.theme-light .inv-badge.damaged,
+body.theme-light .inv-badge.bad-verybad,
+body.theme-light .inv-badge.range-no {
+  background: #FFE4E6;
+  color: #9F1239;
+  border-color: #F43F5E;
+}
+body.theme-light .inv-badge.warranty,
+body.theme-light .inv-badge.bad-slow,
+body.theme-light .inv-badge.listing-active {
+  background: #E0F2FE;
+  color: #075985;
+  border-color: #0284C7;
+}
+body.theme-light .inv-badge.disc,
+body.theme-light .inv-badge.bad-long,
+body.theme-light .inv-badge.listing-inactive,
+body.theme-light .inv-badge.serial-yes {
+  background: #FEF3C7;
+  color: #92400E;
+  border-color: #F59E0B;
+}
+body.theme-light .inv-badge.bad-bad {
+  background: #FFEDD5;
+  color: #9A3412;
+  border-color: #F97316;
+}
+body.theme-light .inv-badge.status-shortage {
+  background: #EDE9FE;
+  color: #5B21B6;
+  border-color: #8B5CF6;
+}
+body.theme-light .inv-badge.other,
+body.theme-light .inv-badge.serial-no {
+  background: #E2E8F0;
+  color: #1E293B;
+  border-color: #64748B;
+}
+body.theme-light .sku-code-pill {
+  background: #1435C3;
+  color: #FFFFFF;
+  border-color: #1E40AF;
+}
 
 .dark-table tbody tr.row-highlight {
   background: rgba(0, 229, 255, 0.14);

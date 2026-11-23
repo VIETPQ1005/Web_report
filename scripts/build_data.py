@@ -87,6 +87,108 @@ def extract_storage_capacity_idx(sku_name: str) -> int:
     return STORAGE_CAP_MAP["Khác"]
 
 
+def _parse_price_date_iso(raw_val) -> str:
+    s = str(raw_val or "").strip()
+    if not s:
+        return ""
+    if re.match(r"^\d{4}-\d{2}-\d{2}$", s):
+        return s
+    m = re.match(r"^(\d{1,2})/(\d{1,2})/(\d{4})$", s)
+    if m:
+        d, mo, y = int(m.group(1)), int(m.group(2)), int(m.group(3))
+        try:
+            return datetime.date(y, mo, d).strftime("%Y-%m-%d")
+        except ValueError:
+            return ""
+    try:
+        num = float(s)
+        if 20000 < num < 80000:
+            return (datetime.date(1899, 12, 30) + datetime.timedelta(days=int(num))).strftime("%Y-%m-%d")
+    except ValueError:
+        pass
+    return ""
+
+
+def _parse_price_num(raw_val) -> int:
+    if raw_val is None or raw_val == "":
+        return 0
+    try:
+        v = float(str(raw_val).replace(",", "").strip())
+        return int(round(v)) if math.isfinite(v) else 0
+    except ValueError:
+        return 0
+
+
+def build_price_report_map(data_dir: Path, known_skus: set) -> tuple:
+    """
+    Parse Bao_cao_quan_ly_gia.xlsx (Price change report) for Normal selling price (VAT):
+      - Current Normal selling pricen (VAT)
+      - New Normal selling price n(VAT)
+      - Active date (for Normal selling price)
+    Returns (price_by_sku_dict, source_filenames).
+    Each value is [cur_normal_price, new_normal_price, active_date_iso].
+    """
+    price_files = sorted(
+        f for f in data_dir.glob("*.xlsx")
+        if not f.name.startswith("~$")
+        and ("quan_ly_gia" in f.name.lower() or "bao_cao_gia" in f.name.lower() or "price" in f.name.lower())
+    )
+    if not price_files:
+        return {}, []
+
+    price_by_sku = {}
+    sources = []
+    for fp in price_files:
+        sources.append(fp.name)
+        sku_idx = 2
+        cat_idx = 1
+        cur_idx = 12
+        new_idx = 13
+        ad_idx = 14
+        header_found = False
+
+        for _tag, r in stream_xlsx_rows(fp):
+            if not r:
+                continue
+            if not header_found:
+                low = [str(c or "").strip().lower() for c in r]
+                found_cur = next((i for i, h in enumerate(low) if "current normal selling price" in h), None)
+                found_new = next((i for i, h in enumerate(low) if "new normal selling price" in h), None)
+                if found_cur is not None and found_new is not None:
+                    cur_idx = found_cur
+                    new_idx = found_new
+                    found_ad = next(
+                        (i for i in range(found_new + 1, min(len(low), found_new + 4)) if "active date" in low[i] or "hiệu lực" in low[i]),
+                        found_new + 1,
+                    )
+                    ad_idx = found_ad
+                    found_sku = next((i for i, h in enumerate(low) if h == "sku"), None)
+                    if found_sku is not None:
+                        sku_idx = found_sku
+                    found_cat = next((i for i, h in enumerate(low) if "cat root" in h), None)
+                    if found_cat is not None:
+                        cat_idx = found_cat
+                    header_found = True
+                continue
+
+            if len(r) <= max(sku_idx, cur_idx, new_idx):
+                continue
+            sku = str(r[sku_idx] or "").strip()
+            if not sku:
+                continue
+            cat = str(r[cat_idx] or "").strip().upper() if cat_idx < len(r) else ""
+            if known_skus and sku not in known_skus and not cat.startswith(("NH06", "NH11", "NH93", "NH03")):
+                continue
+
+            cur_p = _parse_price_num(r[cur_idx])
+            new_p = _parse_price_num(r[new_idx])
+            ad_iso = _parse_price_date_iso(r[ad_idx]) if ad_idx < len(r) else ""
+            if cur_p > 0 or new_p > 0:
+                price_by_sku[sku] = [cur_p, new_p, ad_iso]
+
+    return price_by_sku, sources
+
+
 def storage_price_band_idx(unit_price: float) -> int:
     p = abs(unit_price)
     if p < 150_000:
@@ -1385,12 +1487,15 @@ def build(rebuild_sales_cache: bool = False):
         },
     }
 
-    # Lazy Shard 1: Master Product Full + YTD Sales per SKU
+    # Lazy Shard 1: Master Product Full + YTD Sales per SKU + Price Change Report
+    known_skus = {str(r[0]).strip() for r in mp_rows} | set(sku_ytd_sales.keys())
+    price_by_sku, price_sources = build_price_report_map(DATA_DIR, known_skus)
     master_shard = {
-        "meta": {"generatedAt": now_iso, "rowCount": len(mp_rows), "sources": mp_sources},
+        "meta": {"generatedAt": now_iso, "rowCount": len(mp_rows), "sources": mp_sources + price_sources, "priceCount": len(price_by_sku)},
         "lookups": mp_lookups,
         "rows": mp_rows,
         "salesBySku": {sku: [round(v[0], 2), v[1], round(v[2], 2), v[3]] for sku, v in sku_ytd_sales.items()},
+        "priceBySku": price_by_sku,
     }
 
     # Lazy Shard 2: Full Serial Details + Bad Stock

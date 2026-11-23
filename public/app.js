@@ -374,6 +374,7 @@
       serialPage: 1,
       binPage: 1,
       pageSize: 20,
+      expandedSites: new Set(),
       idxMaster: new Map(),
       idxSkuVel: new Map(),
       idxBranches: new Map(),
@@ -381,6 +382,7 @@
       idxSerialsBySku: new Map(),
       idxSerialBySn: new Map(),
       idxSalesBySku: new Map(),
+      idxPriceBySku: new Map(),
       lastExport: { headers: [], rows: [], filename: "sku_profile.csv" },
     },
     // Bad Stock Report sub-state (SKU Tồn xấu / Tồn rất xấu -> Pivot Site & Serial)
@@ -7962,6 +7964,7 @@
     lk.idxSerialsBySku.clear();
     lk.idxSerialBySn.clear();
     lk.idxSalesBySku.clear();
+    lk.idxPriceBySku.clear();
 
     if (!state.raw) return;
 
@@ -8015,6 +8018,11 @@
         cur.gp += r[C.GP];
         cur.orders += 1;
         lk.idxSalesBySku.set(sku, cur);
+      });
+    }
+    if (state.raw.masterProducts?.priceBySku) {
+      Object.entries(state.raw.masterProducts.priceBySku).forEach(([sku, arr]) => {
+        if (Array.isArray(arr)) lk.idxPriceBySku.set(sku, arr);
       });
     }
   }
@@ -8173,9 +8181,13 @@
 
   function renderLookupProfile(skuCode, serialNum = "", keepPages = false) {
     const lk = state.lookup;
-    if (!keepPages || lk.selectedSku !== skuCode) {
+    const skuChanged = lk.selectedSku !== skuCode;
+    if (!keepPages || skuChanged) {
       lk.serialPage = 1;
       lk.binPage = 1;
+    }
+    if (skuChanged) {
+      lk.expandedSites.clear();
     }
     lk.selectedSku = skuCode;
     lk.selectedSerial = serialNum;
@@ -8308,25 +8320,92 @@
         <div class="inv-kpi-sub mono">${esc(k.sub)}</div>
       </div>`).join("");
 
-    // 4. PRICING & MARGIN STRIP
+    // 4. PRICING & MARGIN STRIP (+ BAO_CAO_QUAN_LY_GIA NORMAL SELLING PRICE & ACTIVE DATE)
     const listedP = (mpRow ? mpRow[MP_C.LISTED_PRICE] : 0) || (velRow ? velRow[SKU_C.LISTED_PRICE] : 0);
     const unitCost = (velRow ? velRow[SKU_C.UNIT_COST] : 0) || (binRows[0]?.[INV_C.UNIT_COST] || 0);
     const wcogs = mpRow ? mpRow[MP_C.WCOGS] : 0;
     const lastPur = mpRow ? mpRow[MP_C.LAST_PUR] : 0;
     const latestQ = mpRow ? mpRow[MP_C.LATEST_QUOTE] : 0;
     const tempGm = mpRow && mpRow[MP_C.TEMP_GM] !== null ? `${mpRow[MP_C.TEMP_GM].toFixed(1)}%` : "—";
+
+    const fmtIsoDmy = (iso) => {
+      if (!iso || typeof iso !== "string") return "";
+      const m = iso.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+      return m ? `${m[3]}/${m[2]}/${m[1]}` : iso;
+    };
+    const nowDt = new Date();
+    const todayIso = `${nowDt.getFullYear()}-${String(nowDt.getMonth() + 1).padStart(2, "0")}-${String(nowDt.getDate()).padStart(2, "0")}`;
+
+    const priceRec = lk.idxPriceBySku.get(skuCode) || null;
+    const curNormalP = priceRec ? Number(priceRec[0] || 0) : 0;
+    const newNormalP = priceRec ? Number(priceRec[1] || 0) : 0;
+    const activeDateIso = priceRec ? String(priceRec[2] || "") : "";
+    const isNewActive = newNormalP > 0 && Boolean(activeDateIso) && activeDateIso <= todayIso;
+    const isNewUpcoming = newNormalP > 0 && Boolean(activeDateIso) && activeDateIso > todayIso;
+    const currentSellingP = isNewActive ? newNormalP : curNormalP;
+
+    const alertBox = document.getElementById("lkPriceAlertBox");
+    if (alertBox) {
+      if (isNewUpcoming) {
+        const diff = newNormalP - curNormalP;
+        const pct = curNormalP > 0 ? (diff / curNormalP) * 100 : 0;
+        const daysLeft = Math.max(
+          1,
+          Math.round((new Date(`${activeDateIso}T00:00:00`) - new Date(`${todayIso}T00:00:00`)) / 86400000)
+        );
+        const dirCls = diff > 0 ? "is-increase" : diff < 0 ? "is-decrease" : "is-neutral";
+        const dirLabel = diff > 0 ? "TĂNG GIÁ" : diff < 0 ? "GIẢM GIÁ" : "CẬP NHẬT GIÁ";
+        const dirIcon = diff > 0 ? "📈" : diff < 0 ? "📉" : "🔄";
+        const sign = diff > 0 ? "+" : "";
+        const diffStr = curNormalP > 0 ? `${sign}${fmtVndFull(diff)} (${sign}${pct.toFixed(1)}%)` : "";
+        alertBox.className = `lookup-price-alert ${dirCls}`;
+        alertBox.innerHTML = `
+          <div class="lpa-left">
+            <span class="lpa-badge">${dirIcon} ${dirLabel}</span>
+            <span class="lpa-msg">
+              Giá bán mới <strong class="mono">${esc(fmtVndFull(newNormalP))}</strong> sẽ có hiệu lực từ ngày
+              <strong class="mono">${esc(fmtIsoDmy(activeDateIso))}</strong>
+              <span class="lpa-days">(còn ${fmtInt(daysLeft)} ngày)</span>
+            </span>
+          </div>
+          <div class="lpa-right mono">
+            ${curNormalP > 0 ? `<span class="lpa-old">Hiện tại: ${esc(fmtVndFull(curNormalP))}</span>` : ""}
+            ${diffStr ? `<span class="lpa-delta">${esc(diffStr)}</span>` : ""}
+          </div>`;
+      } else {
+        alertBox.className = "lookup-price-alert hidden";
+        alertBox.innerHTML = "";
+      }
+    }
+
+    let curPriceSub = "";
+    if (isNewActive) {
+      curPriceSub = `Đã hiệu lực từ ${fmtIsoDmy(activeDateIso)}` + (curNormalP && curNormalP !== newNormalP ? ` • Cũ: ${fmtVndFull(curNormalP)}` : "");
+    } else if (isNewUpcoming) {
+      const diff = newNormalP - curNormalP;
+      const tag = diff > 0 ? "Tăng" : diff < 0 ? "Giảm" : "Đổi";
+      curPriceSub = `${tag} → ${fmtVndFull(newNormalP)} (${fmtIsoDmy(activeDateIso)})`;
+    }
+
     const priceItems = [
-      ["Giá niêm yết (Listed)", listedP ? fmtVndFull(listedP) : "—"],
-      ["Unit Cost tồn kho", unitCost ? fmtVndFull(unitCost) : "—"],
-      ["W.COGS No VAT", wcogs ? fmtVndFull(wcogs) : "—"],
-      ["Giá nhập gần nhất", lastPur ? fmtVndFull(lastPur) : "—"],
-      ["Báo giá mới nhất", latestQ ? fmtVndFull(latestQ) : "—"],
-      ["Temporary GM (%)", tempGm],
+      {
+        lbl: "Giá bán hiện tại (VAT)",
+        val: currentSellingP ? fmtVndFull(currentSellingP) : "—",
+        sub: curPriceSub,
+        highlight: Boolean(currentSellingP),
+      },
+      { lbl: "Giá niêm yết (Listed)", val: listedP ? fmtVndFull(listedP) : "—" },
+      { lbl: "Unit Cost tồn kho", val: unitCost ? fmtVndFull(unitCost) : "—" },
+      { lbl: "W.COGS No VAT", val: wcogs ? fmtVndFull(wcogs) : "—" },
+      { lbl: "Giá nhập gần nhất", val: lastPur ? fmtVndFull(lastPur) : "—" },
+      { lbl: "Báo giá mới nhất", val: latestQ ? fmtVndFull(latestQ) : "—" },
+      { lbl: "Temporary GM (%)", val: tempGm },
     ];
-    document.getElementById("lkPriceStrip").innerHTML = priceItems.map(([l, v]) => `
-      <div class="lookup-kv">
-        <span class="lookup-kv-lbl">${esc(l)}</span>
-        <span class="lookup-kv-val mono">${esc(v)}</span>
+    document.getElementById("lkPriceStrip").innerHTML = priceItems.map((p) => `
+      <div class="lookup-kv ${p.highlight ? "is-price-highlight" : ""}">
+        <span class="lookup-kv-lbl">${esc(p.lbl)}</span>
+        <span class="lookup-kv-val mono">${esc(p.val)}</span>
+        ${p.sub ? `<span class="lookup-kv-sub mono">${esc(p.sub)}</span>` : ""}
       </div>`).join("");
 
     // 5. VELOCITY CHART (7D -> 30D -> 90D -> 180D)
@@ -8486,50 +8565,294 @@
       if (snPag) snPag.innerHTML = "";
     }
 
-    // 8. BIN-LEVEL TABLE (Inventory_Details — Paginated: 20 rows/page)
+    // 8. SITE-LEVEL PIVOT TABLE (CLICK SITE TO EXPAND SERIALS IN THAT SITE)
     const binBody = document.getElementById("lkBinTableBody");
     const binPag = document.getElementById("lkBinPagination");
+    const expandAllBtn = document.getElementById("lkSiteExpandAllBtn");
+
+    // Auto-expand the site containing the focused Serial Number
+    if (matchedSn && snL && !keepPages) {
+      const snSite = snL.sites[matchedSn[SN_C.SITE]];
+      if (snSite) lk.expandedSites.add(snSite);
+    }
+
+    // Aggregate BIN rows, Serial rows, and Branch velocity by Site Code
+    const siteMap = new Map();
+    const getOrCreateSite = (siteCode, fallbackName = "") => {
+      if (!siteMap.has(siteCode)) {
+        siteMap.set(siteCode, {
+          site: siteCode,
+          siteName: invSiteDir[siteCode]?.siteName || fallbackName || "",
+          binQty: 0,
+          binVal: 0,
+          binCodes: new Set(),
+          binZones: new Set(),
+          lastRecv: "",
+          bins: [],
+          serials: [],
+          snVal: 0,
+          badSnCount: 0,
+          agingSiteSum: 0,
+          agingSiteCnt: 0,
+          maxAgingSite: -1,
+          s7d: null,
+          s30d: null,
+        });
+      }
+      const obj = siteMap.get(siteCode);
+      if (!obj.siteName && fallbackName) obj.siteName = fallbackName;
+      return obj;
+    };
+
     if (binRows.length && invL) {
-      const totalBinPages = Math.max(1, Math.ceil(binRows.length / pageSize));
-      lk.binPage = Math.min(Math.max(1, lk.binPage || 1), totalBinPages);
-      const binStart = (lk.binPage - 1) * pageSize;
-      const pageBinRows = binRows.slice(binStart, binStart + pageSize);
+      binRows.forEach((r) => {
+        const sc = invL.sites[r[INV_C.SITE]] || "—";
+        const sn = invL.siteNames[r[INV_C.SITE_NAME]] || "";
+        const rec = getOrCreateSite(sc, sn);
+        rec.binQty += Number(r[INV_C.QTY] || 0);
+        rec.binVal += Number(r[INV_C.VALUE] || 0);
+        const bc = invL.binCodes[r[INV_C.BIN_CODE]];
+        if (bc) rec.binCodes.add(bc);
+        const bz = invL.binZones[r[INV_C.BIN_ZONE]];
+        if (bz) rec.binZones.add(bz);
+        const lr = r[INV_C.LAST_RECV] || "";
+        if (lr && lr > rec.lastRecv) rec.lastRecv = lr;
+        rec.bins.push(r);
+      });
+    }
+
+    if (serialRows.length && snL) {
+      serialRows.forEach((r) => {
+        const sc = snL.sites[r[SN_C.SITE]] || "—";
+        const rec = getOrCreateSite(sc);
+        rec.serials.push(r);
+        rec.snVal += Number(r[SN_C.INV_VAL] || 0);
+        const loc = snL.locations[r[SN_C.LOC]];
+        if (loc) rec.binCodes.add(loc);
+        const bz = snL.binZones[r[SN_C.BIN_ZONE]];
+        if (bz) rec.binZones.add(bz);
+        const ld = r[SN_C.LAST_DATE] || "";
+        if (ld && ld > rec.lastRecv) rec.lastRecv = ld;
+        const agS = Number(r[SN_C.AGING_SITE]);
+        if (Number.isFinite(agS) && agS >= 0) {
+          rec.agingSiteSum += agS;
+          rec.agingSiteCnt += 1;
+          if (agS > rec.maxAgingSite) rec.maxAgingSite = agS;
+        }
+        const bcLabel = snL.badComp[r[SN_C.BAD_COMP]];
+        if (r[SN_C.IN_BAD_FILE] && (bcLabel === "Tồn xấu" || bcLabel === "Tồn rất xấu")) {
+          rec.badSnCount += 1;
+        }
+      });
+    }
+
+    if (branchRows.length && brL) {
+      branchRows.forEach((r) => {
+        const sc = brL.sites[r[BR_C.SITE]];
+        if (!sc || !siteMap.has(sc)) return;
+        const rec = siteMap.get(sc);
+        if (!rec.siteName) rec.siteName = brL.siteNames[r[BR_C.SITE_NAME]] || "";
+        rec.s7d = (rec.s7d || 0) + Number(r[BR_C.S7D] || 0);
+        rec.s30d = (rec.s30d || 0) + Number(r[BR_C.S30D] || 0);
+      });
+    }
+
+    const siteList = Array.from(siteMap.values()).sort((a, b) => {
+      const qa = a.binQty || a.serials.length;
+      const qb = b.binQty || b.serials.length;
+      if (qb !== qa) return qb - qa;
+      return (b.binVal || b.snVal) - (a.binVal || a.snVal);
+    });
+
+    if (siteList.length) {
+      const totalSitePages = Math.max(1, Math.ceil(siteList.length / pageSize));
+      lk.binPage = Math.min(Math.max(1, lk.binPage || 1), totalSitePages);
+      const sStart = (lk.binPage - 1) * pageSize;
+      const pageSites = siteList.slice(sStart, sStart + pageSize);
 
       document.getElementById("lkBinListInfo").textContent =
-        `Hiển thị ${fmtInt(binStart + 1)}–${fmtInt(Math.min(binStart + pageBinRows.length, binRows.length))} / ${fmtInt(binRows.length)} dòng vị trí BIN`;
+        `Hiển thị ${fmtInt(sStart + 1)}–${fmtInt(Math.min(sStart + pageSites.length, siteList.length))} / ${fmtInt(siteList.length)} Site có tồn • ${fmtInt(serialRows.length)} Serial — Click dòng Site để xổ Pivot Serial`;
 
-      binBody.innerHTML = pageBinRows.map((r) => {
-        const bt = invL.binTypes[r[INV_C.BIN_TYPE]];
-        return `
-          <tr>
-            <td class="mono"><strong>${esc(invL.sites[r[INV_C.SITE]])}</strong></td>
-            <td>${esc(invL.siteNames[r[INV_C.SITE_NAME]])}</td>
-            <td class="mono">${esc(invL.binCodes[r[INV_C.BIN_CODE]])}</td>
-            <td><span class="inv-badge ${binBadgeClass(bt)}">${esc(bt)}</span></td>
-            <td>${esc(invL.binZones[r[INV_C.BIN_ZONE]])}</td>
-            <td class="mono">${esc(r[INV_C.LAST_RECV] || "—")}</td>
-            <td class="num">${fmtInt(r[INV_C.MIN_STOCK])}</td>
-            <td class="num" style="color:#00E5FF">${fmtInt(r[INV_C.QTY])}</td>
-            <td class="num">${fmtInt(r[INV_C.UNIT_COST])}</td>
-            <td class="num"><strong>${fmtInt(r[INV_C.VALUE])}</strong></td>
-          </tr>`;
-      }).join("");
+      const allPageExpanded = pageSites.every((s) => lk.expandedSites.has(s.site));
+      if (expandAllBtn) {
+        expandAllBtn.textContent = allPageExpanded ? "⊟ Thu gọn trang" : "⊞ Mở rộng trang";
+        expandAllBtn.onclick = () => {
+          if (allPageExpanded) {
+            pageSites.forEach((s) => lk.expandedSites.delete(s.site));
+          } else {
+            pageSites.forEach((s) => lk.expandedSites.add(s.site));
+          }
+          renderLookupProfile(skuCode, serialNum, true);
+        };
+      }
+
+      const rowsHtml = [];
+      pageSites.forEach((st) => {
+        const isExp = lk.expandedSites.has(st.site);
+        const totalQty = st.binQty || st.serials.length;
+        const totalVal = st.binVal || st.snVal;
+        const avgAgeSite = st.agingSiteCnt > 0 ? Math.round(st.agingSiteSum / st.agingSiteCnt) : -1;
+        const zonePreview = Array.from(st.binZones).slice(0, 2).join(", ");
+        const binSummary = `${fmtInt(st.binCodes.size || st.bins.length)} BIN${zonePreview ? ` • ${zonePreview}` : ""}`;
+        const velStr = st.s7d !== null || st.s30d !== null ? `${fmtInt(st.s7d || 0)} / ${fmtInt(st.s30d || 0)}` : "—";
+
+        rowsHtml.push(`
+          <tr class="bs-parent-row lk-site-pivot-row ${isExp ? "is-expanded" : ""}" data-lk-site="${esc(st.site)}">
+            <td class="mono">
+              <button type="button" class="bs-expand-btn" aria-label="Mở rộng Site ${esc(st.site)}">${isExp ? "▼" : "▶"}</button>
+              <strong>${esc(st.site)}</strong>
+            </td>
+            <td>${esc(st.siteName || "—")}</td>
+            <td class="muted">${esc(binSummary)}</td>
+            <td class="num mono">
+              <strong>${fmtInt(st.serials.length)}</strong>
+              ${st.badSnCount > 0 ? ` <span class="inv-badge bad-verybad" title="Số Serial Tồn xấu / Tồn rất xấu">${fmtInt(st.badSnCount)} Bad</span>` : ""}
+            </td>
+            <td class="num mono" style="color:#00E5FF"><strong>${fmtInt(totalQty)}</strong></td>
+            <td class="num mono">${avgAgeSite >= 0 ? `${fmtInt(avgAgeSite)}d / ${fmtInt(st.maxAgingSite)}d` : "—"}</td>
+            <td class="mono">${esc(st.lastRecv || "—")}</td>
+            <td class="num mono">${esc(velStr)}</td>
+            <td class="num mono"><strong>${fmtInt(totalVal)}</strong></td>
+          </tr>`);
+
+        if (isExp) {
+          if (st.serials.length && snL) {
+            const sortedSiteSn = [...st.serials].sort((a, b) => {
+              if (serialNum && a[SN_C.SN].toLowerCase() === serialNum.toLowerCase()) return -1;
+              if (serialNum && b[SN_C.SN].toLowerCase() === serialNum.toLowerCase()) return 1;
+              return b[SN_C.AGING_SITE] - a[SN_C.AGING_SITE];
+            });
+            const snRowsHtml = sortedSiteSn.map((sr) => {
+              const isHl = serialNum && sr[SN_C.SN].toLowerCase() === serialNum.toLowerCase();
+              const bt = snL.binTypes[sr[SN_C.BIN_TYPE]];
+              const bz = snL.binZones[sr[SN_C.BIN_ZONE]];
+              const bc = snL.badComp[sr[SN_C.BAD_COMP]];
+              const bs = snL.badSite[sr[SN_C.BAD_SITE]];
+              const ac = sr[SN_C.AGING_COMP];
+              const agS = sr[SN_C.AGING_SITE];
+              const ageCls = ac < 0 ? "" : ac <= 90 ? "fresh" : ac <= 180 ? "mid" : "old";
+              return `
+                <tr class="${isHl ? "row-highlight" : ""}">
+                  <td class="mono"><button type="button" class="link-sku-btn" data-lk-site-sn="${esc(sr[SN_C.SN])}">${esc(sr[SN_C.SN])}</button></td>
+                  <td class="mono">${esc(snL.locations[sr[SN_C.LOC]] || "—")}</td>
+                  <td><span class="inv-badge ${binBadgeClass(bt)}">${esc(bt)}</span></td>
+                  <td>${esc(bz || "—")}</td>
+                  <td>${esc(snL.suppliers[sr[SN_C.SUPPLIER]] || "—")}</td>
+                  <td class="mono">${esc(sr[SN_C.FIRST_DATE] || "—")} / ${esc(sr[SN_C.LAST_DATE] || "—")}</td>
+                  <td class="num"><span class="aging-tag ${ageCls}">${ac >= 0 ? fmtInt(ac) + "d" : "—"}</span></td>
+                  <td class="num mono">${agS >= 0 ? fmtInt(agS) + "d" : "—"}</td>
+                  <td><span class="inv-badge ${badStockBadgeClass(bc)}">${esc(bc)}</span></td>
+                  <td><span class="inv-badge ${badStockBadgeClass(bs)}">${esc(bs)}</span></td>
+                  <td class="num mono"><strong>${fmtInt(sr[SN_C.INV_VAL])}</strong></td>
+                </tr>`;
+            }).join("");
+
+            rowsHtml.push(`
+              <tr class="bs-child-row">
+                <td colspan="9">
+                  <div class="bs-child-wrap">
+                    <div class="bs-child-head">
+                      <span>📦 <strong>${esc(st.site)}</strong> (${esc(st.siteName || "Site")}) — <strong>${fmtInt(sortedSiteSn.length)} Serial</strong> đang tồn</span>
+                    </div>
+                    <table class="dark-table bs-child-table">
+                      <thead>
+                        <tr>
+                          <th>Serial Number</th>
+                          <th>BIN Code</th>
+                          <th>BIN Type</th>
+                          <th>BIN Zone</th>
+                          <th>Nhà cung cấp</th>
+                          <th>Nhập Cty / Site</th>
+                          <th class="num">Tuổi Cty</th>
+                          <th class="num">Tuổi Site</th>
+                          <th>Loại tồn (Cty)</th>
+                          <th>Loại tồn (Site)</th>
+                          <th class="num">Giá trị (VND)</th>
+                        </tr>
+                      </thead>
+                      <tbody>${snRowsHtml}</tbody>
+                    </table>
+                  </div>
+                </td>
+              </tr>`);
+          } else if (st.bins.length && invL) {
+            const binChildHtml = st.bins.map((b) => {
+              const bt = invL.binTypes[b[INV_C.BIN_TYPE]];
+              return `
+                <tr>
+                  <td class="mono">${esc(invL.binCodes[b[INV_C.BIN_CODE]])}</td>
+                  <td><span class="inv-badge ${binBadgeClass(bt)}">${esc(bt)}</span></td>
+                  <td>${esc(invL.binZones[b[INV_C.BIN_ZONE]])}</td>
+                  <td class="mono">${esc(b[INV_C.LAST_RECV] || "—")}</td>
+                  <td class="num mono">${fmtInt(b[INV_C.MIN_STOCK])}</td>
+                  <td class="num mono" style="color:#00E5FF"><strong>${fmtInt(b[INV_C.QTY])}</strong></td>
+                  <td class="num mono">${fmtInt(b[INV_C.UNIT_COST])}</td>
+                  <td class="num mono"><strong>${fmtInt(b[INV_C.VALUE])}</strong></td>
+                </tr>`;
+            }).join("");
+            rowsHtml.push(`
+              <tr class="bs-child-row">
+                <td colspan="9">
+                  <div class="bs-child-wrap">
+                    <div class="bs-child-head">
+                      <span>📍 <strong>${esc(st.site)}</strong> — SKU không quản lý Serial (hiển thị ${fmtInt(st.bins.length)} vị trí BIN)</span>
+                    </div>
+                    <table class="dark-table bs-child-table">
+                      <thead>
+                        <tr>
+                          <th>BIN Code</th>
+                          <th>BIN Type</th>
+                          <th>BIN Zone</th>
+                          <th>Last Recv</th>
+                          <th class="num">Min Stock</th>
+                          <th class="num">QTY</th>
+                          <th class="num">Unit Cost</th>
+                          <th class="num">Giá trị (VND)</th>
+                        </tr>
+                      </thead>
+                      <tbody>${binChildHtml}</tbody>
+                    </table>
+                  </div>
+                </td>
+              </tr>`);
+          }
+        }
+      });
+
+      binBody.innerHTML = rowsHtml.join("");
+      binBody.querySelectorAll("tr[data-lk-site]").forEach((tr) => {
+        tr.addEventListener("click", () => {
+          const sc = tr.dataset.lkSite;
+          if (!sc) return;
+          if (lk.expandedSites.has(sc)) lk.expandedSites.delete(sc);
+          else lk.expandedSites.add(sc);
+          renderLookupProfile(skuCode, serialNum, true);
+        });
+      });
+      binBody.querySelectorAll("[data-lk-site-sn]").forEach((btn) => {
+        btn.addEventListener("click", (e) => {
+          e.stopPropagation();
+          renderLookupProfile(skuCode, btn.dataset.lkSiteSn, true);
+        });
+      });
+
       if (binPag) {
         binPag.innerHTML = `
           <button class="page-btn" id="lkBinPrevP" ${lk.binPage <= 1 ? "disabled" : ""}>◀</button>
-          <span class="mono" style="font-size:11px;color:var(--text-secondary)">Trang ${lk.binPage}/${totalBinPages}</span>
-          <button class="page-btn" id="lkBinNextP" ${lk.binPage >= totalBinPages ? "disabled" : ""}>▶</button>`;
+          <span class="mono" style="font-size:11px;color:var(--text-secondary)">Trang ${lk.binPage}/${totalSitePages}</span>
+          <button class="page-btn" id="lkBinNextP" ${lk.binPage >= totalSitePages ? "disabled" : ""}>▶</button>`;
         binPag.querySelector("#lkBinPrevP")?.addEventListener("click", () => {
           if (lk.binPage > 1) { lk.binPage--; renderLookupProfile(skuCode, serialNum, true); }
         });
         binPag.querySelector("#lkBinNextP")?.addEventListener("click", () => {
-          if (lk.binPage < totalBinPages) { lk.binPage++; renderLookupProfile(skuCode, serialNum, true); }
+          if (lk.binPage < totalSitePages) { lk.binPage++; renderLookupProfile(skuCode, serialNum, true); }
         });
       }
     } else {
-      document.getElementById("lkBinListInfo").textContent = "0 dòng vị trí BIN";
-      binBody.innerHTML = `<tr><td colspan="10" class="muted">Không có dòng tồn BIN nào trong Inventory_Details.</td></tr>`;
+      document.getElementById("lkBinListInfo").textContent = "0 Site có tồn";
+      binBody.innerHTML = `<tr><td colspan="9" class="muted">Không có dữ liệu tồn kho theo Site cho SKU này.</td></tr>`;
       if (binPag) binPag.innerHTML = "";
+      if (expandAllBtn) expandAllBtn.onclick = null;
     }
 
     // Prepare CSV export for this SKU

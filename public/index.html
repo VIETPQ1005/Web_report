@@ -8,10 +8,10 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600;700&family=Chakra+Petch:wght@600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="./styles.css?v=20261123c" />
+  <link rel="stylesheet" href="./styles.css?v=20261123d" />
   <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.1/dist/echarts.min.js" defer></script>
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js" defer></script>
-  <script src="./app.js?v=20261123c" defer></script>
+  <script src="./app.js?v=20261123d" defer></script>
 </head>
 <body>
   <div class="app-shell" id="appShell">
@@ -960,6 +960,9 @@
             <!-- 6 KEY METRIC CARDS -->
             <div class="inv-kpi-grid" id="lkSummaryKpis"></div>
 
+            <!-- UPCOMING PRICE CHANGE ALERT BANNER (FROM BAO_CAO_QUAN_LY_GIA) -->
+            <div class="lookup-price-alert hidden" id="lkPriceAlertBox"></div>
+
             <!-- PRICING & MARGIN ROW -->
             <div class="lookup-price-strip" id="lkPriceStrip"></div>
           </div>
@@ -1039,30 +1042,30 @@
             </div>
           </div>
 
-          <!-- 5. BIN-LEVEL SUMMARY (Inventory_Details) -->
+          <!-- 5. SITE-LEVEL PIVOT (CLICK SITE TO EXPAND SERIALS IN SITE) -->
           <div class="panel-block">
             <div class="panel-header">
               <div class="panel-title-group">
-                <h3 class="panel-title">Chi tiết vị trí BIN (Inventory Details)</h3>
-                <span class="panel-hint" id="lkBinListInfo">-- dòng BIN</span>
+                <h3 class="panel-title">Chi tiết theo Site <span class="badge-blue">PIVOT SITE → SERIAL</span></h3>
+                <span class="panel-hint" id="lkBinListInfo">Click vào từng dòng Site để xổ Pivot ra danh sách Serial đang tồn trong Site</span>
               </div>
               <div class="panel-controls">
+                <button type="button" class="btn-mini" id="lkSiteExpandAllBtn" title="Mở rộng hoặc thu gọn toàn bộ Site trong trang hiện tại">⊞ Mở rộng trang</button>
                 <div class="pagination" id="lkBinPagination"></div>
               </div>
             </div>
             <div class="table-wrap">
-              <table class="dark-table">
+              <table class="dark-table bs-master-table">
                 <thead>
                   <tr>
                     <th>Site</th>
-                    <th>Tên Kho</th>
-                    <th>BIN Code</th>
-                    <th>BIN Type</th>
-                    <th>BIN Zone</th>
-                    <th>Last Recv</th>
-                    <th class="num">Min Stock</th>
-                    <th class="num">QTY</th>
-                    <th class="num">Unit Cost</th>
+                    <th>Tên Kho / Chi nhánh</th>
+                    <th>BIN / Zone</th>
+                    <th class="num">Số Serial</th>
+                    <th class="num">Tổng QTY</th>
+                    <th class="num">Tuổi Site (TB / Max)</th>
+                    <th>Nhập gần nhất</th>
+                    <th class="num">Bán 7D / 30D</th>
                     <th class="num">Giá trị (VND)</th>
                   </tr>
                 </thead>

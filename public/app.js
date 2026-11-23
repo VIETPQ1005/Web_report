@@ -403,6 +403,20 @@
       expandedSkus: new Set(),
       lastExport: { headers: [], rows: [], filename: "bad_stock_sku_serial_pivot.csv" },
     },
+    // Competitor Price Compare (Phong Vũ vs Thế Giới Di Động — Subcat 2 Ổ cứng gắn ngoài)
+    priceCompare: {
+      loaded: false,
+      loading: false,
+      data: null,
+      status: "matched",
+      brand: "",
+      driveType: "",
+      capacity: "",
+      search: "",
+      sortCol: "diffVnd",
+      sortDir: "desc",
+      lastExport: { headers: [], rows: [], filename: "price_compare_ocgn_tgdd.csv" },
+    },
     // Filters
     region: "",
     site: "",
@@ -928,6 +942,7 @@
     bindEvents();
     bindInventoryEvents();
     bindBadStockEvents();
+    bindPriceCompareEvents();
     bindLookupEvents();
     bindUpdateModalEvents();
     renderLookupQuickPicks();
@@ -1825,8 +1840,8 @@
     const pane = document.getElementById(`view-${view}`);
     if (pane) pane.classList.add("active");
 
-    const isInvOrLookup = view === "inventory" || view === "lookup" || view === "badstock";
-    const hideSidebar = view === "lookup" || view === "badstock";
+    const isInvOrLookup = view === "inventory" || view === "lookup" || view === "badstock" || view === "pricecompare";
+    const hideSidebar = view === "lookup" || view === "badstock" || view === "pricecompare";
     document.getElementById("appShell")?.classList.toggle("hide-sidebar", hideSidebar);
     document.getElementById("salesTopFilters")?.classList.toggle("hidden", isInvOrLookup);
     document.getElementById("activeChipsBar")?.classList.toggle("hidden", isInvOrLookup);
@@ -1838,12 +1853,17 @@
         ? "🔍 TRA CỨU 360° SKU & SERIAL NUMBER"
         : view === "badstock"
           ? "⚠️ BÁO CÁO CHUYÊN SÂU BAD STOCK (TỒN XẤU / TỒN RẤT XẤU)"
-          : "📦 BÁO CÁO TỒN KHO & BAD STOCK";
+          : view === "pricecompare"
+            ? "⚖️ SO SÁNH GIÁ BÁN — PHONG VŨ vs THẾ GIỚI DI ĐỘNG (Ổ CỨNG GẮN NGOÀI)"
+            : "📦 BÁO CÁO TỒN KHO & BAD STOCK";
     }
     document.getElementById("jumpToLookupBtn")?.classList.toggle("hidden", view === "lookup");
 
     if ((view === "lookup" || view === "badstock") && !state.shardsLoaded) {
       ensureLookupShardsLoaded();
+    }
+    if (view === "pricecompare" && !state.priceCompare.loaded) {
+      ensurePriceCompareLoaded();
     }
 
     const filtered = getFilteredRows(false);
@@ -2290,6 +2310,8 @@
       renderInventoryView();
     } else if (state.activeView === "badstock") {
       renderBadStockView();
+    } else if (state.activeView === "pricecompare") {
+      renderPriceCompareView();
     } else if (state.activeView === "lookup") {
       if (state.lookup.selectedSku) {
         renderLookupProfile(state.lookup.selectedSku, state.lookup.selectedSerial);
@@ -11122,6 +11144,304 @@
         setTimeout(() => URL.revokeObjectURL(url), 1000);
       });
     }
+  }
+
+  // =========================================================================
+  // COMPETITOR PRICE COMPARE (PHONG VŨ vs THẾ GIỚI DI ĐỘNG — Ổ CỨNG GẮN NGOÀI)
+  // =========================================================================
+  async function ensurePriceCompareLoaded() {
+    const pc = state.priceCompare;
+    if (pc.loaded || pc.loading) return;
+    pc.loading = true;
+    const insight = document.getElementById("pcInsightText");
+    if (insight) insight.textContent = "Đang tải dữ liệu so sánh giá Thế Giới Di Động...";
+    try {
+      const res = await fetch(`./data/price_compare_ocgn.json?t=${Date.now()}`, { cache: "no-store" });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      pc.data = await res.json();
+      pc.loaded = true;
+      populatePriceCompareFilters();
+      if (state.activeView === "pricecompare") renderPriceCompareView();
+    } catch (err) {
+      if (insight) insight.textContent = `Không tải được dữ liệu so sánh giá: ${err.message}`;
+    } finally {
+      pc.loading = false;
+    }
+  }
+
+  function populatePriceCompareFilters() {
+    const rows = state.priceCompare.data?.rows || [];
+    const brands = Array.from(new Set(rows.map((r) => r.tgddBrand).filter(Boolean))).sort();
+    const capOrder = ["256GB", "500GB", "512GB", "1TB", "2TB", "4TB", "5TB", "8TB"];
+    const caps = Array.from(new Set(rows.map((r) => r.capacity).filter(Boolean))).sort((a, b) => {
+      const ia = capOrder.indexOf(a);
+      const ib = capOrder.indexOf(b);
+      if (ia !== -1 && ib !== -1) return ia - ib;
+      if (ia !== -1) return -1;
+      if (ib !== -1) return 1;
+      return a.localeCompare(b);
+    });
+
+    const brSel = document.getElementById("pcFilterBrand");
+    if (brSel) {
+      brSel.innerHTML = `<option value="">Tất cả Brand (${brands.length})</option>` +
+        brands.map((b) => `<option value="${esc(b)}">${esc(b)}</option>`).join("");
+    }
+    const capSel = document.getElementById("pcFilterCap");
+    if (capSel) {
+      capSel.innerHTML = `<option value="">Tất cả Dung lượng</option>` +
+        caps.map((c) => `<option value="${esc(c)}">${esc(c)}</option>`).join("");
+    }
+  }
+
+  function bindPriceCompareEvents() {
+    const pc = state.priceCompare;
+    document.getElementById("pcStatusTabs")?.addEventListener("click", (e) => {
+      const btn = e.target.closest(".seg-btn[data-val]");
+      if (!btn) return;
+      pc.status = btn.dataset.val;
+      document.querySelectorAll("#pcStatusTabs .seg-btn").forEach((b) => b.classList.toggle("active", b === btn));
+      renderPriceCompareView();
+    });
+    document.getElementById("pcFilterBrand")?.addEventListener("change", (e) => {
+      pc.brand = e.target.value;
+      renderPriceCompareView();
+    });
+    document.getElementById("pcFilterType")?.addEventListener("change", (e) => {
+      pc.driveType = e.target.value;
+      renderPriceCompareView();
+    });
+    document.getElementById("pcFilterCap")?.addEventListener("change", (e) => {
+      pc.capacity = e.target.value;
+      renderPriceCompareView();
+    });
+    document.getElementById("pcSearchInput")?.addEventListener("input", (e) => {
+      pc.search = e.target.value.trim();
+      renderPriceCompareView();
+    });
+    document.getElementById("pcResetBtn")?.addEventListener("click", () => {
+      pc.status = "matched";
+      pc.brand = "";
+      pc.driveType = "";
+      pc.capacity = "";
+      pc.search = "";
+      pc.sortCol = "diffVnd";
+      pc.sortDir = "desc";
+      document.querySelectorAll("#pcStatusTabs .seg-btn").forEach((b) => b.classList.toggle("active", b.dataset.val === "matched"));
+      const br = document.getElementById("pcFilterBrand"); if (br) br.value = "";
+      const tp = document.getElementById("pcFilterType"); if (tp) tp.value = "";
+      const cp = document.getElementById("pcFilterCap"); if (cp) cp.value = "";
+      const sr = document.getElementById("pcSearchInput"); if (sr) sr.value = "";
+      renderPriceCompareView();
+    });
+    document.getElementById("pcExportCsvBtn")?.addEventListener("click", () => {
+      const exp = pc.lastExport;
+      if (exp && exp.rows.length) {
+        downloadCsv(exp.filename, exp.headers, exp.rows);
+        showToast(`⬇ Đã xuất ${exp.rows.length} dòng so sánh giá ra CSV.`);
+      }
+    });
+  }
+
+  function renderPriceCompareView() {
+    const pc = state.priceCompare;
+    if (!pc.loaded) {
+      ensurePriceCompareLoaded();
+      return;
+    }
+    const payload = pc.data;
+    const allRows = payload?.rows || [];
+    const meta = payload?.meta || {};
+
+    // Filter rows
+    const q = (pc.search || "").toLowerCase();
+    const filtered = allRows.filter((r) => {
+      if (pc.status === "matched" && !r.pvSku) return false;
+      if (pc.status === "pv_higher" && r.compareStatus !== "pv_higher") return false;
+      if (pc.status === "pv_cheaper_eq" && r.compareStatus !== "pv_cheaper" && r.compareStatus !== "equal") return false;
+      if (pc.status === "tgdd_only" && r.compareStatus !== "tgdd_only") return false;
+      if (pc.brand && r.tgddBrand !== pc.brand) return false;
+      if (pc.driveType && r.driveType !== pc.driveType) return false;
+      if (pc.capacity && r.capacity !== pc.capacity) return false;
+      if (q) {
+        const hay = `${r.tgddName} ${r.tgddBrand} ${r.pvSku} ${r.pvName} ${r.capacity} ${r.driveType}`.toLowerCase();
+        if (!hay.includes(q)) return false;
+      }
+      return true;
+    });
+
+    // Sort rows
+    const dir = pc.sortDir === "asc" ? 1 : -1;
+    filtered.sort((a, b) => {
+      const col = pc.sortCol;
+      if (col === "tgddName") return dir * a.tgddName.localeCompare(b.tgddName);
+      if (col === "tgddPrice") return dir * ((a.tgddPrice || 0) - (b.tgddPrice || 0));
+      if (col === "pvPrice") return dir * ((a.pvPrice || 0) - (b.pvPrice || 0));
+      if (col === "diffPct") return dir * ((a.diffPct || 0) - (b.diffPct || 0));
+      if (col === "pvInvQty") return dir * ((a.pvInvQty || 0) - (b.pvInvQty || 0));
+      if (col === "pvS30d") return dir * ((a.pvS30d || 0) - (b.pvS30d || 0));
+      return dir * ((a.diffVnd || 0) - (b.diffVnd || 0));
+    });
+
+    // KPI Summary (computed on brand/type/cap-scoped rows, ignoring status tab so all 4 KPIs stay informative)
+    const scoped = allRows.filter((r) => {
+      if (pc.brand && r.tgddBrand !== pc.brand) return false;
+      if (pc.driveType && r.driveType !== pc.driveType) return false;
+      if (pc.capacity && r.capacity !== pc.capacity) return false;
+      return true;
+    });
+    const matched = scoped.filter((r) => Boolean(r.pvSku));
+    const higher = matched.filter((r) => r.compareStatus === "pv_higher");
+    const cheaper = matched.filter((r) => r.compareStatus === "pv_cheaper");
+    const equal = matched.filter((r) => r.compareStatus === "equal");
+    const onlyTgdd = scoped.filter((r) => r.compareStatus === "tgdd_only");
+    const avgHigherDiff = higher.length
+      ? Math.round(higher.reduce((s, r) => s + r.diffVnd, 0) / higher.length)
+      : 0;
+
+    document.getElementById("pcKpiTotal").textContent = `${fmtInt(scoped.length)} SP / ${fmtInt(matched.length)} khớp`;
+    document.getElementById("pcKpiTotalSub").textContent = `Quét TGDD lúc ${formatIsoVn(meta.scrapedAt) || "—"}`;
+    document.getElementById("pcKpiHigher").textContent = `${fmtInt(higher.length)} SKU`;
+    document.getElementById("pcKpiHigherSub").textContent = higher.length
+      ? `${((higher.length / Math.max(1, matched.length)) * 100).toFixed(0)}% SKU khớp • Cao hơn TB +${fmtVndFull(avgHigherDiff)}`
+      : "Không có SKU nào cao hơn TGDD";
+    document.getElementById("pcKpiCheaper").textContent = `${fmtInt(cheaper.length + equal.length)} SKU`;
+    document.getElementById("pcKpiCheaperSub").textContent = `${fmtInt(cheaper.length)} rẻ hơn • ${fmtInt(equal.length)} bằng giá TGDD`;
+    document.getElementById("pcKpiOnlyTgdd").textContent = `${fmtInt(onlyTgdd.length)} SP`;
+    document.getElementById("pcKpiOnlyTgddSub").textContent = `TGDD đang bán nhưng PV chưa khớp mã`;
+
+    const insightEl = document.getElementById("pcInsightText");
+    if (insightEl) {
+      insightEl.innerHTML =
+        `Nguồn: <a href="${esc(meta.sourceUrl || "https://www.thegioididong.com/o-cung-di-dong")}" target="_blank" rel="noopener noreferrer" class="pc-tgdd-link">thegioididong.com/o-cung-di-dong ↗</a>` +
+        ` • Cập nhật: <strong class="mono">${esc(formatIsoVn(meta.scrapedAt) || "—")}</strong>` +
+        ` • Hiển thị <strong>${fmtInt(filtered.length)}</strong> / ${fmtInt(allRows.length)} sản phẩm`;
+    }
+
+    // Active Chips
+    const chipsEl = document.getElementById("pcActiveChips");
+    if (chipsEl) {
+      const chips = [];
+      if (pc.brand) chips.push(`Brand: ${pc.brand}`);
+      if (pc.driveType) chips.push(`Loại: ${pc.driveType}`);
+      if (pc.capacity) chips.push(`Dung lượng: ${pc.capacity}`);
+      if (pc.search) chips.push(`Tìm: "${pc.search}"`);
+      chipsEl.innerHTML = chips.map((c) => `<span class="chip">${esc(c)}</span>`).join("");
+    }
+
+    // Render Table Header (sortable)
+    const thead = document.getElementById("pcTableHead");
+    const cols = [
+      { key: "tgddName", label: "Sản phẩm Thế Giới Di Động", cls: "" },
+      { key: "tgddPrice", label: "Giá TGDD (VAT)", cls: "num" },
+      { key: "", label: "SKU Phong Vũ (Subcat 2: OCGN)", cls: "" },
+      { key: "pvPrice", label: "Giá PV Hiện tại", cls: "num" },
+      { key: "diffVnd", label: "Chênh lệch (PV - TGDD)", cls: "num" },
+      { key: "diffPct", label: "% Chênh", cls: "num" },
+      { key: "", label: "Vị thế giá", cls: "" },
+      { key: "pvInvQty", label: "Tồn PV", cls: "num" },
+      { key: "pvS30d", label: "Bán 30D", cls: "num" },
+    ];
+    if (thead) {
+      thead.innerHTML = `<tr>${cols.map((c) => {
+        if (!c.key) return `<th class="${c.cls}">${esc(c.label)}</th>`;
+        const arrow = pc.sortCol === c.key ? (pc.sortDir === "asc" ? " ▲" : " ▼") : "";
+        return `<th class="${c.cls} sortable" data-pc-sort="${c.key}">${esc(c.label)}${arrow}</th>`;
+      }).join("")}</tr>`;
+      thead.querySelectorAll("th[data-pc-sort]").forEach((th) => {
+        th.addEventListener("click", () => {
+          const k = th.dataset.pcSort;
+          if (pc.sortCol === k) pc.sortDir = pc.sortDir === "asc" ? "desc" : "asc";
+          else { pc.sortCol = k; pc.sortDir = k === "tgddName" ? "asc" : "desc"; }
+          renderPriceCompareView();
+        });
+      });
+    }
+
+    // Render Table Body
+    const tbody = document.getElementById("pcTableBody");
+    if (tbody) {
+      if (!filtered.length) {
+        tbody.innerHTML = `<tr><td colspan="9" class="muted">Không có sản phẩm nào phù hợp với bộ lọc hiện tại.</td></tr>`;
+      } else {
+        tbody.innerHTML = filtered.map((r) => {
+          const badgeMap = {
+            pv_higher: `<span class="inv-badge bad-verybad">⚠️ PV Cao hơn</span>`,
+            pv_cheaper: `<span class="inv-badge bad-normal">✅ PV Rẻ hơn</span>`,
+            equal: `<span class="inv-badge listing-active">⚖️ Bằng giá</span>`,
+            tgdd_only: `<span class="inv-badge other">🔍 Chỉ ở TGDD</span>`,
+          };
+          const statusBadge = badgeMap[r.compareStatus] || `<span class="inv-badge other">—</span>`;
+          const diffCls = r.compareStatus === "pv_higher" ? "pc-diff-pos" : r.compareStatus === "pv_cheaper" ? "pc-diff-neg" : "pc-diff-eq";
+          const sign = r.diffVnd > 0 ? "+" : "";
+          const fmtDmy = (iso) => {
+            const m = String(iso || "").match(/^(\d{4})-(\d{2})-(\d{2})$/);
+            return m ? `${m[3]}/${m[2]}/${m[1]}` : iso;
+          };
+          const pvUpcomingHtml = r.pvPriceState === "upcoming" && r.pvNewPrice > 0
+            ? `<div class="pc-pv-sub">📅 ${fmtDmy(r.pvActiveDate)} → ${esc(fmtVndFull(r.pvNewPrice))}</div>`
+            : "";
+
+          return `
+            <tr>
+              <td>
+                <div class="pc-prod-title">
+                  <a href="${esc(r.tgddUrl)}" target="_blank" rel="noopener noreferrer" class="pc-tgdd-link" title="Mở trang sản phẩm trên Thế Giới Di Động">${esc(r.tgddName)} ↗</a>
+                </div>
+                <div class="pc-prod-meta">
+                  <span class="inv-badge other">${esc(r.tgddBrand)}</span>
+                  ${r.driveType && r.driveType !== "UNKNOWN" ? `<span class="inv-badge listing-active">${esc(r.driveType)}</span>` : ""}
+                  ${r.capacity ? `<span class="inv-badge normal">${esc(r.capacity)}</span>` : ""}
+                  ${r.tgddSold ? `<span class="muted">${esc(r.tgddSold)}</span>` : ""}
+                </div>
+              </td>
+              <td class="num mono">
+                <div><strong>${r.tgddPrice ? esc(fmtVndFull(r.tgddPrice)) : "—"}</strong></div>
+                ${r.tgddOldPrice > r.tgddPrice ? `<div class="pc-old-price">${esc(fmtVndFull(r.tgddOldPrice))} <span class="pc-disc-tag">-${r.tgddDiscountPct}%</span></div>` : ""}
+              </td>
+              <td>
+                ${r.pvSku
+                  ? `<div><button type="button" class="link-sku-btn" data-pc-jump-sku="${esc(r.pvSku)}">${esc(r.pvSku)}</button> <span class="inv-badge ${statusBadgeClass(r.pvStatus)}">${esc(r.pvStatus || "Normal")}</span></div>
+                     <div class="pc-pv-name">${esc(r.pvName)}</div>`
+                  : `<span class="muted">Chưa có mã tương ứng tại Phong Vũ</span>`}
+              </td>
+              <td class="num mono">
+                ${r.pvPrice ? `<strong>${esc(fmtVndFull(r.pvPrice))}</strong>${pvUpcomingHtml}` : "—"}
+              </td>
+              <td class="num mono ${diffCls}">
+                ${r.pvSku && r.tgddPrice ? `<strong>${sign}${esc(fmtVndFull(r.diffVnd))}</strong>` : "—"}
+              </td>
+              <td class="num mono ${diffCls}">
+                ${r.pvSku && r.tgddPrice ? `<strong>${sign}${r.diffPct.toFixed(1)}%</strong>` : "—"}
+              </td>
+              <td>${statusBadge}</td>
+              <td class="num mono" style="color:#00E5FF">${r.pvSku ? fmtInt(r.pvInvQty) : "—"}</td>
+              <td class="num mono" style="color:#12D37A">${r.pvSku ? fmtInt(r.pvS30d) : "—"}</td>
+            </tr>`;
+        }).join("");
+
+        tbody.querySelectorAll("[data-pc-jump-sku]").forEach((btn) => {
+          btn.addEventListener("click", async () => {
+            const sku = btn.dataset.pcJumpSku;
+            if (!sku) return;
+            switchView("lookup");
+            if (!state.shardsLoaded) await ensureLookupShardsLoaded();
+            const inp = document.getElementById("lookupSearchInput");
+            if (inp) inp.value = sku;
+            renderLookupProfile(sku, "", false);
+          });
+        });
+      }
+    }
+
+    pc.lastExport = {
+      headers: ["TGDD Name", "Brand", "Type", "Capacity", "TGDD Price", "TGDD Old Price", "TGDD Discount %", "TGDD URL", "PV SKU", "PV Name", "PV Price", "Diff VND", "Diff %", "Position", "PV Inv QTY", "PV 30D Sales"],
+      rows: filtered.map((r) => [
+        r.tgddName, r.tgddBrand, r.driveType, r.capacity, r.tgddPrice, r.tgddOldPrice, r.tgddDiscountPct, r.tgddUrl,
+        r.pvSku, r.pvName, r.pvPrice, r.diffVnd, r.diffPct, r.compareStatus, r.pvInvQty, r.pvS30d,
+      ]),
+      filename: `so_sanh_gia_ocgn_tgdd_${new Date().toISOString().slice(0, 10)}.csv`,
+    };
   }
 
   document.addEventListener("DOMContentLoaded", init);

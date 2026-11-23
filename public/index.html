@@ -8,10 +8,10 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600;700&family=Chakra+Petch:wght@600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="./styles.css?v=20261123e" />
+  <link rel="stylesheet" href="./styles.css?v=20261124a" />
   <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.1/dist/echarts.min.js" defer></script>
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js" defer></script>
-  <script src="./app.js?v=20261123e" defer></script>
+  <script src="./app.js?v=20261124a" defer></script>
 </head>
 <body>
   <div class="app-shell" id="appShell">
@@ -53,9 +53,10 @@
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><circle cx="11" cy="11" r="7"/><path d="M20 20l-4.35-4.35"/></svg>
           <span>Tra cứu<br/>SKU/SN</span>
         </button>
-        <button class="rail-item" data-view="pricecompare" title="So sánh giá bán Phong Vũ vs Thế Giới Di Động (Subcat 2: Ổ cứng gắn ngoài)">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.85"><path d="M12 3v18"/><path d="M5 7h14"/><path d="M3 14l2-7 2 7a2 2 0 0 1-4 0z"/><path d="M17 14l2-7 2 7a2 2 0 0 1-4 0z"/><path d="M8 21h8"/></svg>
-          <span>So sánh<br/>Giá TGDD</span>
+        <button class="rail-item rail-item-featured" data-view="pricecompare" title="So Sánh Giá bán Phong Vũ với nhiều Website đối thủ (Thế Giới Di Động, CellphoneS...)">
+          <span class="rail-featured-dot" aria-hidden="true"></span>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v18"/><path d="M5 7h14"/><path d="M3 14l2-7 2 7a2 2 0 0 1-4 0z"/><path d="M17 14l2-7 2 7a2 2 0 0 1-4 0z"/><path d="M8 21h8"/></svg>
+          <span>So Sánh<br/>Giá</span>
         </button>
         <button class="rail-item" data-view="monthly" title="Báo cáo Sales & Qty theo Report Date">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 3v18h18"/><rect x="7" y="10" width="3" height="7"/><rect x="12" y="6" width="3" height="11"/><rect x="17" y="12" width="3" height="5"/></svg>
@@ -1173,30 +1174,38 @@
       </section>
 
       <!-- ================================================================
-           VIEW 10: PRICE COMPARE (PHONG VŨ vs THẾ GIỚI DI ĐỘNG — Ổ CỨNG GẮN NGOÀI)
+           VIEW 10: MULTI-COMPETITOR PRICE COMPARE (PHONG VŨ vs TGDD • CELLPHONES...)
            ================================================================ -->
       <section class="view-pane" id="view-pricecompare">
         <!-- LOCAL FILTER BAR -->
         <div class="inv-filter-bar">
           <div class="topbar-filters">
             <span class="local-filter-tag">SO SÁNH GIÁ — Ổ CỨNG GẮN NGOÀI:</span>
-            <div class="seg-tabs" id="pcStatusTabs" title="Lọc theo vị thế giá Phong Vũ so với Thế Giới Di Động">
-              <button type="button" class="seg-btn active" data-val="matched">SKU khớp PV</button>
-              <button type="button" class="seg-btn" data-val="pv_higher">PV Cao hơn</button>
-              <button type="button" class="seg-btn" data-val="pv_cheaper_eq">PV Rẻ / Bằng</button>
-              <button type="button" class="seg-btn" data-val="tgdd_only">Chỉ có ở TGDD</button>
-              <button type="button" class="seg-btn" data-val="all">Tất cả TGDD</button>
+            <div class="seg-tabs" id="pcModeTabs" title="Chế độ xem Ma trận so sánh ngang hoặc Danh sách SP đối thủ chưa có tại PV">
+              <button type="button" class="seg-btn active" data-val="matrix">⚖️ Ma trận Đối thủ</button>
+              <button type="button" class="seg-btn" data-val="unmatched">🔍 SP Đối thủ chưa khớp PV</button>
+            </div>
+            <div class="seg-tabs" id="pcCompTabs" title="Lọc theo Website đối thủ">
+              <button type="button" class="seg-btn active" data-val="all">Tất cả Đối thủ</button>
+              <button type="button" class="seg-btn" data-val="both">Có ở ≥2 Đối thủ</button>
+              <button type="button" class="seg-btn" data-val="tgdd">TGDD</button>
+              <button type="button" class="seg-btn" data-val="cps">CellphoneS</button>
+            </div>
+            <div class="seg-tabs" id="pcStatusTabs" title="Lọc theo vị thế giá Phong Vũ">
+              <button type="button" class="seg-btn active" data-val="all">Tất cả vị thế</button>
+              <button type="button" class="seg-btn" data-val="pv_higher">⚠️ PV Cao hơn</button>
+              <button type="button" class="seg-btn" data-val="pv_win">✅ PV Rẻ / Bằng</button>
             </div>
             <select id="pcFilterBrand" class="dark-select" title="Lọc theo Thương hiệu (Brand)">
               <option value="">Tất cả Brand</option>
             </select>
             <select id="pcFilterType" class="dark-select" title="Lọc theo loại ổ (SSD / HDD)">
-              <option value="">Tất cả SSD/HDD</option>
+              <option value="">SSD / HDD</option>
               <option value="SSD">SSD</option>
               <option value="HDD">HDD</option>
             </select>
             <select id="pcFilterCap" class="dark-select" title="Lọc theo Dung lượng">
-              <option value="">Tất cả Dung lượng</option>
+              <option value="">Dung lượng</option>
             </select>
             <button type="button" class="btn-reset-mini" id="pcResetBtn">↺ Reset</button>
           </div>
@@ -1205,39 +1214,39 @@
         <!-- INSIGHT & SOURCE STRIP -->
         <div class="chips-strip">
           <div class="chips-list" id="pcActiveChips"></div>
-          <div class="insight-inline" id="pcInsightText">Đang tải dữ liệu so sánh giá Thế Giới Di Động...</div>
+          <div class="insight-inline" id="pcInsightText">Đang tải dữ liệu so sánh giá đa đối thủ...</div>
         </div>
 
         <!-- 4 SUMMARY KPI CARDS -->
         <div class="bs-kpi-grid">
           <div class="inv-kpi-card accent-blue">
-            <div class="inv-kpi-lbl">Tổng SP Quét TGDD / Khớp PV</div>
+            <div class="inv-kpi-lbl">SKU Phong Vũ Khớp Đối Thủ</div>
             <div class="inv-kpi-val mono" id="pcKpiTotal">--</div>
-            <div class="inv-kpi-sub mono" id="pcKpiTotalSub">Nguồn: thegioididong.com/o-cung-di-dong</div>
+            <div class="inv-kpi-sub mono" id="pcKpiTotalSub">Đang tải nguồn đối thủ...</div>
           </div>
           <div class="inv-kpi-card accent-crimson">
-            <div class="inv-kpi-lbl">PV Giá Cao Hơn TGDD</div>
+            <div class="inv-kpi-lbl">PV Cao Hơn Giá Thấp Nhất TT</div>
             <div class="inv-kpi-val mono" id="pcKpiHigher">--</div>
             <div class="inv-kpi-sub mono neg" id="pcKpiHigherSub">Chênh lệch TB: --</div>
           </div>
           <div class="inv-kpi-card accent-emerald">
-            <div class="inv-kpi-lbl">PV Rẻ Hơn / Bằng Giá TGDD</div>
+            <div class="inv-kpi-lbl">PV Rẻ Nhất / Bằng Thị Trường</div>
             <div class="inv-kpi-val mono" id="pcKpiCheaper">--</div>
             <div class="inv-kpi-sub mono pos" id="pcKpiCheaperSub">-- rẻ hơn • -- bằng giá</div>
           </div>
           <div class="inv-kpi-card accent-cyan">
-            <div class="inv-kpi-lbl">Chỉ Có Ở TGDD (Chưa Khớp PV)</div>
+            <div class="inv-kpi-lbl">Đối Chiếu Nhanh Từng Website</div>
             <div class="inv-kpi-val mono" id="pcKpiOnlyTgdd">--</div>
-            <div class="inv-kpi-sub mono" id="pcKpiOnlyTgddSub">Cơ hội mở rộng danh mục</div>
+            <div class="inv-kpi-sub mono" id="pcKpiOnlyTgddSub">--</div>
           </div>
         </div>
 
-        <!-- MAIN COMPARISON TABLE -->
+        <!-- MAIN MULTI-COMPETITOR COMPARISON TABLE -->
         <div class="panel-block">
           <div class="panel-header">
             <div class="panel-title-group">
-              <h2 class="panel-title">Bảng So sánh Giá bán Hiện tại — Phong Vũ vs Thế Giới Di Động <span class="badge-blue">NH11-01-07 Ổ CỨNG GẮN NGOÀI</span></h2>
-              <span class="panel-hint" id="pcTableCountInfo">Click vào mã SKU Phong Vũ để mở hồ sơ 360° hoặc bấm ↗ TGDD để xem trực tiếp giá trên website đối thủ</span>
+              <h2 class="panel-title" id="pcTableTitle">Ma trận So Sánh Giá — Phong Vũ vs Thế Giới Di Động &amp; CellphoneS <span class="badge-blue">NH11-01-07 Ổ CỨNG GẮN NGOÀI</span></h2>
+              <span class="panel-hint" id="pcTableCountInfo">Mỗi dòng là 1 SKU Phong Vũ so sánh ngang giá bán thực tế với từng Website đối thủ • Click mã SKU để xem hồ sơ 360°</span>
             </div>
             <div class="panel-controls">
               <input type="search" id="pcSearchInput" class="dark-search" placeholder="Tìm tên SP, SKU PV, Brand, Dung lượng..." />
@@ -1245,7 +1254,7 @@
             </div>
           </div>
 
-          <div class="table-wrap">
+          <div class="table-wrap pc-table-wrap">
             <table class="dark-table pc-compare-table">
               <thead id="pcTableHead"></thead>
               <tbody id="pcTableBody"></tbody>

@@ -8,10 +8,10 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600;700&family=Chakra+Petch:wght@600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="./styles.css?v=20261123b" />
+  <link rel="stylesheet" href="./styles.css?v=20261123c" />
   <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.1/dist/echarts.min.js" defer></script>
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js" defer></script>
-  <script src="./app.js?v=20261123b" defer></script>
+  <script src="./app.js?v=20261123c" defer></script>
 </head>
 <body>
   <div class="app-shell" id="appShell">
@@ -308,14 +308,15 @@
                 🎯 Báo cáo Doanh số Vs Target &amp; Tỷ trọng (Proport) theo Ngành Hàng
                 <span class="badge-blue mono" id="targetModeBadge">BENCHMARK YTD</span>
               </h2>
-              <span class="panel-hint">So sánh Doanh số Thực đạt với Kế hoạch Target và Tăng trưởng cùng kỳ (Vs LY). Bấm từng dòng để lọc nhanh Ngành Hàng.</span>
+              <span class="panel-hint">So sánh Doanh số Thực đạt với Kế hoạch Target và Tăng trưởng cùng kỳ (Vs LY). Bấm vào từng Ngành Hàng để xổ Pivot chi tiết các Subcat 2 có doanh số.</span>
             </div>
             <div class="panel-controls">
+              <button type="button" class="btn-mini" id="targetExpandAllBtn" title="Mở rộng hoặc thu gọn toàn bộ danh sách Subcat 2 có doanh số dưới 3 NH">⊞ Mở rộng Subcat 2</button>
               <div class="seg-tabs" id="targetDataSourceGroup">
                 <button class="seg-btn active" data-val="filtered" title="Tính toán Doanh số thực tế từ Sale_Revenue_Detail theo bộ lọc đang chọn">Thực tế theo Bộ lọc</button>
                 <button class="seg-btn" data-val="benchmark" title="Tính toán Doanh số YTD thực tế toàn hệ thống từ Sale_Revenue_Detail (gộp NH03 vào NH93)">Toàn bộ YTD (Data gốc)</button>
               </div>
-              <button class="btn-mini" id="exportTargetCsvBtn" title="Tải bảng Target định dạng CSV">CSV</button>
+              <button class="btn-mini" id="exportTargetCsvBtn" title="Tải bảng Target &amp; Subcat 2 định dạng CSV">CSV</button>
               <button class="btn-mini" data-export-chart="targetProgress" title="Tải ảnh biểu đồ PNG">PNG</button>
             </div>
           </div>
@@ -708,7 +709,7 @@
             <div class="inv-kpi-sub mono pos" id="invKpiSellableSub">--% • -- units</div>
           </div>
           <div class="inv-kpi-card accent-amber">
-            <div class="inv-kpi-lbl">Bad Stock (Chậm/Lâu/Xấu)</div>
+            <div class="inv-kpi-lbl">Bad Stock (Tồn Xấu &amp; Rất Xấu)</div>
             <div class="inv-kpi-val mono" id="invKpiBadStock">--</div>
             <div class="inv-kpi-sub mono warn" id="invKpiBadStockSub">-- SN rủi ro / -- SN</div>
           </div>

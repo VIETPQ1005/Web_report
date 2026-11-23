@@ -330,6 +330,7 @@
     globalCat: "",
     globalSubcat: "",
     targetDataSource: "filtered", // filtered | benchmark (both computed from actual Sale_Revenue_Detail)
+    targetExpandedCats: new Set(),
     shardsLoaded: false,
     shardsLoading: false,
     // Inventory sub-state
@@ -1985,6 +1986,13 @@
       renderTargetReport(getFilteredRows(false));
     });
     document.getElementById("exportTargetCsvBtn")?.addEventListener("click", () => exportTargetCsv());
+    document.getElementById("targetExpandAllBtn")?.addEventListener("click", () => {
+      const codes = ["NH06", "NH11", "NH93"];
+      const allExp = codes.every((c) => state.targetExpandedCats.has(c));
+      if (allExp) state.targetExpandedCats.clear();
+      else codes.forEach((c) => state.targetExpandedCats.add(c));
+      renderTargetReport();
+    });
 
     bindSeg("yearlyCompareMetricGroup", (v) => {
       state.yearlyCompareMetric = v;
@@ -2508,6 +2516,7 @@
     });
 
     let healthyCnt = 0, clsCnt = 0, badRiskCnt = 0, badRiskVal = 0, totalSnCnt = 0;
+    const isStrictlyBad = (lbl) => lbl === "Tồn xấu" || lbl === "Tồn rất xấu";
     const siteBadMap = new Map();
     const cubeRows = getFilteredSerialCubeRows();
     if (cubeRows && state.raw.invSerialCube) {
@@ -2525,8 +2534,9 @@
         totalSnCnt += cnt;
         if (!cr[SC_C.IN_BAD_FILE]) return;
         clsCnt += cnt;
-        if (badL[cr[badCol]] === "Tồn thông thường") healthyCnt += cnt;
-        else {
+        const lbl = badL[cr[badCol]];
+        if (lbl === "Tồn thông thường") healthyCnt += cnt;
+        if (isStrictlyBad(lbl)) {
           badRiskCnt += cnt;
           badRiskVal += val;
           sb.badVal += val;
@@ -2547,8 +2557,9 @@
         sb.snTotCnt += 1;
         if (!sr[SN_C.IN_BAD_FILE]) return;
         clsCnt++;
-        if (badL[sr[badCol]] === "Tồn thông thường") healthyCnt++;
-        else {
+        const lbl = badL[sr[badCol]];
+        if (lbl === "Tồn thông thường") healthyCnt++;
+        if (isStrictlyBad(lbl)) {
           badRiskCnt++;
           badRiskVal += val;
           sb.badVal += val;
@@ -3676,6 +3687,9 @@
     // Determine active months & year to compare (default: 2026 YTD vs 2025 Same-Period)
     const catSales2026 = { NH06: 0, NH11: 0, NH93: 0 };
     const catSales2025Cube = { NH06: 0, NH11: 0, NH93: 0 };
+    const subSales2026 = { NH06: new Map(), NH11: new Map(), NH93: new Map() };
+    const subSales2025Daily = { NH06: new Map(), NH11: new Map(), NH93: new Map() };
+    const subSales2025Cube = { NH06: new Map(), NH11: new Map(), NH93: new Map() };
     const active2026Months = new Set();
     let has2026InPeriod = false;
 
@@ -3706,7 +3720,7 @@
       }
     }
 
-    // Pass 2: Accumulate current period sales and corresponding LY months from cube
+    // Pass 2: Accumulate current period sales and corresponding Subcat 2 breakdown
     for (let i = 0; i < rows.length; i++) {
       const r = rows[i];
       if (useActiveFilters) {
@@ -3724,11 +3738,13 @@
 
       const code = resolveRowCat(r);
       if (catSales2026[code] === undefined) continue;
+      const subName = String(subsL[r[C.SUBCAT]] || "Khác");
 
       const mStr = String(r[C.MONTH] || "");
       if (!useActiveFilters) {
         if (mStr.startsWith("2026")) {
           catSales2026[code] += r[C.SALES];
+          subSales2026[code].set(subName, (subSales2026[code].get(subName) || 0) + r[C.SALES]);
           active2026Months.add(mStr.slice(5, 7));
         }
       } else {
@@ -3740,10 +3756,12 @@
           if (has2026InPeriod) {
             if (mStr.startsWith("2026")) {
               catSales2026[code] += r[C.SALES];
+              subSales2026[code].set(subName, (subSales2026[code].get(subName) || 0) + r[C.SALES]);
               active2026Months.add(mStr.slice(5, 7));
             }
           } else {
             catSales2026[code] += r[C.SALES];
+            subSales2026[code].set(subName, (subSales2026[code].get(subName) || 0) + r[C.SALES]);
             active2026Months.add(mStr.slice(5, 7));
           }
         }
@@ -3782,12 +3800,15 @@
         if (c === "NH03") c = "NH93";
         if (catSales2025Daily[c] !== undefined) {
           catSales2025Daily[c] += d[6];
+          const subName = String(subsL[d[2]] || "Khác");
+          subSales2025Daily[c].set(subName, (subSales2025Daily[c].get(subName) || 0) + d[6]);
         }
       }
 
       // If site / channel / orderType filter is active, scale 2025 daily by 2025 cube filter ratio
       if (useActiveFilters && (siteIdxSet || chIdxSet || otIdxSet)) {
         const raw2025CubeAll = { NH06: 0, NH11: 0, NH93: 0 };
+        const raw2025SubAll = { NH06: new Map(), NH11: new Map(), NH93: new Map() };
         for (let i = 0; i < rows.length; i++) {
           const r = rows[i];
           const mStr = String(r[C.MONTH] || "");
@@ -3798,15 +3819,24 @@
           if (state.storeRegionsOnly && !storeRegSet.has(r[C.REGION])) continue;
           const code = resolveRowCat(r);
           if (raw2025CubeAll[code] === undefined) continue;
+          const subName = String(subsL[r[C.SUBCAT]] || "Khác");
           raw2025CubeAll[code] += r[C.SALES];
+          raw2025SubAll[code].set(subName, (raw2025SubAll[code].get(subName) || 0) + r[C.SALES]);
           if (siteIdxSet && !siteIdxSet.has(r[C.SITE])) continue;
           if (chIdxSet && !chIdxSet.has(r[C.CHANNEL])) continue;
           if (otIdxSet && !otIdxSet.has(r[C.ORDER_TYPE])) continue;
           catSales2025Cube[code] += r[C.SALES];
+          subSales2025Cube[code].set(subName, (subSales2025Cube[code].get(subName) || 0) + r[C.SALES]);
         }
         ["NH06", "NH11", "NH93"].forEach((code) => {
           const ratio = raw2025CubeAll[code] > 0 ? catSales2025Cube[code] / raw2025CubeAll[code] : 0;
           catSales2025Daily[code] *= ratio;
+          subSales2025Daily[code].forEach((val, sName) => {
+            const sAll = raw2025SubAll[code].get(sName) || 0;
+            const sFilt = subSales2025Cube[code].get(sName) || 0;
+            const sRatio = sAll > 0 ? sFilt / sAll : ratio;
+            subSales2025Daily[code].set(sName, val * sRatio);
+          });
         });
       }
     }
@@ -3825,6 +3855,28 @@
       const proportPct = totalSalesTr > 0 ? (salesTr / totalSalesTr) * 100 : 0;
       const vsLyPct = lySalesTr > 0 ? ((salesTr - lySalesTr) / lySalesTr) * 100 : bm.vsLyPct;
 
+      // Build active Subcat 2 list (only Subcat 2 with positive sales > 0)
+      const subcats = Array.from(subSales2026[code].entries())
+        .filter(([, sVnd]) => sVnd > 0)
+        .map(([subName, sVnd]) => {
+          const sTr = sVnd / 1e6;
+          const lyVnd = subSales2025Daily[code].get(subName) || 0;
+          const sLyTr = lyVnd / 1e6;
+          const sVsLyPct = sLyTr > 0 ? ((sTr - sLyTr) / sLyTr) * 100 : null;
+          const sProportTotalPct = totalSalesTr > 0 ? (sTr / totalSalesTr) * 100 : 0;
+          const sProportCatPct = salesTr > 0 ? (sTr / salesTr) * 100 : 0;
+          return {
+            parentCat: code,
+            subcat: subName,
+            ytdSales: sTr,
+            lySales: sLyTr,
+            vsLyPct: sVsLyPct,
+            proportPct: sProportTotalPct,
+            proportCatPct: sProportCatPct,
+          };
+        })
+        .sort((a, b) => b.ytdSales - a.ytdSales);
+
       return {
         code: bm.code,
         label: bm.label,
@@ -3834,6 +3886,7 @@
         target: targetTr,
         vsTargetPct,
         lySales: lySalesTr,
+        subcats,
       };
     });
 
@@ -3868,23 +3921,70 @@
 
     const { reportRows, totalRow } = computeActualTargetReportData(isFiltered);
 
-    // Build Table Body HTML matching user's image exactly
+    const expAllBtn = document.getElementById("targetExpandAllBtn");
+    if (expAllBtn) {
+      const allExp = ["NH06", "NH11", "NH93"].every((c) => state.targetExpandedCats.has(c));
+      expAllBtn.textContent = allExp ? "⊟ Thu gọn Subcat 2" : "⊞ Mở rộng Subcat 2";
+    }
+
+    // Build Table Body HTML with expandable Subcat 2 Pivot under each Category
     const rowsHtml = reportRows
       .map((r) => {
         const isNh11 = r.code === "NH11";
         const isSelected = Boolean(state.globalCat && isMultiMatch(state.globalCat, r.code));
+        const isExp = state.targetExpandedCats.has(r.code);
         const trCls = [
+          "target-cat-row",
           isNh11 ? "row-nh11" : "",
           isSelected ? "active-cat-row" : "",
+          isExp ? "expanded" : "",
         ].filter(Boolean).join(" ");
 
         const vsLyCls = r.vsLyPct < 0 ? "target-delta-neg" : "target-delta-pos";
         const vsLyText = `${r.vsLyPct.toFixed(1)}%`;
         const vsTargetClamp = Math.min(100, Math.max(0, r.vsTargetPct));
+        const subCount = r.subcats ? r.subcats.length : 0;
+
+        let subRowsHtml = "";
+        if (isExp && subCount > 0) {
+          subRowsHtml = r.subcats.map((sub) => {
+            const isSubSelected = Boolean(state.globalSubcat && isMultiMatch(state.globalSubcat, sub.subcat));
+            const subVsLyCls = sub.vsLyPct === null ? "muted" : sub.vsLyPct < 0 ? "target-delta-neg" : "target-delta-pos";
+            const subVsLyText = sub.vsLyPct === null ? "Mới" : `${sub.vsLyPct.toFixed(1)}%`;
+            const subSalesDisp = sub.ytdSales >= 10 ? fmtInt(Math.round(sub.ytdSales)) : sub.ytdSales.toFixed(1);
+            const subPropDisp = sub.proportPct >= 1 ? `${sub.proportPct.toFixed(1)}%` : `${sub.proportPct.toFixed(2)}%`;
+            const subCatShareClamp = Math.min(100, Math.max(0, sub.proportCatPct));
+            return `
+              <tr class="target-subcat-row ${isSubSelected ? "active-subcat-row" : ""}" data-subcat="${esc(sub.subcat)}" title="Click để lọc theo Subcat 2: ${esc(sub.subcat)} • Giữ Ctrl + Click để chọn nhiều">
+                <td class="target-subcat-name-cell">${esc(sub.subcat)}</td>
+                <td class="num mono">${subSalesDisp}</td>
+                <td class="num ${subVsLyCls}">${subVsLyText}</td>
+                <td class="num mono">${subPropDisp}</td>
+                <td class="num"><span class="target-subcat-share-note">${sub.proportCatPct.toFixed(1)}% ${esc(r.code)}</span></td>
+                <td class="num">
+                  <div class="target-progress-cell">
+                    <span class="target-cell-pct" style="font-size:10.5px;color:#94A3B8">${Math.round(sub.proportCatPct)}%</span>
+                    <div class="target-cell-track">
+                      <div class="target-cell-bar" style="width: ${subCatShareClamp}%; opacity: 0.7"></div>
+                    </div>
+                  </div>
+                </td>
+              </tr>`;
+          }).join("");
+        }
 
         return `
-        <tr class="${trCls}" data-cat="${r.code}" title="Bấm để lọc theo ${esc(r.label)} • Giữ Ctrl + Click để chọn nhiều NH">
-          <td><strong>${esc(r.label)}</strong></td>
+        <tr class="${trCls}" data-cat="${r.code}" title="Click để xổ/thu gọn ${subCount} Subcat 2 có doanh số • Giữ Ctrl + Click hoặc bấm nút Lọc để lọc Ngành Hàng">
+          <td>
+            <div class="target-cat-cell">
+              <div class="target-cat-left">
+                <span class="target-expand-icon" data-toggle-cat="${r.code}">▶</span>
+                <strong>${esc(r.label)}</strong>
+                <span class="target-subcat-count" title="${subCount} Subcat 2 có doanh số">${subCount}</span>
+              </div>
+              <button type="button" class="target-cat-filter-btn" data-filter-cat="${r.code}" title="Lọc theo ${esc(r.label)} (Giữ Ctrl + Click để chọn nhiều NH)">Lọc</button>
+            </div>
+          </td>
           <td class="num">${fmtInt(Math.round(r.ytdSales))}</td>
           <td class="num ${vsLyCls}">${vsLyText}</td>
           <td class="num">${Math.round(r.proportPct)}%</td>
@@ -3897,14 +3997,14 @@
               </div>
             </div>
           </td>
-        </tr>`;
+        </tr>${subRowsHtml}`;
       })
       .join("");
 
     const totalVsLyCls = totalRow.vsLyPct < 0 ? "target-delta-neg" : "target-delta-pos";
     const totalVsTargetClamp = Math.min(100, Math.max(0, totalRow.vsTargetPct));
     const totalRowHtml = `
-      <tr class="row-total" data-cat="" title="Bấm để xem tất cả Ngành Hàng">
+      <tr class="row-total" data-cat="" title="Bấm để bỏ lọc Ngành Hàng (Xem tất cả 3 NH)">
         <td><strong>${esc(totalRow.label)}</strong></td>
         <td class="num"><strong>${fmtInt(Math.round(totalRow.ytdSales))}</strong></td>
         <td class="num ${totalVsLyCls}"><strong>${totalRow.vsLyPct.toFixed(1)}%</strong></td>
@@ -3922,14 +4022,40 @@
 
     tbody.innerHTML = rowsHtml + totalRowHtml;
 
-    // Attach click listener on table rows (with mousedown preventDefault for Ctrl+Click)
+    // Attach click listeners on Category rows (expand/collapse Subcat 2 pivot or filter with Ctrl/Lọc button)
     tbody.querySelectorAll("tr[data-cat]").forEach((tr) => {
       tr.addEventListener("mousedown", (e) => {
         if (e.ctrlKey || e.metaKey || e.shiftKey) e.preventDefault();
       });
       tr.addEventListener("click", (e) => {
         const cat = tr.dataset.cat;
-        setGlobalCategory(cat, Boolean(e.ctrlKey || e.metaKey));
+        if (!cat) {
+          setGlobalCategory("", false);
+          return;
+        }
+        const clickedFilterBtn = Boolean(e.target.closest("[data-filter-cat]"));
+        const isCtrl = Boolean(e.ctrlKey || e.metaKey || e.shiftKey);
+        if (clickedFilterBtn || isCtrl) {
+          e.stopPropagation();
+          setGlobalCategory(cat, isCtrl);
+          return;
+        }
+        if (state.targetExpandedCats.has(cat)) state.targetExpandedCats.delete(cat);
+        else state.targetExpandedCats.add(cat);
+        renderTargetReport();
+      });
+    });
+
+    // Attach click listeners on Subcat 2 child pivot rows
+    tbody.querySelectorAll("tr[data-subcat]").forEach((tr) => {
+      tr.addEventListener("mousedown", (e) => {
+        if (e.ctrlKey || e.metaKey || e.shiftKey) e.preventDefault();
+      });
+      tr.addEventListener("click", (e) => {
+        e.stopPropagation();
+        const sub = tr.dataset.subcat;
+        const isCtrl = Boolean(e.ctrlKey || e.metaKey || e.shiftKey);
+        setGlobalSubcat(toggleMultiVal(state.globalSubcat, sub, isCtrl));
       });
     });
 
@@ -6547,7 +6673,8 @@
       if (d > 365) { aging365Val += val; aging365Qty += qty; }
     }
 
-    let badRiskVal = 0, badRiskCnt = 0, classifiedCnt = 0, totalSnCnt = 0;
+    let badRiskVal = 0, badRiskCnt = 0, veryBadCnt = 0, onlyBadCnt = 0, classifiedCnt = 0, totalSnCnt = 0;
+    const isStrictlyBad = (lbl) => lbl === "Tồn xấu" || lbl === "Tồn rất xấu";
     const cubeRows = getFilteredSerialCubeRows();
     if (cubeRows && state.raw.invSerialCube) {
       const snL = state.raw.invSerialCube.lookups;
@@ -6558,9 +6685,12 @@
         totalSnCnt += cnt;
         if (cr[SC_C.IN_BAD_FILE]) {
           classifiedCnt += cnt;
-          if (badL[cr[badCol]] !== "Tồn thông thường") {
+          const lbl = badL[cr[badCol]];
+          if (isStrictlyBad(lbl)) {
             badRiskCnt += cnt;
             badRiskVal += cr[SC_C.VAL];
+            if (lbl === "Tồn rất xấu") veryBadCnt += cnt;
+            else onlyBadCnt += cnt;
           }
         }
       });
@@ -6572,9 +6702,12 @@
       serialRows.forEach((sr) => {
         if (sr[SN_C.IN_BAD_FILE]) {
           classifiedCnt++;
-          if (badL[sr[badCol]] !== "Tồn thông thường") {
+          const lbl = badL[sr[badCol]];
+          if (isStrictlyBad(lbl)) {
             badRiskCnt++;
             badRiskVal += sr[SN_C.INV_VAL];
+            if (lbl === "Tồn rất xấu") veryBadCnt++;
+            else onlyBadCnt++;
           }
         }
       });
@@ -6590,7 +6723,7 @@
     document.getElementById("invKpiSellable").textContent = fmtCompactVnd(sellVal);
     document.getElementById("invKpiSellableSub").textContent = `${pct(sellVal)} • ${fmtInt(sellQty)} units`;
     document.getElementById("invKpiBadStock").textContent = fmtCompactVnd(badRiskVal);
-    document.getElementById("invKpiBadStockSub").textContent = `${fmtInt(badRiskCnt)} SN rủi ro / ${fmtInt(classifiedCnt)} SN phân loại`;
+    document.getElementById("invKpiBadStockSub").textContent = `${fmtInt(badRiskCnt)} SN (Rất xấu: ${fmtInt(veryBadCnt)} • Xấu: ${fmtInt(onlyBadCnt)})`;
     document.getElementById("invKpiDamaged").textContent = fmtCompactVnd(dmgVal);
     document.getElementById("invKpiDamagedSub").textContent = `${pct(dmgVal)} • ${fmtInt(dmgQty)} units`;
     document.getElementById("invKpiAging365").textContent = fmtCompactVnd(aging365Val);
@@ -7761,7 +7894,6 @@
       { key: "binCode", label: "BIN Code", nosort: true },
       { key: "binType", label: "BIN Type" },
       { key: "status", label: "TT Mua" },
-      { key: "aging", label: "Tuổi tồn", num: true },
       { key: "qty", label: "QTY", num: true },
       { key: "unitCost", label: "Unit Cost", num: true },
       { key: "value", label: "Giá trị tồn (VND)", num: true },
@@ -7773,9 +7905,6 @@
       const skuLbl = lookups.skus[r[INV_C.SKU]];
       const skuCode = extractSkuCodeFromLabel(skuLbl);
       const skuRest = skuLbl.slice(skuCode.length);
-      const age = iv.agingBasis === "first" && r.length > INV_C.AGING_FIRST ? r[INV_C.AGING_FIRST] : r[INV_C.AGING];
-      const ageCls = age < 0 ? "" : age <= 90 ? "fresh" : age <= 180 ? "mid" : "old";
-      const ageTxt = age < 0 ? "—" : `${fmtInt(age)} ngày`;
       return `
         <tr>
           <td class="mono" title="${esc(lookups.siteNames[r[INV_C.SITE_NAME]])}"><strong>${esc(lookups.sites[r[INV_C.SITE]])}</strong></td>
@@ -7785,7 +7914,6 @@
           <td class="mono">${esc(lookups.binCodes[r[INV_C.BIN_CODE]])}</td>
           <td><span class="inv-badge ${binBadgeClass(bt)}">${esc(bt)}</span></td>
           <td><span class="inv-badge ${statusBadgeClass(st)}">${esc(st)}</span></td>
-          <td class="num"><span class="aging-tag ${ageCls}">${ageTxt}</span></td>
           <td class="num" style="color:#00E5FF">${fmtInt(r[INV_C.QTY])}</td>
           <td class="num">${fmtInt(r[INV_C.UNIT_COST])}</td>
           <td class="num"><strong>${fmtInt(r[INV_C.VALUE])}</strong></td>

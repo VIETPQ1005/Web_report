@@ -10,7 +10,9 @@ Outputs multi-competitor matrix JSON: public/data/price_compare_ocgn.json
 
 import datetime
 import json
+import random
 import re
+import time
 import urllib.request
 from pathlib import Path
 
@@ -196,6 +198,7 @@ def scrape_tgdd_all() -> list:
     sub_links = sorted(set(re.findall(r'"(/o-cung-di-dong-[a-z0-9-]+)"', html0)))
     for sl in sub_links:
         try:
+            time.sleep(random.uniform(0.35, 0.85))
             ingest(fetch_url(TGDD_BASE + sl), sl)
         except Exception as exc:
             print(f"  [TGDD {sl}] error: {exc}")
@@ -273,15 +276,19 @@ def scrape_cps_all() -> list:
 
 def norm_brand(b: str, name: str = "") -> str:
     s = (b or "").strip().lower()
+    if s in ("sankdisk", "sandisk", "san disk"):
+        return "sandisk"
+    if s == "adata":
+        return "adata"
     nl = (name or "").lower()
     if not s:
         for cand in [
-            "seagate", "sandisk", "kingston", "samsung", "kioxia",
+            "seagate", "sandisk", "sankdisk", "kingston", "samsung", "kioxia",
             "western digital", "wd", "adata", "transcend", "lacie",
             "crucial", "lexar", "toshiba", "hiksemi", "hyper", "asus", "orico", "ugreen",
         ]:
             if re.search(rf"\b{re.escape(cand)}\b", nl):
-                s = cand
+                s = "sandisk" if cand == "sankdisk" else cand
                 break
     if s in ("western digital", "wd"):
         return "wd"
@@ -289,15 +296,33 @@ def norm_brand(b: str, name: str = "") -> str:
 
 
 def display_brand(b: str, norm: str) -> str:
-    if b:
-        return b
     pretty = {
-        "wd": "WD", "sandisk": "SanDisk", "kingston": "Kingston", "seagate": "Seagate",
-        "samsung": "Samsung", "kioxia": "Kioxia", "adata": "ADATA", "transcend": "Transcend",
-        "lacie": "LaCie", "crucial": "Crucial", "lexar": "Lexar", "toshiba": "Toshiba",
-        "hiksemi": "Hiksemi", "hyper": "Hyper", "asus": "ASUS", "orico": "Orico", "ugreen": "Ugreen",
+        "wd": "WD",
+        "sandisk": "SanDisk",
+        "kingston": "Kingston",
+        "seagate": "Seagate",
+        "samsung": "Samsung",
+        "kioxia": "Kioxia",
+        "adata": "Adata",
+        "transcend": "Transcend",
+        "lacie": "LaCie",
+        "crucial": "Crucial",
+        "lexar": "Lexar",
+        "toshiba": "Toshiba",
+        "hiksemi": "Hiksemi",
+        "hyper": "Hyper",
+        "asus": "ASUS",
+        "orico": "Orico",
+        "ugreen": "Ugreen",
     }
-    return pretty.get(norm, norm.title() if norm else "Khác")
+    if norm in pretty:
+        return pretty[norm]
+    raw = (b or "").strip()
+    if raw.lower() in ("adata",):
+        return "Adata"
+    if raw.lower() in ("sandisk", "sankdisk", "san disk"):
+        return "SanDisk"
+    return raw if raw else (norm.title() if norm else "Khác")
 
 
 def extract_drive_type(name: str) -> str:
@@ -402,11 +427,12 @@ def load_pv_ocgn() -> list:
         inv_qty = int(vel[12] or 0) if vel else 0
         ytd_sales = round(float(sales_by_sku.get(sku, [0])[0] or 0), 2)
 
+        b_norm = norm_brand(brand_raw, name)
         pv_list.append({
             "sku": sku,
             "name": name,
-            "brand": brand_raw,
-            "brandNorm": norm_brand(brand_raw, name),
+            "brand": display_brand(brand_raw, b_norm),
+            "brandNorm": b_norm,
             "driveType": extract_drive_type(name),
             "capacity": extract_capacity(name),
             "models": extract_models(name),

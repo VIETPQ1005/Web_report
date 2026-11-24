@@ -8,10 +8,10 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600;700&family=Chakra+Petch:wght@600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="./styles.css?v=20261124b" />
+  <link rel="stylesheet" href="./styles.css?v=20261124c" />
   <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.1/dist/echarts.min.js" defer></script>
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js" defer></script>
-  <script src="./app.js?v=20261124b" defer></script>
+  <script src="./app.js?v=20261124c" defer></script>
 </head>
 <body>
   <div class="app-shell" id="appShell">
@@ -1208,6 +1208,7 @@
               <option value="">Dung lượng</option>
             </select>
             <button type="button" class="btn-reset-mini" id="pcResetBtn">↺ Reset</button>
+            <button type="button" class="btn-scan-price" id="pcOpenScanModalBtn" title="Quét lại giá bán mới nhất từ Website đối thủ (kèm khuyến nghị chống chặn IP)">⚡ QUÉT GIÁ</button>
           </div>
         </div>
 
@@ -1215,6 +1216,34 @@
         <div class="chips-strip">
           <div class="chips-list" id="pcActiveChips"></div>
           <div class="insight-inline" id="pcInsightText">Đang tải dữ liệu so sánh giá đa đối thủ...</div>
+        </div>
+
+        <!-- 3 SOURCE DATA TELEMETRY BOXES (PV SKU COUNT • TGDD COUNT • CELLPHONES COUNT) -->
+        <div class="pc-source-grid" id="pcSourceCardsGrid">
+          <div class="pc-source-card is-pv">
+            <div class="pc-src-head">
+              <span class="pc-src-badge is-pv">PHONG VŨ</span>
+              <span class="pc-src-cat mono">NH11-01-07 • OCGN</span>
+            </div>
+            <div class="pc-src-val mono" id="pcSrcPvCount">-- SKU</div>
+            <div class="pc-src-sub" id="pcSrcPvSub">Đang tải dữ liệu SKU Phong Vũ...</div>
+          </div>
+          <div class="pc-source-card is-tgdd">
+            <div class="pc-src-head">
+              <span class="pc-src-badge is-tgdd">THẾ GIỚI DI ĐỘNG</span>
+              <a href="https://www.thegioididong.com/o-cung-di-dong" target="_blank" rel="noopener noreferrer" class="pc-src-link">thegioididong.com ↗</a>
+            </div>
+            <div class="pc-src-val mono" id="pcSrcTgddCount">-- SKU</div>
+            <div class="pc-src-sub" id="pcSrcTgddSub">Số SKU quét được tại TGDD</div>
+          </div>
+          <div class="pc-source-card is-cps">
+            <div class="pc-src-head">
+              <span class="pc-src-badge is-cps">CELLPHONES</span>
+              <a href="https://cellphones.com.vn/phu-kien/o-cung-di-dong.html" target="_blank" rel="noopener noreferrer" class="pc-src-link">cellphones.com.vn ↗</a>
+            </div>
+            <div class="pc-src-val mono" id="pcSrcCpsCount">-- SKU</div>
+            <div class="pc-src-sub" id="pcSrcCpsSub">Số SKU đang còn hàng quét được tại CellphoneS</div>
+          </div>
         </div>
 
         <!-- 4 SUMMARY KPI CARDS -->
@@ -1476,6 +1505,52 @@
               <tfoot id="storageMatrixFoot"></tfoot>
             </table>
           </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ================================================================
+       MODAL: CẢNH BÁO AN TOÀN & QUÉT GIÁ ĐỐI THỦ (ANTI-BLOCK GUIDE)
+       ================================================================ -->
+  <div class="modal-backdrop" id="pcScanModal" aria-hidden="true" role="dialog" aria-modal="true" aria-labelledby="pcScanModalTitle">
+    <div class="modal-dialog pc-scan-modal-dialog">
+      <div class="modal-header">
+        <div>
+          <h3 class="modal-title" id="pcScanModalTitle">⚡ Quét Giá Trực Tiếp Từ Website Đối Thủ</h3>
+          <p class="modal-subtitle">Cập nhật giá bán thực tế danh mục <strong>Ổ cứng di động</strong> từ Thế Giới Di Động &amp; CellphoneS đối chiếu với Phong Vũ.</p>
+        </div>
+        <button type="button" class="modal-close-btn" id="pcCloseScanModalBtn" aria-label="Đóng">×</button>
+      </div>
+      <div class="modal-body">
+        <div class="pc-scan-last-bar" id="pcScanLastTimeInfo">Lần quét gần nhất: --</div>
+
+        <div class="pc-scan-guide-box is-warn">
+          <div class="pc-guide-title">⚠️ Cảnh báo an toàn để không bị Website đối thủ phát hiện &amp; chặn IP</div>
+          <ul class="pc-guide-list">
+            <li><strong>Không quét dồn dập liên tục:</strong> Mỗi lần quét nên cách nhau tối thiểu <strong>30 – 60 phút</strong> (khuyến nghị chỉ quét <strong>2 – 3 lần/ngày</strong>).</li>
+            <li><strong>Cơ chế bảo vệ tự động:</strong> Bộ quét đã tích hợp độ trễ ngẫu nhiên (<code>0.35s – 0.85s</code>) giữa các trang và giả lập trình duyệt chuẩn để mô phỏng người dùng thật.</li>
+          </ul>
+        </div>
+
+        <div class="pc-scan-guide-box is-best-time">
+          <div class="pc-guide-title">🕒 Khung giờ quét giá TỐT NHẤT trong ngày</div>
+          <ul class="pc-guide-list">
+            <li><strong>08:30 – 09:30 sáng (Khuyên dùng):</strong> Ngay sau khi đối thủ vừa cập nhật xong bảng giá &amp; khuyến mãi đầu ngày; lưu lượng khách thật bắt đầu cao nên hoàn toàn tự nhiên.</li>
+            <li><strong>13:30 – 14:30 chiều (Khuyên dùng):</strong> Kiểm tra các đợt điều chỉnh Flash Sale giữa ngày khi lưu lượng truy cập tự nhiên đạt đỉnh.</li>
+            <li><strong>⛔ Hạn chế quét lúc 00:00 – 02:00 đêm:</strong> Khung giờ vắng người dùng thật, tường lửa (Cloudflare/WAF) của đối thủ quét bot rất gắt và giá đang chạy batch chưa ổn định.</li>
+          </ul>
+        </div>
+
+        <div class="update-feedback hidden" id="pcScanFeedback"></div>
+      </div>
+      <div class="modal-footer">
+        <div class="modal-footer-left">
+          <span class="muted" style="font-size:11px">Thời gian quét dự kiến: ~12 – 20 giây</span>
+        </div>
+        <div class="modal-footer-right" style="display:flex;gap:8px">
+          <button type="button" class="btn-mini" id="pcCancelScanModalBtn">Đóng</button>
+          <button type="button" class="btn-scan-price" id="pcConfirmScanBtn">⚡ Xác nhận Quét Giá Ngay</button>
         </div>
       </div>
     </div>

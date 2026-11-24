@@ -11162,6 +11162,23 @@
   // =========================================================================
   // MULTI-COMPETITOR PRICE COMPARE (PHONG VŨ vs TGDD • CELLPHONES — OCGN)
   // =========================================================================
+  function canonPcBrand(b) {
+    const s = String(b || "").trim();
+    const low = s.toLowerCase();
+    if (low === "adata") return "Adata";
+    if (low === "sandisk" || low === "sankdisk" || low === "san disk") return "SanDisk";
+    if (low === "wd" || low === "western digital") return "WD";
+    if (low === "lacie") return "LaCie";
+    return s;
+  }
+
+  function normalizePriceComparePayload(payload) {
+    if (!payload) return payload;
+    (payload.matrixRows || []).forEach((r) => { r.pvBrand = canonPcBrand(r.pvBrand); });
+    (payload.unmatchedRows || []).forEach((r) => { r.brand = canonPcBrand(r.brand); });
+    return payload;
+  }
+
   async function ensurePriceCompareLoaded() {
     const pc = state.priceCompare;
     if (pc.loaded || pc.loading) return;
@@ -11171,7 +11188,7 @@
     try {
       const res = await fetch(`./data/price_compare_ocgn.json?t=${Date.now()}`, { cache: "no-store" });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      pc.data = await res.json();
+      pc.data = normalizePriceComparePayload(await res.json());
       pc.loaded = true;
       populatePriceCompareFilters();
       if (state.activeView === "pricecompare") renderPriceCompareView();
@@ -11281,6 +11298,85 @@
         showToast(`⬇ Đã xuất ${exp.rows.length} dòng so sánh giá ra CSV.`);
       }
     });
+
+    // Scan Price Modal & Anti-Block Warning
+    const scanModal = document.getElementById("pcScanModal");
+    const openScanModal = () => {
+      if (!scanModal) return;
+      const lastBar = document.getElementById("pcScanLastTimeInfo");
+      const fb = document.getElementById("pcScanFeedback");
+      if (fb) { fb.className = "update-feedback hidden"; fb.textContent = ""; }
+
+      const scrapedAt = pc.data?.meta?.scrapedAt;
+      if (lastBar) {
+        if (scrapedAt) {
+          const diffMin = Math.max(0, Math.round((Date.now() - new Date(scrapedAt).getTime()) / 60000));
+          if (diffMin < 30) {
+            lastBar.className = "pc-scan-last-bar is-recent-warn";
+            lastBar.innerHTML = `⚠️ <strong>Vừa quét cách đây ${fmtInt(diffMin)} phút</strong> (${esc(formatIsoVn(scrapedAt))}) — Khuyến nghị đợi đủ <strong>30 – 60 phút</strong> trước khi quét lại để tránh bị đối thủ chặn IP.`;
+          } else {
+            lastBar.className = "pc-scan-last-bar";
+            const hrs = diffMin >= 60 ? `${(diffMin / 60).toFixed(1)} giờ trước` : `${fmtInt(diffMin)} phút trước`;
+            lastBar.innerHTML = `✅ <strong>Lần quét gần nhất:</strong> ${esc(formatIsoVn(scrapedAt))} (${esc(hrs)}) — An toàn để quét mới.`;
+          }
+        } else {
+          lastBar.className = "pc-scan-last-bar";
+          lastBar.textContent = "Lần quét gần nhất: Chưa xác định";
+        }
+      }
+      scanModal.classList.add("open");
+      scanModal.setAttribute("aria-hidden", "false");
+    };
+    const closeScanModal = () => {
+      if (!scanModal) return;
+      scanModal.classList.remove("open");
+      scanModal.setAttribute("aria-hidden", "true");
+    };
+
+    document.getElementById("pcOpenScanModalBtn")?.addEventListener("click", openScanModal);
+    document.getElementById("pcCloseScanModalBtn")?.addEventListener("click", closeScanModal);
+    document.getElementById("pcCancelScanModalBtn")?.addEventListener("click", closeScanModal);
+    scanModal?.addEventListener("click", (e) => {
+      if (e.target === scanModal) closeScanModal();
+    });
+
+    document.getElementById("pcConfirmScanBtn")?.addEventListener("click", async () => {
+      const btn = document.getElementById("pcConfirmScanBtn");
+      const fb = document.getElementById("pcScanFeedback");
+      if (!btn) return;
+      btn.disabled = true;
+      const origText = btn.textContent;
+      btn.textContent = "⏳ Đang quét giá TGDD & CellphoneS...";
+      if (fb) {
+        fb.className = "update-feedback info";
+        fb.textContent = "Đang kết nối tuần tự với độ trễ an toàn tới Thế Giới Di Động & CellphoneS (~12–20 giây)...";
+      }
+      try {
+        const res = await fetch("/api/scan-prices", { method: "POST" });
+        const contentType = res.headers.get("content-type") || "";
+        if (!contentType.includes("application/json")) {
+          throw new Error("Máy chủ hiện tại là bản tĩnh (không có Python Local API). Hãy chạy bằng `python scripts/local_server.py` hoặc chạy lệnh `python scripts/scrape_tgdd_ocgn.py` tại máy.");
+        }
+        const body = await res.json();
+        if (!res.ok || !body.ok) {
+          throw new Error(body.error || `HTTP ${res.status}`);
+        }
+        pc.data = normalizePriceComparePayload(body.data);
+        pc.loaded = true;
+        populatePriceCompareFilters();
+        renderPriceCompareView();
+        closeScanModal();
+        showToast("✅ Đã quét và cập nhật giá mới nhất từ TGDD & CellphoneS!");
+      } catch (err) {
+        if (fb) {
+          fb.className = "update-feedback error";
+          fb.textContent = `Không thể quét trực tiếp: ${err.message}`;
+        }
+      } finally {
+        btn.disabled = false;
+        btn.textContent = origText;
+      }
+    });
   }
 
   function renderPriceCompareView() {
@@ -11297,6 +11393,35 @@
     ];
     const matrixAll = payload.matrixRows || [];
     const unmatchedAll = payload.unmatchedRows || [];
+
+    // Populate the 3+ Source Data Telemetry Boxes (Phong Vũ SKU count + each competitor scanned count)
+    const srcGrid = document.getElementById("pcSourceCardsGrid");
+    if (srcGrid) {
+      const pvPriced = meta.pvPricedCount || 0;
+      const pvTotal = meta.pvTotalCount || 0;
+      const pvCardHtml = `
+        <div class="pc-source-card is-pv">
+          <div class="pc-src-head">
+            <span class="pc-src-badge is-pv">PHONG VŨ (PV)</span>
+            <span class="pc-src-cat mono">NH11-01-07 • OCGN</span>
+          </div>
+          <div class="pc-src-val mono">${fmtInt(pvPriced)} SKU có giá</div>
+          <div class="pc-src-sub">Tổng danh mục: <strong>${fmtInt(pvTotal)} SKU</strong> • Đã khớp đối thủ: <strong>${fmtInt(matrixAll.length)} SKU</strong></div>
+        </div>`;
+      const compCardsHtml = compsMeta.map((c) => {
+        const host = String(c.url || "").replace(/^https?:\/\/(www\.)?/, "").split("/")[0] || c.short;
+        return `
+          <div class="pc-source-card is-${esc(c.id)}">
+            <div class="pc-src-head">
+              <span class="pc-src-badge is-${esc(c.id)}">${esc(c.name.toUpperCase())}</span>
+              <a href="${esc(c.url)}" target="_blank" rel="noopener noreferrer" class="pc-src-link">${esc(host)} ↗</a>
+            </div>
+            <div class="pc-src-val mono">${fmtInt(c.totalCount || 0)} SKU quét được</div>
+            <div class="pc-src-sub">Khớp mã PV: <strong>${fmtInt(c.matchedCount || 0)} SKU</strong> • Chưa khớp: <strong>${fmtInt(c.unmatchedCount || 0)} SP</strong></div>
+          </div>`;
+      }).join("");
+      srcGrid.innerHTML = pvCardHtml + compCardsHtml;
+    }
 
     const fmtDmy = (iso) => {
       const m = String(iso || "").match(/^(\d{4})-(\d{2})-(\d{2})$/);

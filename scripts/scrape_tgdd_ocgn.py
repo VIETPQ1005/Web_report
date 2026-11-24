@@ -387,10 +387,14 @@ def load_pv_ocgn() -> list:
         cur_p = int(pr[0]) if pr and len(pr) > 0 else 0
         new_p = int(pr[1]) if pr and len(pr) > 1 else 0
         ad_iso = str(pr[2] or "") if pr and len(pr) > 2 else ""
+        promo_p = int(pr[3]) if pr and len(pr) > 3 else 0
 
         is_new_active = new_p > 0 and bool(ad_iso) and ad_iso <= today_iso
         is_new_upcoming = new_p > 0 and bool(ad_iso) and ad_iso > today_iso
-        effective_price = new_p if is_new_active else cur_p
+        normal_effective = new_p if is_new_active else cur_p
+        # Priority 1: New promotion price (if > 0), else Normal effective price
+        effective_price = promo_p if promo_p > 0 else normal_effective
+        is_promo = promo_p > 0 and (normal_effective == 0 or promo_p != normal_effective)
 
         vel = vel_by_sku.get(sku)
         s7d = int(vel[6] or 0) if vel else 0
@@ -411,6 +415,9 @@ def load_pv_ocgn() -> list:
             "range": rng,
             "listing": listing,
             "pvPrice": effective_price,
+            "pvNormalPrice": normal_effective,
+            "pvPromoPrice": promo_p,
+            "pvIsPromo": is_promo,
             "pvNewPrice": new_p if is_new_upcoming else 0,
             "pvActiveDate": ad_iso if (is_new_active or is_new_upcoming) else "",
             "pvPriceState": "new_active" if is_new_active else ("upcoming" if is_new_upcoming else "current"),
@@ -582,6 +589,9 @@ def main():
             "pvRange": pv["range"],
             "pvListing": pv["listing"],
             "pvPrice": pv_p,
+            "pvNormalPrice": pv["pvNormalPrice"],
+            "pvPromoPrice": pv["pvPromoPrice"],
+            "pvIsPromo": pv["pvIsPromo"],
             "pvNewPrice": pv["pvNewPrice"],
             "pvActiveDate": pv["pvActiveDate"],
             "pvPriceState": pv["pvPriceState"],

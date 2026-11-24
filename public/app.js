@@ -8364,9 +8364,12 @@
     const curNormalP = priceRec ? Number(priceRec[0] || 0) : 0;
     const newNormalP = priceRec ? Number(priceRec[1] || 0) : 0;
     const activeDateIso = priceRec ? String(priceRec[2] || "") : "";
+    const newPromoP = priceRec ? Number(priceRec[3] || 0) : 0;
     const isNewActive = newNormalP > 0 && Boolean(activeDateIso) && activeDateIso <= todayIso;
     const isNewUpcoming = newNormalP > 0 && Boolean(activeDateIso) && activeDateIso > todayIso;
-    const currentSellingP = isNewActive ? newNormalP : curNormalP;
+    const normalEffectiveP = isNewActive ? newNormalP : curNormalP;
+    // Priority 1: New promotion price (if > 0), fallback to Normal selling price order
+    const currentSellingP = newPromoP > 0 ? newPromoP : normalEffectiveP;
 
     const alertBox = document.getElementById("lkPriceAlertBox");
     if (alertBox) {
@@ -8378,7 +8381,7 @@
           Math.round((new Date(`${activeDateIso}T00:00:00`) - new Date(`${todayIso}T00:00:00`)) / 86400000)
         );
         const dirCls = diff > 0 ? "is-increase" : diff < 0 ? "is-decrease" : "is-neutral";
-        const dirLabel = diff > 0 ? "TĂNG GIÁ" : diff < 0 ? "GIẢM GIÁ" : "CẬP NHẬT GIÁ";
+        const dirLabel = diff > 0 ? "TĂNG GIÁ NIÊM YẾT THƯỜNG" : diff < 0 ? "GIẢM GIÁ NIÊM YẾT THƯỜNG" : "CẬP NHẬT GIÁ";
         const dirIcon = diff > 0 ? "📈" : diff < 0 ? "📉" : "🔄";
         const sign = diff > 0 ? "+" : "";
         const diffStr = curNormalP > 0 ? `${sign}${fmtVndFull(diff)} (${sign}${pct.toFixed(1)}%)` : "";
@@ -8387,13 +8390,13 @@
           <div class="lpa-left">
             <span class="lpa-badge">${dirIcon} ${dirLabel}</span>
             <span class="lpa-msg">
-              Giá bán mới <strong class="mono">${esc(fmtVndFull(newNormalP))}</strong> sẽ có hiệu lực từ ngày
+              Giá Normal mới <strong class="mono">${esc(fmtVndFull(newNormalP))}</strong> sẽ có hiệu lực từ ngày
               <strong class="mono">${esc(fmtIsoDmy(activeDateIso))}</strong>
               <span class="lpa-days">(còn ${fmtInt(daysLeft)} ngày)</span>
             </span>
           </div>
           <div class="lpa-right mono">
-            ${curNormalP > 0 ? `<span class="lpa-old">Hiện tại: ${esc(fmtVndFull(curNormalP))}</span>` : ""}
+            ${curNormalP > 0 ? `<span class="lpa-old">Normal hiện tại: ${esc(fmtVndFull(curNormalP))}</span>` : ""}
             ${diffStr ? `<span class="lpa-delta">${esc(diffStr)}</span>` : ""}
           </div>`;
       } else {
@@ -8402,14 +8405,22 @@
       }
     }
 
-    let curPriceSub = "";
-    if (isNewActive) {
-      curPriceSub = `Đã hiệu lực từ ${fmtIsoDmy(activeDateIso)}` + (curNormalP && curNormalP !== newNormalP ? ` • Cũ: ${fmtVndFull(curNormalP)}` : "");
-    } else if (isNewUpcoming) {
+    const subParts = [];
+    if (newPromoP > 0) {
+      subParts.push(
+        normalEffectiveP > 0 && newPromoP !== normalEffectiveP
+          ? `🏷️ Giá KM • Normal: ${fmtVndFull(normalEffectiveP)}`
+          : `🏷️ Giá KM (New Promo)`
+      );
+    } else if (isNewActive) {
+      subParts.push(`Đã hiệu lực từ ${fmtIsoDmy(activeDateIso)}` + (curNormalP && curNormalP !== newNormalP ? ` • Cũ: ${fmtVndFull(curNormalP)}` : ""));
+    }
+    if (isNewUpcoming) {
       const diff = newNormalP - curNormalP;
       const tag = diff > 0 ? "Tăng" : diff < 0 ? "Giảm" : "Đổi";
-      curPriceSub = `${tag} → ${fmtVndFull(newNormalP)} (${fmtIsoDmy(activeDateIso)})`;
+      subParts.push(`${tag} Normal → ${fmtVndFull(newNormalP)} (${fmtIsoDmy(activeDateIso)})`);
     }
+    const curPriceSub = subParts.join(" • ");
 
     const priceItems = [
       {
@@ -11515,6 +11526,9 @@
           const bestSign = r.diffVsBestVnd > 0 ? "+" : "";
           const bestCls = r.diffVsBestVnd > 10000 ? "pc-diff-pos" : r.diffVsBestVnd < -10000 ? "pc-diff-neg" : "pc-diff-eq";
           const bestCompShort = (compsMeta.find((c) => c.id === r.bestCompId)?.short || r.bestCompId || "").toUpperCase();
+          const pvPromoNoteHtml = r.pvIsPromo && r.pvNormalPrice > 0
+            ? `<div class="pc-old-price">${esc(fmtVndFull(r.pvNormalPrice))} <span class="pc-disc-tag">Giá KM</span></div>`
+            : "";
           const pvUpcomingHtml = r.pvPriceState === "upcoming" && r.pvNewPrice > 0
             ? `<div class="pc-pv-sub">📅 ${fmtDmy(r.pvActiveDate)} → ${esc(fmtVndFull(r.pvNewPrice))}</div>`
             : "";
@@ -11533,6 +11547,7 @@
               </td>
               <td class="num mono pc-pv-price-cell">
                 <div><strong>${esc(fmtVndFull(r.pvPrice))}</strong></div>
+                ${pvPromoNoteHtml}
                 ${pvUpcomingHtml}
               </td>
               ${compsMeta.map((c) => renderCompCell(r.competitors?.[c.id], c.short, r.bestCompId === c.id && r.compCount > 1)).join("")}

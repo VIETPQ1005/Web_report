@@ -1,7 +1,7 @@
 # PHONG VŨ // ACCY BI Command Dashboard — Workspace Rules
 
-## 1. Quy trình Chạy & Đồng bộ Code (Local + GitHub Only)
-- **Không deploy ra Netlify:** Tuyệt đối không chạy lệnh deploy lên Netlify hay gọi API đồng bộ Netlify.
+## 1. Quy trình Chạy & Đồng bộ Code (Local + GitHub + Netlify)
+- **Deploy ra Netlify khi có yêu cầu:** Mặc định ưu tiên kiểm tra Local và đồng bộ GitHub; chỉ chạy lệnh deploy trực tiếp lên Netlify khi người dùng yêu cầu/xác nhận rõ ràng.
 - **Chạy Local:** Mọi thay đổi giao diện và dữ liệu được kiểm tra trực tiếp trên máy chủ Local phục vụ từ thư mục `public/` (mặc định tại `http://localhost:8080` bằng `python -m http.server 8080 --directory public` với `BypassSandbox: true`).
 - **Đồng bộ GitHub:** Sau khi kiểm tra cú pháp (`node --check public/app.js`), chỉ commit và push trực tiếp lên nhánh `main` của GitHub (`git -c safe.directory=D:/Project_AI/Website push origin main` với `BypassSandbox: true`).
 - **Chống Cache trình duyệt:** Khi cập nhật `public/app.js` hoặc `public/styles.css`, luôn tăng mã phiên bản query string (`?v=...`) trong `public/index.html` để trình duyệt tại Local tải ngay code mới.

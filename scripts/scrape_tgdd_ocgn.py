@@ -134,13 +134,17 @@ def parse_tgdd_product_dict(obj: dict) -> dict | None:
     prices = obj.get("productPrices") or []
     p0 = prices[0] if prices and isinstance(prices[0], dict) else {}
     price = int(round(float(p0.get("price") or 0)))
-    if price <= 0:
+    is_can_buy = bool(p0.get("isCanBuy", False))
+    stock_qty = int(round(float(p0.get("stock") or 0)))
+    online_status = int(round(float(p0.get("onlineStatusId") or 0)))
+    # Exclude discontinued / out-of-stock TGDD products (onlineStatusId in (2, 3) or isCanBuy == False or stock <= 0)
+    # where TGDD hides the price on the web UI and shows "Tạm hết hàng" / "Ngừng kinh doanh"
+    if price <= 0 or not is_can_buy or stock_qty <= 0 or online_status in (2, 3):
         return None
     sys_price = int(round(float(p0.get("sysPrice") or 0)))
     disc_pct = int(round(float(p0.get("discountPercent") or 0)))
     if disc_pct <= 0 and sys_price > price > 0:
         disc_pct = int(round((sys_price - price) / sys_price * 100))
-    is_can_buy = bool(p0.get("isCanBuy", True))
 
     brand_obj = obj.get("brand") or {}
     brand_name = str(brand_obj.get("brandName") or "").strip() if isinstance(brand_obj, dict) else ""

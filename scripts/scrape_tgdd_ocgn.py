@@ -12,6 +12,7 @@ import datetime
 import json
 import random
 import re
+import ssl
 import time
 import urllib.request
 from pathlib import Path
@@ -40,6 +41,7 @@ CAP_RE = re.compile(r"\b(\d+(?:\.\d+)?)\s*(TB|GB)\b", re.I)
 MODEL_PATTERNS = [
     ("xs2000", [r"xs2000", r"sxs2000"]),
     ("xs1000", [r"xs1000", r"sxs1000"]),
+    ("t300s", [r"t300s", r"shield\s*t300"]),
     ("e10", [r"\be10\b", r"sdssde10"]),
     ("e30_fortnite", [r"sdssde30f", r"fortnite"]),
     ("e30_std", [r"\be30\b(?!.*fortnite)", r"sdssde30(?!f)"]),
@@ -103,13 +105,54 @@ COLOR_MAP = {
 }
 
 
-def fetch_url(url: str, data: bytes = None, extra_headers: dict = None) -> str:
+def fetch_url(url: str, data: bytes = None, extra_headers: dict = None, unverified_ssl: bool = False) -> str:
     hdrs = dict(HEADERS)
     if extra_headers:
         hdrs.update(extra_headers)
     req = urllib.request.Request(url, data=data, headers=hdrs)
-    with urllib.request.urlopen(req, timeout=25) as resp:
+    ctx = ssl._create_unverified_context() if unverified_ssl else None
+    with urllib.request.urlopen(req, timeout=25, context=ctx) as resp:
         return resp.read().decode("utf-8", errors="ignore")
+
+
+def parse_tgdd_product_dict(obj: dict) -> dict | None:
+    if not isinstance(obj, dict):
+        return None
+    url_rel = str(obj.get("url") or "").strip().lstrip("/")
+    if not url_rel.startswith("o-cung-di-dong/"):
+        return None
+    code = str(obj.get("productCode") or url_rel).strip()
+    name = str(obj.get("name") or "").strip()
+    if not code or not name:
+        return None
+
+    prices = obj.get("productPrices") or []
+    p0 = prices[0] if prices and isinstance(prices[0], dict) else {}
+    price = int(round(float(p0.get("price") or 0)))
+    if price <= 0:
+        return None
+    sys_price = int(round(float(p0.get("sysPrice") or 0)))
+    disc_pct = int(round(float(p0.get("discountPercent") or 0)))
+    if disc_pct <= 0 and sys_price > price > 0:
+        disc_pct = int(round((sys_price - price) / sys_price * 100))
+    is_can_buy = bool(p0.get("isCanBuy", True))
+
+    brand_obj = obj.get("brand") or {}
+    brand_name = str(brand_obj.get("brandName") or "").strip() if isinstance(brand_obj, dict) else ""
+
+    return {
+        "compId": "tgdd",
+        "compShort": "TGDD",
+        "code": code,
+        "name": name,
+        "brand": brand_name,
+        "price": price,
+        "oldPrice": sys_price if sys_price > price else 0,
+        "discountPct": disc_pct,
+        "inStock": is_can_buy,
+        "sold": str(obj.get("totalSold") or "").strip(),
+        "url": f"{TGDD_BASE}/{url_rel}",
+    }
 
 
 def extract_next_f_text(html_str: str) -> str:
@@ -144,70 +187,113 @@ def extract_tgdd_products_from_next_f(joined: str) -> list:
             search_pos = cand
         if not obj:
             continue
-        url_rel = str(obj.get("url") or "").strip().lstrip("/")
-        if not url_rel.startswith("o-cung-di-dong/"):
+        item = parse_tgdd_product_dict(obj)
+        if not item or item["code"] in seen:
             continue
-        code = str(obj.get("productCode") or url_rel)
-        if code in seen:
-            continue
-        seen.add(code)
-
-        prices = obj.get("productPrices") or []
-        p0 = prices[0] if prices and isinstance(prices[0], dict) else {}
-        price = int(round(float(p0.get("price") or 0)))
-        sys_price = int(round(float(p0.get("sysPrice") or 0)))
-        disc_pct = int(round(float(p0.get("discountPercent") or 0)))
-        if disc_pct <= 0 and sys_price > price > 0:
-            disc_pct = int(round((sys_price - price) / sys_price * 100))
-        is_can_buy = bool(p0.get("isCanBuy", True))
-
-        brand_obj = obj.get("brand") or {}
-        brand_name = str(brand_obj.get("brandName") or "").strip() if isinstance(brand_obj, dict) else ""
-
-        products.append({
-            "compId": "tgdd",
-            "compShort": "TGDD",
-            "code": code,
-            "name": str(obj.get("name") or "").strip(),
-            "brand": brand_name,
-            "price": price,
-            "oldPrice": sys_price if sys_price > price else 0,
-            "discountPct": disc_pct,
-            "inStock": is_can_buy,
-            "sold": str(obj.get("totalSold") or "").strip(),
-            "url": f"{TGDD_BASE}/{url_rel}",
-        })
+        seen.add(item["code"])
+        products.append(item)
     return products
 
 
 def scrape_tgdd_all() -> list:
-    html0 = fetch_url(TGDD_URL)
     all_prods = {}
 
-    def ingest(html_str: str, label: str):
-        joined = extract_next_f_text(html_str)
-        items = extract_tgdd_products_from_next_f(joined)
+    def ingest_items(items: list, label: str):
         added = 0
-        for it in items:
+        for raw_obj in items:
+            it = parse_tgdd_product_dict(raw_obj) if "compId" not in raw_obj else raw_obj
+            if not it or it["price"] <= 0:
+                continue
             if it["code"] not in all_prods:
                 all_prods[it["code"]] = it
                 added += 1
-        print(f"  [TGDD {label}] found={len(items)}, new={added}")
+        print(f"  [TGDD {label}] raw={len(items)}, new_priced={added}, total={len(all_prods)}")
 
-    ingest(html0, "main")
-    sub_links = sorted(set(re.findall(r'"(/o-cung-di-dong-[a-z0-9-]+)"', html0)))
-    for sl in sub_links:
+    # 1. Paginate TGDD Gateway API (/Cate/GetproductCateV2) — simulates clicking "Xem thêm xx sản phẩm"
+    tgdd_api_url = "https://api.thegioididong.com/gw/bus-tgdd-tmdt/api/Cate/GetproductCateV2"
+    tgdd_api_hdrs = {
+        "Content-Type": "application/json",
+        "os": "WebTGDD",
+        "siteid": "1",
+        "deviceid": "server-cache-12-00-00_24-11-26",
+        "platform": "2",
+        "provinceid": "1027",
+        "Origin": TGDD_BASE,
+        "Referer": TGDD_URL,
+    }
+    api_queries = [
+        # Path A: Phụ kiện -> Thẻ nhớ, USB, Ổ cứng (cateId=162) -> Ổ cứng di động (filterId=33)
+        *[
+            {
+                "label": f"api:phu-kien-luu-tru/p{pi}",
+                "body": {
+                    "pageIndex": pi,
+                    "pageSize": 20,
+                    "provinceId": 1027,
+                    "urlCate": "phu-kien-luu-tru",
+                    "cateId": "162",
+                    "filters": [{"filterId": 33, "filterTypeId": 7}],
+                },
+            }
+            for pi in range(3)
+        ],
+        # Path B: Direct /o-cung-di-dong (cateId=33) across all pages
+        *[
+            {
+                "label": f"api:o-cung-di-dong/p{pi}",
+                "body": {
+                    "pageIndex": pi,
+                    "pageSize": 20,
+                    "provinceId": 1027,
+                    "urlCate": "o-cung-di-dong",
+                    "cateId": "33",
+                    "filters": [],
+                },
+            }
+            for pi in range(5)
+        ],
+    ]
+    for q in api_queries:
         try:
-            time.sleep(random.uniform(0.35, 0.85))
-            ingest(fetch_url(TGDD_BASE + sl), sl)
+            time.sleep(random.uniform(0.2, 0.45))
+            raw = fetch_url(
+                tgdd_api_url,
+                data=json.dumps(q["body"]).encode("utf-8"),
+                extra_headers=tgdd_api_hdrs,
+                unverified_ssl=True,
+            )
+            resp_json = json.loads(raw)
+            prods = (resp_json.get("data") or {}).get("products") or []
+            ingest_items(prods, q["label"])
+            if not prods:
+                continue
         except Exception as exc:
-            print(f"  [TGDD {sl}] error: {exc}")
+            print(f"  [TGDD {q['label']}] error: {exc}")
+
+    # 2. Fallback / supplement via SSR HTML + brand subpages
+    try:
+        html0 = fetch_url(TGDD_URL)
+        ingest_items(extract_tgdd_products_from_next_f(extract_next_f_text(html0)), "ssr:main")
+        sub_links = sorted(set(re.findall(r'"(/o-cung-di-dong-[a-z0-9-]+)"', html0)))
+        for sl in sub_links:
+            try:
+                time.sleep(random.uniform(0.25, 0.55))
+                h_sub = fetch_url(TGDD_BASE + sl)
+                ingest_items(extract_tgdd_products_from_next_f(extract_next_f_text(h_sub)), f"ssr:{sl}")
+            except Exception as exc:
+                print(f"  [TGDD ssr:{sl}] error: {exc}")
+    except Exception as exc:
+        print(f"  [TGDD ssr:main] error: {exc}")
 
     return list(all_prods.values())
 
 
 def scrape_cps_all() -> list:
     all_prods = {}
+    # CellphoneS category page (cate 750) displays all priced products in stock_available_id:
+    #   46 = Còn hàng (InStock)
+    #   56 = Hàng sắp về / Đăng ký nhận thông tin (PreOrder/Subscription with live price on category grid)
+    #   152 / 4920 = PreOrder / VirtualStock
     for page in range(1, 5):
         gql = {
             "query": f"""
@@ -219,7 +305,7 @@ def scrape_cps_all() -> list:
                 sort: [{{ view: desc }}]
               ) {{
                 general {{ product_id name sku url_path manufacturer }}
-                filterable {{ price special_price stock_available_id }}
+                filterable {{ price special_price stock_available_id company_stock_id }}
               }}
             }}
             """
@@ -250,9 +336,12 @@ def scrape_cps_all() -> list:
             old_price = rp if (sp > 0 and rp > sp) else 0
             disc_pct = int(round((old_price - price) / old_price * 100)) if old_price > price > 0 else 0
             stock_id = f.get("stock_available_id")
-            in_stock = (stock_id == 46)
-            if not in_stock or price <= 0:
+            comp_stock_id = f.get("company_stock_id")
+            # Active category listing on CellphoneS ("Xem thêm xx sản phẩm"): province stock_available_id or nationwide company_stock_id in (46, 56, 152, 4920)
+            is_listed_active = (stock_id in (46, 56, 152, 4920)) or (comp_stock_id in (46, 56, 152, 4920))
+            if not is_listed_active or price <= 0:
                 continue
+            in_stock = (stock_id == 46) or (comp_stock_id == 46)
 
             all_prods[pid] = {
                 "compId": "cps",
@@ -264,11 +353,11 @@ def scrape_cps_all() -> list:
                 "oldPrice": old_price,
                 "discountPct": disc_pct,
                 "inStock": in_stock,
-                "sold": "",
+                "sold": "" if in_stock else "Hàng sắp về",
                 "url": f"https://cellphones.com.vn/{url_path}",
             }
             added += 1
-        print(f"  [CPS page={page}] returned={len(prods)}, new={added}")
+        print(f"  [CPS page={page}] returned={len(prods)}, new_priced={added}, total={len(all_prods)}")
         if len(prods) < 100:
             break
     return list(all_prods.values())

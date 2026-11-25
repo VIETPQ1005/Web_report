@@ -8,10 +8,10 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600;700&family=Chakra+Petch:wght@600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="./styles.css?v=20261125a" />
+  <link rel="stylesheet" href="./styles.css?v=20261125b" />
   <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.1/dist/echarts.min.js" defer></script>
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js" defer></script>
-  <script src="./app.js?v=20261125a" defer></script>
+  <script src="./app.js?v=20261125b" defer></script>
 </head>
 <body>
   <div class="app-shell" id="appShell">
@@ -53,11 +53,6 @@
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><circle cx="11" cy="11" r="7"/><path d="M20 20l-4.35-4.35"/></svg>
           <span>Tra cứu<br/>SKU/SN</span>
         </button>
-        <button class="rail-item rail-item-featured" data-view="pricecompare" title="So Sánh Giá bán Phong Vũ với nhiều Website đối thủ (Thế Giới Di Động, CellphoneS...)">
-          <span class="rail-featured-dot" aria-hidden="true"></span>
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v18"/><path d="M5 7h14"/><path d="M3 14l2-7 2 7a2 2 0 0 1-4 0z"/><path d="M17 14l2-7 2 7a2 2 0 0 1-4 0z"/><path d="M8 21h8"/></svg>
-          <span>So Sánh<br/>Giá</span>
-        </button>
         <button class="rail-item" data-view="monthly" title="Báo cáo Sales & Qty theo Report Date">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 3v18h18"/><rect x="7" y="10" width="3" height="7"/><rect x="12" y="6" width="3" height="11"/><rect x="17" y="12" width="3" height="5"/></svg>
           <span>Monthly<br/>Report</span>
@@ -77,6 +72,11 @@
         <button class="rail-item" data-view="ledger" title="Bảng dữ liệu chi tiết & Export CSV">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 10h18M9 4v16"/></svg>
           <span>Data<br/>Ledger</span>
+        </button>
+        <button class="rail-item rail-item-featured" data-view="pricecompare" title="So Sánh Giá bán Phong Vũ với nhiều Website đối thủ (Thế Giới Di Động, CellphoneS, FPT Shop...)">
+          <span class="rail-featured-dot" aria-hidden="true"></span>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v18"/><path d="M5 7h14"/><path d="M3 14l2-7 2 7a2 2 0 0 1-4 0z"/><path d="M17 14l2-7 2 7a2 2 0 0 1-4 0z"/><path d="M8 21h8"/></svg>
+          <span>So Sánh<br/>Giá</span>
         </button>
       </nav>
 
@@ -1190,6 +1190,7 @@
               <button type="button" class="seg-btn" data-val="both">Có ở ≥2 Đối thủ</button>
               <button type="button" class="seg-btn" data-val="tgdd">TGDD</button>
               <button type="button" class="seg-btn" data-val="cps">CellphoneS</button>
+              <button type="button" class="seg-btn" data-val="fpt">FPT Shop</button>
             </div>
             <div class="seg-tabs" id="pcStatusTabs" title="Lọc theo vị thế giá Phong Vũ">
               <button type="button" class="seg-btn active" data-val="all">Tất cả vị thế</button>
@@ -1242,7 +1243,15 @@
               <a href="https://cellphones.com.vn/phu-kien/o-cung-di-dong.html" target="_blank" rel="noopener noreferrer" class="pc-src-link">cellphones.com.vn ↗</a>
             </div>
             <div class="pc-src-val mono" id="pcSrcCpsCount">-- SKU</div>
-            <div class="pc-src-sub" id="pcSrcCpsSub">Số SKU đang còn hàng quét được tại CellphoneS</div>
+            <div class="pc-src-sub" id="pcSrcCpsSub">Số SKU quét được tại CellphoneS</div>
+          </div>
+          <div class="pc-source-card is-fpt">
+            <div class="pc-src-head">
+              <span class="pc-src-badge is-fpt">FPT SHOP</span>
+              <a href="https://fptshop.com.vn/phu-kien/o-cung-di-dong" target="_blank" rel="noopener noreferrer" class="pc-src-link">fptshop.com.vn ↗</a>
+            </div>
+            <div class="pc-src-val mono" id="pcSrcFptCount">-- SKU</div>
+            <div class="pc-src-sub" id="pcSrcFptSub">Số SKU quét được tại FPT Shop</div>
           </div>
         </div>
 
@@ -1518,7 +1527,7 @@
       <div class="modal-header">
         <div>
           <h3 class="modal-title" id="pcScanModalTitle">⚡ Quét Giá Trực Tiếp Từ Website Đối Thủ</h3>
-          <p class="modal-subtitle">Cập nhật giá bán thực tế danh mục <strong>Ổ cứng di động</strong> từ Thế Giới Di Động &amp; CellphoneS đối chiếu với Phong Vũ.</p>
+          <p class="modal-subtitle">Cập nhật giá bán thực tế danh mục <strong>Ổ cứng di động</strong> từ Thế Giới Di Động, CellphoneS &amp; FPT Shop đối chiếu với Phong Vũ.</p>
         </div>
         <button type="button" class="modal-close-btn" id="pcCloseScanModalBtn" aria-label="Đóng">×</button>
       </div>

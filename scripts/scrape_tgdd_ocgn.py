@@ -4,8 +4,7 @@ Multi-Competitor Price Scraper for Phong Vũ Subcat 2: NH11-01-07-Ổ cứng g�
 Currently scrapes:
   1. Thế Giới Di Động (TGDD) — https://www.thegioididong.com/o-cung-di-dong
   2. CellphoneS (CPS)        — https://cellphones.com.vn/phu-kien/o-cung-di-dong.html (GraphQL cate 750)
-
-Outputs multi-competitor matrix JSON: public/data/price_compare_ocgn.json
+  3. FPT Shop (FPT)          — https://fptshop.com.vn/phu-kien/o-cung-di-dong
 """
 
 import datetime
@@ -26,6 +25,8 @@ TGDD_BASE = "https://www.thegioididong.com"
 TGDD_URL = f"{TGDD_BASE}/o-cung-di-dong"
 CPS_URL = "https://cellphones.com.vn/phu-kien/o-cung-di-dong.html"
 CPS_GQL_URL = "https://api.cellphones.com.vn/v2/graphql/query"
+FPT_BASE = "https://fptshop.com.vn"
+FPT_URL = f"{FPT_BASE}/phu-kien/o-cung-di-dong"
 
 HEADERS = {
     "User-Agent": (
@@ -46,7 +47,7 @@ MODEL_PATTERNS = [
     ("e30_fortnite", [r"sdssde30f", r"fortnite"]),
     ("e30_std", [r"\be30\b(?!.*fortnite)", r"sdssde30(?!f)"]),
     ("e61", [r"\be61\b", r"sdssde61", r"extreme\s+(?:v2|portable)(?!.*pro)"]),
-    ("e81", [r"\be81\b", r"sdssde81", r"extreme\s+pro"]),
+    ("e81", [r"\be81c?\b", r"sdssde81", r"extreme\s+pro", r"creator\s+pro"]),
     ("creator_magsafe", [r"sdssde62", r"creator\s+phone", r"magsafe"]),
     ("one_touch", [r"one\s*touch", r"\bstky\d+", r"\bstkb\d+", r"\bstkg\d+"]),
     ("expansion", [r"expansion", r"\bstkm\d+", r"\bstkp\d+"]),
@@ -56,7 +57,7 @@ MODEL_PATTERNS = [
     ("my_passport", [r"my\s*passport(?!\s*(?:ultra|ssd))"]),
     ("elements_se", [r"elements\s+se"]),
     ("elements", [r"\belements\b(?!\s+se)"]),
-    ("t7_shield", [r"\bt7\s*shield\b"]),
+    ("t7_shield", [r"\bt7\s*shield\b", r"shield.*mu-pe", r"mu-pe\d[a-z]\d"]),
     ("t7_touch", [r"\bt7\s*touch\b"]),
     ("t7_std", [r"\bt7\b(?!\s*(?:shield|touch))"]),
     ("t9", [r"\bt9\b"]),
@@ -64,10 +65,13 @@ MODEL_PATTERNS = [
     ("exceria_plus_g2", [r"exceria\s*plus\s*g2", r"lxd20"]),
     ("exceria_plus_g1", [r"exceria\s*plus(?!\s*g2)", r"lxd10"]),
     ("ahv320", [r"ahv320", r"hv320"]),
+    ("hv620s", [r"hv620s", r"ahv620s"]),
     ("hd710", [r"hd710", r"ahd710"]),
     ("sc750", [r"sc750"]),
     ("sd810", [r"sd810"]),
     ("se880", [r"se880"]),
+    ("sp_armor_a30", [r"armor\s*a30"]),
+    ("sp_px10", [r"\bpx10\b"]),
     ("rapids_pro", [r"rapids\s*pro"]),
     ("esd310", [r"esd310"]),
     ("esd320", [r"esd320"]),
@@ -90,6 +94,7 @@ MODEL_PATTERNS = [
     ("lexar_armor700", [r"armor\s*700"]),
     ("lacie_rugged_mini", [r"rugged\s*mini"]),
     ("lacie_rugged", [r"\brugged\b(?!\s*mini)"]),
+    ("lacie_portable_ssd", [r"lacie\s+portable", r"ssd\s+lacie\s+portable", r"stks\d+", r"sthk\d+"]),
     ("canvio_basics", [r"canvio\s*basics"]),
     ("canvio_advance", [r"canvio\s*advance"]),
     ("canvio_ready", [r"canvio\s*ready"]),
@@ -363,6 +368,88 @@ def scrape_cps_all() -> list:
     return list(all_prods.values())
 
 
+def extract_fpt_items_from_next_f(joined: str) -> list:
+    decoder = json.JSONDecoder()
+    all_items = []
+    seen_codes = set()
+    for m in re.finditer(r'"totalCount"\s*:\s*\d+', joined):
+        brace_pos = joined.rfind("{", max(0, m.start() - 120), m.start())
+        if brace_pos == -1:
+            continue
+        try:
+            obj, _ = decoder.raw_decode(joined, brace_pos)
+        except Exception:
+            continue
+        if not isinstance(obj, dict) or not isinstance(obj.get("items"), list):
+            continue
+        for it in obj["items"]:
+            if not isinstance(it, dict):
+                continue
+            slug = str(it.get("slug") or "").strip().lstrip("/")
+            if not slug.startswith("phu-kien/"):
+                continue
+            skus = it.get("skus") or []
+            s0 = skus[0] if skus and isinstance(skus[0], dict) else {}
+            code = str(s0.get("sku") or it.get("code") or slug).strip()
+            if not code or code in seen_codes:
+                continue
+            # Prefer full SKU name (includes exact model token like HV620S, E81C, Type C) over generic UPC name
+            name = str(s0.get("name") or s0.get("displayName") or it.get("name") or it.get("displayName") or "").strip()
+            cur_p = int(round(float(it.get("currentPrice") or s0.get("currentPrice") or it.get("price") or 0)))
+            orig_p = int(round(float(it.get("originalPrice") or s0.get("originalPrice") or it.get("price") or 0)))
+            price = cur_p if cur_p > 0 else orig_p
+            if price <= 0 or not name:
+                continue
+            old_price = orig_p if orig_p > price else 0
+            disc_pct = int(round(float(it.get("discountPercentage") or s0.get("discountPercentage") or 0)))
+            if disc_pct <= 0 and old_price > price > 0:
+                disc_pct = int(round((old_price - price) / old_price * 100))
+
+            status_web = str((s0.get("statusOnWeb") or {}).get("displayName") or "").strip()
+            in_stock = status_web.lower() not in ("hàng sắp về", "tạm hết hàng", "ngừng kinh doanh")
+            brand_raw = str((it.get("brand") or {}).get("name") or "").strip()
+
+            seen_codes.add(code)
+            all_items.append({
+                "compId": "fpt",
+                "compShort": "FPT",
+                "code": code,
+                "name": name,
+                "brand": brand_raw,
+                "price": price,
+                "oldPrice": old_price,
+                "discountPct": disc_pct,
+                "inStock": in_stock,
+                "sold": "" if in_stock else (status_web or "Hàng sắp về"),
+                "url": f"{FPT_BASE}/{slug}",
+            })
+    return all_items
+
+
+def scrape_fpt_all() -> list:
+    all_prods = {}
+    for url_variant, label in [
+        (FPT_URL, "main"),
+        (f"{FPT_URL}?trang=2", "page2"),
+    ]:
+        try:
+            html_str = fetch_url(url_variant, unverified_ssl=True)
+            joined = extract_next_f_text(html_str)
+            items = extract_fpt_items_from_next_f(joined)
+            added = 0
+            for it in items:
+                if it["code"] not in all_prods:
+                    all_prods[it["code"]] = it
+                    added += 1
+            print(f"  [FPT {label}] raw={len(items)}, new_priced={added}, total={len(all_prods)}")
+            if added == 0:
+                break
+        except Exception as exc:
+            print(f"  [FPT {label}] error: {exc}")
+            break
+    return list(all_prods.values())
+
+
 def norm_brand(b: str, name: str = "") -> str:
     s = (b or "").strip().lower()
     if s in ("sankdisk", "sandisk", "san disk"):
@@ -370,11 +457,15 @@ def norm_brand(b: str, name: str = "") -> str:
     if s == "adata":
         return "adata"
     nl = (name or "").lower()
+    # Notice: FPT Shop labels LaCie under brand "Seagate", so if "lacie" is in the product name, normalize to "lacie"
+    if "lacie" in nl:
+        return "lacie"
     if not s:
         for cand in [
             "seagate", "sandisk", "sankdisk", "kingston", "samsung", "kioxia",
             "western digital", "wd", "adata", "transcend", "lacie",
             "crucial", "lexar", "toshiba", "hiksemi", "hyper", "asus", "orico", "ugreen",
+            "silicon power",
         ]:
             if re.search(rf"\b{re.escape(cand)}\b", nl):
                 s = "sandisk" if cand == "sankdisk" else cand
@@ -403,6 +494,7 @@ def display_brand(b: str, norm: str) -> str:
         "asus": "ASUS",
         "orico": "Orico",
         "ugreen": "Ugreen",
+        "silicon power": "Silicon Power",
     }
     if norm in pretty:
         return pretty[norm]
@@ -426,6 +518,9 @@ def extract_drive_type(name: str) -> str:
 def extract_capacity(name: str) -> str:
     m = CAP_RE.search(name or "")
     if not m:
+        m = re.search(r"\b(128|256|500|512)\s*G\b", name or "", re.I)
+        if m:
+            return f"{int(m.group(1))}GB"
         return ""
     num = float(m.group(1))
     unit = m.group(2).upper()
@@ -453,8 +548,10 @@ def extract_models(name: str, extra_text: str = "") -> set:
         found.discard("elements")
     if "lacie_rugged_mini" in found:
         found.discard("lacie_rugged")
+    if "t7_shield" in found or "t7_touch" in found:
+        found.discard("t7_std")
     for code in re.findall(
-        r"\b(?:st[a-z]{2}\d{6,7}|sdssd[a-z]\d{2}f?|sxs\d{4}[a-z]*|xs\d{4}|lxd\d{2}[a-z0-9]*|mu-[a-z0-9]+|wdb[a-z0-9]+|ahv\d{3}|ts\d+[a-z0-9]+)\b",
+        r"\b(?:st[a-z]{2}\d{6,7}|sdssd[a-z]\d{2}f?|sxs\d{4}[a-z]*|xs\d{4}|lxd\d{2}[a-z0-9]*|mu-[a-z]{2}\d[a-z]\d[a-z]|wdb[a-z0-9]+|ahv\d{3}|ts\d+[a-z0-9]+)\b",
         nl,
     ):
         found.add(code)
@@ -631,7 +728,8 @@ def main():
     print("Scraping multi-competitor portable drive prices (OCGN)...")
     tgdd_prods = scrape_tgdd_all()
     cps_prods = scrape_cps_all()
-    print(f"Scraped totals: TGDD={len(tgdd_prods)} | CellphoneS={len(cps_prods)}")
+    fpt_prods = scrape_fpt_all()
+    print(f"Scraped totals: TGDD={len(tgdd_prods)} | CellphoneS={len(cps_prods)} | FPT Shop={len(fpt_prods)}")
 
     pv_list = load_pv_ocgn()
     pv_by_sku = {p["sku"]: p for p in pv_list}
@@ -640,8 +738,9 @@ def main():
 
     tgdd_matched, tgdd_unmatched = match_competitor_products(tgdd_prods, pv_priced)
     cps_matched, cps_unmatched = match_competitor_products(cps_prods, pv_priced)
+    fpt_matched, fpt_unmatched = match_competitor_products(fpt_prods, pv_priced)
 
-    all_matched_skus = sorted(set(tgdd_matched.keys()) | set(cps_matched.keys()))
+    all_matched_skus = sorted(set(tgdd_matched.keys()) | set(cps_matched.keys()) | set(fpt_matched.keys()))
     matrix_rows = []
     for sku in all_matched_skus:
         pv = pv_by_sku[sku]
@@ -653,7 +752,7 @@ def main():
         cheaper_cnt = 0
         equal_cnt = 0
 
-        for cid, cmap in (("tgdd", tgdd_matched), ("cps", cps_matched)):
+        for cid, cmap in (("tgdd", tgdd_matched), ("cps", cps_matched), ("fpt", fpt_matched)):
             offer = cmap.get(sku)
             if not offer:
                 continue
@@ -728,16 +827,23 @@ def main():
 
     # Sort matrix: multi-competitor matches first, then highest PV premium vs market
     matrix_rows.sort(key=lambda r: (r["compCount"], r["diffVsBestVnd"]), reverse=True)
-    unmatched_rows = tgdd_unmatched + cps_unmatched
+    unmatched_rows = tgdd_unmatched + cps_unmatched + fpt_unmatched
     unmatched_rows.sort(key=lambda r: (0 if r["inStock"] else 1, r["compId"], r["brand"], r["price"]))
 
     both_cnt = sum(1 for r in matrix_rows if r["compCount"] >= 2)
-    print(f"\nMATRIX SUMMARY: {len(matrix_rows)} unique PV SKUs matched (TGDD={len(tgdd_matched)}, CPS={len(cps_matched)}, Both={both_cnt})")
-    print(f"  Unmatched competitor items: TGDD={len(tgdd_unmatched)}, CPS={len(cps_unmatched)}")
+    print(
+        f"\nMATRIX SUMMARY: {len(matrix_rows)} unique PV SKUs matched "
+        f"(TGDD={len(tgdd_matched)}, CPS={len(cps_matched)}, FPT={len(fpt_matched)}, Multi>=2={both_cnt})"
+    )
+    print(f"  Unmatched competitor items: TGDD={len(tgdd_unmatched)}, CPS={len(cps_unmatched)}, FPT={len(fpt_unmatched)}")
     for r in matrix_rows[:15]:
         t_str = f"TGDD={r['competitors']['tgdd']['price']:,}" if "tgdd" in r["competitors"] else "TGDD=—"
         c_str = f"CPS={r['competitors']['cps']['price']:,}" if "cps" in r["competitors"] else "CPS=—"
-        print(f"  [{r['position']:14s}] {r['pvSku']} {r['pvName'][:36]:36s} | PV={r['pvPrice']:>10,} | {t_str:16s} | {c_str:16s} | vsBest={r['diffVsBestVnd']:+,}")
+        f_str = f"FPT={r['competitors']['fpt']['price']:,}" if "fpt" in r["competitors"] else "FPT=—"
+        print(
+            f"  [{r['position']:14s}] {r['pvSku']} {r['pvName'][:32]:32s} | "
+            f"PV={r['pvPrice']:>10,} | {t_str:15s} | {c_str:15s} | {f_str:15s} | vsBest={r['diffVsBestVnd']:+,}"
+        )
 
     payload = {
         "schemaVersion": 2,
@@ -766,6 +872,15 @@ def main():
                     "totalCount": len(cps_prods),
                     "matchedCount": len(cps_matched),
                     "unmatchedCount": len(cps_unmatched),
+                },
+                {
+                    "id": "fpt",
+                    "name": "FPT Shop",
+                    "short": "FPT",
+                    "url": FPT_URL,
+                    "totalCount": len(fpt_prods),
+                    "matchedCount": len(fpt_matched),
+                    "unmatchedCount": len(fpt_unmatched),
                 },
             ],
         },

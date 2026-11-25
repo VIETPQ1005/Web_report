@@ -11346,10 +11346,10 @@
       if (!btn) return;
       btn.disabled = true;
       const origText = btn.textContent;
-      btn.textContent = "⏳ Đang quét giá TGDD & CellphoneS...";
+      btn.textContent = "⏳ Đang quét giá TGDD, CellphoneS & FPT Shop...";
       if (fb) {
         fb.className = "update-feedback info";
-        fb.textContent = "Đang kết nối tuần tự với độ trễ an toàn tới Thế Giới Di Động & CellphoneS (~12–20 giây)...";
+        fb.textContent = "Đang kết nối tuần tự với độ trễ an toàn tới Thế Giới Di Động, CellphoneS & FPT Shop (~12–20 giây)...";
       }
       try {
         const res = await fetch("/api/scan-prices", { method: "POST" });
@@ -11366,7 +11366,7 @@
         populatePriceCompareFilters();
         renderPriceCompareView();
         closeScanModal();
-        showToast("✅ Đã quét và cập nhật giá mới nhất từ TGDD & CellphoneS!");
+        showToast("✅ Đã quét và cập nhật giá mới nhất từ TGDD, CellphoneS & FPT Shop!");
       } catch (err) {
         if (fb) {
           fb.className = "update-feedback error";
@@ -11390,6 +11390,7 @@
     const compsMeta = meta.competitors || [
       { id: "tgdd", name: "Thế Giới Di Động", short: "TGDD", url: "https://www.thegioididong.com/o-cung-di-dong" },
       { id: "cps", name: "CellphoneS", short: "CPS", url: "https://cellphones.com.vn/phu-kien/o-cung-di-dong.html" },
+      { id: "fpt", name: "FPT Shop", short: "FPT", url: "https://fptshop.com.vn/phu-kien/o-cung-di-dong" },
     ];
     const matrixAll = payload.matrixRows || [];
     const unmatchedAll = payload.unmatchedRows || [];
@@ -11501,8 +11502,7 @@
         titleEl.innerHTML = `Sản phẩm Đối thủ chưa khớp tại Phong Vũ <span class="badge-blue">CƠ HỘI MỞ RỘNG DANH MỤC</span>`;
       }
       const filteredU = unmatchedAll.filter((r) => {
-        if (pc.compFilter === "tgdd" && r.compId !== "tgdd") return false;
-        if (pc.compFilter === "cps" && r.compId !== "cps") return false;
+        if (pc.compFilter !== "all" && pc.compFilter !== "both" && r.compId !== pc.compFilter) return false;
         if (pc.brand && r.brand !== pc.brand) return false;
         if (pc.driveType && r.driveType !== pc.driveType) return false;
         if (pc.capacity && r.capacity !== pc.capacity) return false;
@@ -11564,8 +11564,7 @@
 
     const filteredM = scopedMatrix.filter((r) => {
       if (pc.compFilter === "both" && r.compCount < 2) return false;
-      if (pc.compFilter === "tgdd" && !r.competitors?.tgdd) return false;
-      if (pc.compFilter === "cps" && !r.competitors?.cps) return false;
+      if (pc.compFilter !== "all" && pc.compFilter !== "both" && !r.competitors?.[pc.compFilter]) return false;
       if (pc.status === "pv_higher" && r.higherCount === 0) return false;
       if (pc.status === "pv_win" && r.higherCount > 0) return false;
       if (q) {
@@ -11581,8 +11580,9 @@
       const col = pc.sortCol;
       if (col === "pvName") return dir * a.pvName.localeCompare(b.pvName);
       if (col === "pvPrice") return dir * ((a.pvPrice || 0) - (b.pvPrice || 0));
-      if (col === "tgdd") return dir * ((a.competitors?.tgdd?.price || 0) - (b.competitors?.tgdd?.price || 0));
-      if (col === "cps") return dir * ((a.competitors?.cps?.price || 0) - (b.competitors?.cps?.price || 0));
+      if (compsMeta.some((c) => c.id === col)) {
+        return dir * ((a.competitors?.[col]?.price || 0) - (b.competitors?.[col]?.price || 0));
+      }
       if (col === "diffVsBestPct") return dir * ((a.diffVsBestPct || 0) - (b.diffVsBestPct || 0));
       if (col === "pvInvQty") return dir * ((a.pvInvQty || 0) - (b.pvInvQty || 0));
       return dir * ((a.diffVsBestVnd || 0) - (b.diffVsBestVnd || 0));

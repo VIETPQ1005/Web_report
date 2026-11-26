@@ -403,13 +403,16 @@
       expandedSkus: new Set(),
       lastExport: { headers: [], rows: [], filename: "bad_stock_sku_serial_pivot.csv" },
     },
-    // Multi-Competitor Price Compare (Phong Vũ vs TGDD, CellphoneS, ... — Subcat 2 Ổ cứng gắn ngoài)
+    // Multi-Competitor Price Compare (Phong Vũ vs TGDD, CellphoneS, FPT, Hacom — OCGN & LOA)
     priceCompare: {
+      cat: "ocgn",              // ocgn | loa
+      datasets: { ocgn: null, loa: null },
+      loadedByCat: { ocgn: false, loa: false },
       loaded: false,
       loading: false,
       data: null,
       mode: "matrix",           // matrix | unmatched
-      compFilter: "all",        // all | both | tgdd | cps
+      compFilter: "all",        // all | both | tgdd | cps | fpt | hacom
       status: "all",            // all | pv_higher | pv_win
       brand: "",
       driveType: "",
@@ -1856,9 +1859,10 @@
         : view === "badstock"
           ? "⚠️ BÁO CÁO CHUYÊN SÂU BAD STOCK (TỒN XẤU / TỒN RẤT XẤU)"
           : view === "pricecompare"
-            ? "⚖️ SO SÁNH GIÁ ĐA ĐỐI THỦ — PHONG VŨ vs TGDD • CELLPHONES (Ổ CỨNG GẮN NGOÀI)"
+            ? "⚖️ SO SÁNH GIÁ ĐA ĐỐI THỦ:"
             : "📦 BÁO CÁO TỒN KHO & BAD STOCK";
     }
+    document.getElementById("pcTopBannerCatSwitch")?.classList.toggle("hidden", view !== "pricecompare");
     document.getElementById("jumpToLookupBtn")?.classList.toggle("hidden", view === "lookup");
 
     if ((view === "lookup" || view === "badstock") && !state.shardsLoaded) {
@@ -11269,7 +11273,7 @@
   }
 
   // =========================================================================
-  // MULTI-COMPETITOR PRICE COMPARE (PHONG VŨ vs TGDD • CELLPHONES — OCGN)
+  // MULTI-COMPETITOR PRICE COMPARE (PHONG VŨ vs TGDD • CELLPHONES • FPT • HACOM — OCGN & LOA)
   // =========================================================================
   function canonPcBrand(b) {
     const s = String(b || "").trim();
@@ -11278,7 +11282,23 @@
     if (low === "sandisk" || low === "sankdisk" || low === "san disk") return "SanDisk";
     if (low === "wd" || low === "western digital") return "WD";
     if (low === "lacie") return "LaCie";
+    if (low === "sony") return "Sony";
+    if (low === "alpha works" || low === "alphaworks" || low === "alpha-works") return "Alpha Works";
+    if (low === "havit") return "Havit";
+    if (low === "microlab") return "Microlab";
+    if (low === "soundmax" || low === "sound max") return "SoundMax";
+    if (low === "tronsmart") return "Tronsmart";
+    if (low === "marshall") return "Marshall";
     return s;
+  }
+
+  function renderCompLogoChip(compId, compName, extraCls = "") {
+    const cid = String(compId || "").toLowerCase();
+    const validIds = new Set(["tgdd", "cps", "fpt", "hacom"]);
+    if (!validIds.has(cid)) {
+      return `<span class="pc-comp-pill">${esc(compName || cid.toUpperCase())}</span>`;
+    }
+    return `<span class="pc-logo-chip is-${esc(cid)} ${extraCls}" title="${esc(compName || cid.toUpperCase())}"><img src="./logos/${esc(cid)}.png" alt="${esc(compName || cid.toUpperCase())}" /></span>`;
   }
 
   function normalizePriceComparePayload(payload) {
@@ -11288,16 +11308,33 @@
     return payload;
   }
 
-  async function ensurePriceCompareLoaded() {
+  async function ensurePriceCompareLoaded(targetCat) {
     const pc = state.priceCompare;
-    if (pc.loaded || pc.loading) return;
+    const catKey = targetCat || pc.cat || "ocgn";
+    pc.cat = catKey;
+
+    // Sync active class on both top banner & view filter bar OCGN / LOA buttons
+    document.querySelectorAll("[data-pc-cat]").forEach((btn) => {
+      btn.classList.toggle("active", btn.dataset.pcCat === catKey);
+    });
+
+    if (pc.loadedByCat?.[catKey] && pc.datasets?.[catKey]) {
+      pc.data = pc.datasets[catKey];
+      pc.loaded = true;
+      populatePriceCompareFilters();
+      if (state.activeView === "pricecompare") renderPriceCompareView();
+      return;
+    }
+    if (pc.loading) return;
     pc.loading = true;
     const insight = document.getElementById("pcInsightText");
-    if (insight) insight.textContent = "Đang tải dữ liệu so sánh giá đa đối thủ...";
+    if (insight) insight.textContent = `Đang tải dữ liệu so sánh giá đa đối thủ (${catKey.toUpperCase()})...`;
     try {
       let json = null;
+      const cloudType = catKey === "loa" ? "price-compare-loa" : "price-compare";
+      const staticFile = catKey === "loa" ? "./data/price_compare_loa.json" : "./data/price_compare_ocgn.json";
       try {
-        const cloudRes = await fetchWithTimeout(`/api/report-data?type=price-compare&t=${Date.now()}`, { cache: "no-store" }, 3500);
+        const cloudRes = await fetchWithTimeout(`/api/report-data?type=${cloudType}&t=${Date.now()}`, { cache: "no-store" }, 3500);
         if (cloudRes && cloudRes.ok && (cloudRes.headers.get("content-type") || "").includes("application/json")) {
           const cand = await cloudRes.json();
           if (cand && Array.isArray(cand.matrixRows) && cand.matrixRows.length > 0) {
@@ -11308,38 +11345,56 @@
         // fallback to static baseline
       }
       if (!json) {
-        const res = await fetch(`./data/price_compare_ocgn.json?t=${Date.now()}`, { cache: "no-store" });
+        const res = await fetch(`${staticFile}?t=${Date.now()}`, { cache: "no-store" });
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         json = await res.json();
       }
-      pc.data = normalizePriceComparePayload(json);
+      const norm = normalizePriceComparePayload(json);
+      if (!pc.datasets) pc.datasets = {};
+      if (!pc.loadedByCat) pc.loadedByCat = {};
+      pc.datasets[catKey] = norm;
+      pc.loadedByCat[catKey] = true;
+      pc.data = norm;
       pc.loaded = true;
       populatePriceCompareFilters();
       if (state.activeView === "pricecompare") renderPriceCompareView();
     } catch (err) {
-      if (insight) insight.textContent = `Không tải được dữ liệu so sánh giá: ${err.message}`;
+      if (insight) insight.textContent = `Không tải được dữ liệu so sánh giá (${catKey.toUpperCase()}): ${err.message}`;
     } finally {
       pc.loading = false;
     }
   }
 
   function populatePriceCompareFilters() {
-    const matrix = state.priceCompare.data?.matrixRows || [];
-    const unmatched = state.priceCompare.data?.unmatchedRows || [];
+    const pc = state.priceCompare;
+    const isLoa = pc.cat === "loa";
+    const matrix = pc.data?.matrixRows || [];
+    const unmatched = pc.data?.unmatchedRows || [];
     const brands = Array.from(new Set([
       ...matrix.map((r) => r.pvBrand),
       ...unmatched.map((r) => r.brand),
     ].filter(Boolean))).sort();
+
+    const types = Array.from(new Set([
+      ...matrix.map((r) => r.driveType),
+      ...unmatched.map((r) => r.driveType),
+    ].filter((t) => t && t !== "UNKNOWN"))).sort();
+
     const capOrder = ["128GB", "256GB", "500GB", "512GB", "1TB", "2TB", "4TB", "5TB", "8TB"];
     const caps = Array.from(new Set([
       ...matrix.map((r) => r.capacity),
       ...unmatched.map((r) => r.capacity),
     ].filter(Boolean))).sort((a, b) => {
-      const ia = capOrder.indexOf(a);
-      const ib = capOrder.indexOf(b);
-      if (ia !== -1 && ib !== -1) return ia - ib;
-      if (ia !== -1) return -1;
-      if (ib !== -1) return 1;
+      if (!isLoa) {
+        const ia = capOrder.indexOf(a);
+        const ib = capOrder.indexOf(b);
+        if (ia !== -1 && ib !== -1) return ia - ib;
+        if (ia !== -1) return -1;
+        if (ib !== -1) return 1;
+      }
+      const na = parseFloat(String(a).replace(/[^\d.]/g, ""));
+      const nb = parseFloat(String(b).replace(/[^\d.]/g, ""));
+      if (isFinite(na) && isFinite(nb) && na !== nb) return na - nb;
       return a.localeCompare(b);
     });
 
@@ -11347,16 +11402,51 @@
     if (brSel) {
       brSel.innerHTML = `<option value="">Tất cả Brand (${brands.length})</option>` +
         brands.map((b) => `<option value="${esc(b)}">${esc(b)}</option>`).join("");
+      brSel.value = pc.brand || "";
+    }
+    const typeSel = document.getElementById("pcFilterType");
+    if (typeSel) {
+      const defaultLbl = isLoa ? "Loại Loa" : "SSD / HDD";
+      const typeOpts = types.length ? types : (isLoa ? ["Loa Bluetooth", "Loa vi tính"] : ["SSD", "HDD"]);
+      typeSel.innerHTML = `<option value="">${defaultLbl}</option>` +
+        typeOpts.map((t) => `<option value="${esc(t)}">${esc(t)}</option>`).join("");
+      typeSel.value = pc.driveType || "";
     }
     const capSel = document.getElementById("pcFilterCap");
     if (capSel) {
-      capSel.innerHTML = `<option value="">Dung lượng</option>` +
+      const capLbl = isLoa ? "Công suất (W)" : "Dung lượng";
+      capSel.innerHTML = `<option value="">${capLbl}</option>` +
         caps.map((c) => `<option value="${esc(c)}">${esc(c)}</option>`).join("");
+      capSel.value = pc.capacity || "";
     }
   }
 
   function bindPriceCompareEvents() {
     const pc = state.priceCompare;
+    const switchPriceCompareCategory = (newCat) => {
+      if (!newCat || (newCat === pc.cat && pc.loadedByCat?.[newCat])) return;
+      pc.cat = newCat;
+      pc.brand = "";
+      pc.driveType = "";
+      pc.capacity = "";
+      pc.search = "";
+      const sr = document.getElementById("pcSearchInput");
+      if (sr) sr.value = "";
+      document.querySelectorAll("[data-pc-cat]").forEach((b) => {
+        b.classList.toggle("active", b.dataset.pcCat === newCat);
+      });
+      ensurePriceCompareLoaded(newCat);
+    };
+
+    document.getElementById("pcCatSwitchGroup")?.addEventListener("click", (e) => {
+      const btn = e.target.closest("[data-pc-cat]");
+      if (btn) switchPriceCompareCategory(btn.dataset.pcCat);
+    });
+    document.getElementById("pcTopBannerCatSwitch")?.addEventListener("click", (e) => {
+      const btn = e.target.closest("[data-pc-cat]");
+      if (btn) switchPriceCompareCategory(btn.dataset.pcCat);
+    });
+
     document.getElementById("pcModeTabs")?.addEventListener("click", (e) => {
       const btn = e.target.closest(".seg-btn[data-val]");
       if (!btn) return;
@@ -11494,8 +11584,13 @@
           const durStr = diffMin >= 60 ? `${Math.floor(diffMin / 60)} giờ ${diffMin % 60} phút` : `${diffMin} phút`;
           const winLabel = `Từ ${formatIsoVn(prevAtIso)} đến ${formatIsoVn(nowIso)} (${durStr})`;
 
+          const isLoa = pc.cat === "loa";
           const prevBySku = new Map((prevPayload.matrixRows || []).map((r) => [String(r.pvSku), r]));
-          const matrixSheetName = wb.SheetNames.find((n) => n.toLowerCase().includes("ma_tran") || n.toLowerCase().includes("matrix")) || wb.SheetNames[1] || wb.SheetNames[0];
+          const matrixSheetName = wb.SheetNames.find((n) => {
+            const low = n.toLowerCase();
+            if (isLoa) return low.includes("loa") && (low.includes("ma_tran") || low.includes("matrix"));
+            return (low.includes("ma_tran") || low.includes("matrix")) && !low.includes("loa");
+          }) || wb.SheetNames.find((n) => n.toLowerCase().includes("ma_tran") || n.toLowerCase().includes("matrix")) || wb.SheetNames[1] || wb.SheetNames[0];
           const sheetM = wb.Sheets[matrixSheetName];
           const rows2d = sheetM ? XLSX.utils.sheet_to_json(sheetM, { header: 1, raw: true, defval: "" }) : [];
 
@@ -11645,24 +11740,31 @@
             matrixRows: updatedMatrix.length ? updatedMatrix : (prevPayload.matrixRows || []),
           };
 
-          pc.data = normalizePriceComparePayload(nextPcPayload);
+          const normPayload = normalizePriceComparePayload(nextPcPayload);
+          const curCat = pc.cat || "ocgn";
+          pc.data = normPayload;
+          if (!pc.datasets) pc.datasets = {};
+          if (!pc.loadedByCat) pc.loadedByCat = {};
+          pc.datasets[curCat] = normPayload;
+          pc.loadedByCat[curCat] = true;
           pc.loaded = true;
           populatePriceCompareFilters();
           renderPriceCompareView();
-          // Also persist to Netlify Blobs (/api/report-data?type=price-compare) & local server if active
+          // Also persist to Netlify Blobs (/api/report-data?type=price-compare[-loa]) & local server if active
           const pcJsonStr = JSON.stringify(pc.data);
-          fetch("/api/report-data?type=price-compare", {
+          const cloudType = curCat === "loa" ? "price-compare-loa" : "price-compare";
+          fetch(`/api/report-data?type=${cloudType}`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: pcJsonStr,
           }).catch(() => {});
-          fetch("/api/save-price-compare", {
+          fetch(`/api/save-price-compare?cat=${curCat}`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: pcJsonStr,
           }).catch(() => {});
           closeScanModal();
-          showToast(`✅ Admin đã cập nhật thay đổi giá từ "${file.name}" (${newChanges.length} biến động mới)!`);
+          showToast(`✅ Admin đã cập nhật thay đổi giá (${curCat.toUpperCase()}) từ "${file.name}" (${newChanges.length} biến động mới)!`);
         } catch (err) {
           if (fb) {
             fb.className = "update-feedback error";
@@ -11713,17 +11815,28 @@
 
   function renderPriceCompareView() {
     const pc = state.priceCompare;
-    if (!pc.loaded) {
-      ensurePriceCompareLoaded();
+    const isLoa = pc.cat === "loa";
+    const catCodeLabel = isLoa ? "NH06-03-01 • LOA (7 BRAND)" : "NH11-01-07 • OCGN";
+    const catFullBadge = isLoa
+      ? "NH06-03-01 LOA (SONY • ALPHA WORKS • HAVIT • MICROLAB • SOUNDMAX • TRONSMART • MARSHALL)"
+      : "NH11-01-07 Ổ CỨNG GẮN NGOÀI (OCGN)";
+
+    // Sync active class on OCGN / LOA hero switchers
+    document.querySelectorAll("[data-pc-cat]").forEach((btn) => {
+      btn.classList.toggle("active", btn.dataset.pcCat === (pc.cat || "ocgn"));
+    });
+
+    if (!pc.loaded || !pc.loadedByCat?.[pc.cat || "ocgn"]) {
+      ensurePriceCompareLoaded(pc.cat || "ocgn");
       return;
     }
     const payload = pc.data || {};
     const meta = payload.meta || {};
     const compsMeta = meta.competitors || [
-      { id: "tgdd", name: "Thế Giới Di Động", short: "TGDD", url: "https://www.thegioididong.com/o-cung-di-dong" },
-      { id: "cps", name: "CellphoneS", short: "CPS", url: "https://cellphones.com.vn/phu-kien/o-cung-di-dong.html" },
-      { id: "fpt", name: "FPT Shop", short: "FPT", url: "https://fptshop.com.vn/phu-kien/o-cung-di-dong" },
-      { id: "hacom", name: "Hacom", short: "HACOM", url: "https://hacom.vn/o-cung-di-dong" },
+      { id: "tgdd", name: "Thế Giới Di Động", short: "TGDD", url: isLoa ? "https://www.thegioididong.com/loa-laptop#o=1&pi=2" : "https://www.thegioididong.com/o-cung-di-dong" },
+      { id: "cps", name: "CellphoneS", short: "CPS", url: isLoa ? "https://cellphones.com.vn/thiet-bi-am-thanh/loa/loa-bluetooth.html" : "https://cellphones.com.vn/phu-kien/o-cung-di-dong.html" },
+      { id: "fpt", name: "FPT Shop", short: "FPT", url: isLoa ? "https://fptshop.com.vn/phu-kien/loa" : "https://fptshop.com.vn/phu-kien/o-cung-di-dong" },
+      { id: "hacom", name: "Hacom", short: "HACOM", url: isLoa ? "https://hacom.vn/loa-bluetooth" : "https://hacom.vn/o-cung-di-dong" },
     ];
     const matrixAll = payload.matrixRows || [];
     const unmatchedAll = payload.unmatchedRows || [];
@@ -11736,7 +11849,7 @@
     const winText = meta.updateWindowLabel || (meta.previousScrapedAt && meta.scrapedAt
       ? `Từ ${formatIsoVn(meta.previousScrapedAt)} đến ${formatIsoVn(meta.scrapedAt)}`
       : `Cập nhật lúc ${formatIsoVn(meta.scrapedAt) || "—"}`);
-    if (winBadge) winBadge.textContent = `🕒 Khung thời gian giữa 2 lần cập nhật: ${winText}`;
+    if (winBadge) winBadge.textContent = `🕒 Khung thời gian giữa 2 lần cập nhật (${isLoa ? "LOA" : "OCGN"}): ${winText}`;
     if (cntBadge) cntBadge.textContent = `${fmtInt(changesAll.length)} thông báo thay đổi giá`;
     if (chBody) {
       const scopedChanges = changesAll.filter((ch) => {
@@ -11757,7 +11870,7 @@
             <tr>
               <td class="mono" style="font-size:10.5px">${esc(ch.windowLabel || winText)}</td>
               <td><strong>${esc(ch.agentName || `Trinh Sát ${ch.compShort} → Wall•E`)}</strong></td>
-              <td><span class="pc-comp-pill is-${esc(ch.compId || "")}">${esc(ch.compShort || "")}</span></td>
+              <td>${renderCompLogoChip(ch.compId, ch.compShort, "is-sm")}</td>
               <td><span class="inv-badge ${dVnd < 0 ? "bad-normal" : "listing-active"}">${esc(ch.changeTypeLabel || "Thay đổi giá")}</span></td>
               <td class="pc-pv-col">
                 <strong class="mono" style="color:#38BDF8">${esc(ch.pvSku)}</strong> — ${esc(ch.productName)}
@@ -11777,7 +11890,7 @@
       }
     }
 
-    // Populate the 3+ Source Data Telemetry Boxes (Phong Vũ SKU count + each competitor scanned count)
+    // Populate the 5 Source Data Telemetry Boxes (Phong Vũ SKU count + each competitor scanned count with official Logo)
     const srcGrid = document.getElementById("pcSourceCardsGrid");
     if (srcGrid) {
       const pvPriced = meta.pvPricedCount || 0;
@@ -11786,7 +11899,7 @@
         <div class="pc-source-card is-pv">
           <div class="pc-src-head">
             <span class="pc-src-badge is-pv">PHONG VŨ (PV)</span>
-            <span class="pc-src-cat mono">NH11-01-07 • OCGN</span>
+            <span class="pc-src-cat mono">${esc(catCodeLabel)}</span>
           </div>
           <div class="pc-src-val mono">${fmtInt(pvPriced)} SKU có giá</div>
           <div class="pc-src-sub">Tổng danh mục: <strong>${fmtInt(pvTotal)} SKU</strong> • Đã khớp đối thủ: <strong>${fmtInt(matrixAll.length)} SKU</strong></div>
@@ -11796,7 +11909,7 @@
         return `
           <div class="pc-source-card is-${esc(c.id)}">
             <div class="pc-src-head">
-              <span class="pc-src-badge is-${esc(c.id)}">${esc(c.name.toUpperCase())}</span>
+              ${renderCompLogoChip(c.id, c.name)}
               <a href="${esc(c.url)}" target="_blank" rel="noopener noreferrer" class="pc-src-link">${esc(host)} ↗</a>
             </div>
             <div class="pc-src-val mono">${fmtInt(c.totalCount || 0)} SKU quét được</div>
@@ -11854,18 +11967,18 @@
         .map((c) => `<a href="${esc(c.url)}" target="_blank" rel="noopener noreferrer" class="pc-tgdd-link">${esc(c.name)} ↗</a>`)
         .join(" &nbsp;•&nbsp; ");
       insightEl.innerHTML =
-        `Nguồn: ${linksHtml} • Cập nhật: <strong class="mono">${esc(formatIsoVn(meta.scrapedAt) || "—")}</strong>`;
+        `Danh mục: <strong style="color:#38BDF8">${isLoa ? "🔊 LOA (7 Thương hiệu)" : "💾 OCGN (Ổ cứng gắn ngoài)"}</strong> • Nguồn: ${linksHtml} • Cập nhật: <strong class="mono">${esc(formatIsoVn(meta.scrapedAt) || "—")}</strong>`;
     }
 
     // Active chips
     const chipsEl = document.getElementById("pcActiveChips");
     if (chipsEl) {
-      const chips = [];
+      const chips = [isLoa ? "Nhóm: 🔊 LOA" : "Nhóm: 💾 OCGN"];
       if (pc.compFilter !== "all") chips.push(`Đối thủ: ${pc.compFilter === "both" ? "≥2 đối thủ" : pc.compFilter.toUpperCase()}`);
       if (pc.mode === "matrix" && pc.status !== "all") chips.push(pc.status === "pv_higher" ? "PV Cao hơn" : "PV Rẻ / Bằng");
       if (pc.brand) chips.push(`Brand: ${pc.brand}`);
       if (pc.driveType) chips.push(`Loại: ${pc.driveType}`);
-      if (pc.capacity) chips.push(`Dung lượng: ${pc.capacity}`);
+      if (pc.capacity) chips.push(`${isLoa ? "Công suất" : "Dung lượng"}: ${pc.capacity}`);
       if (pc.search) chips.push(`Tìm: "${pc.search}"`);
       chipsEl.innerHTML = chips.map((c) => `<span class="chip">${esc(c)}</span>`).join("");
     }
@@ -11881,7 +11994,7 @@
     // -----------------------------------------------------------------------
     if (pc.mode === "unmatched") {
       if (titleEl) {
-        titleEl.innerHTML = `Sản phẩm Đối thủ chưa khớp tại Phong Vũ <span class="badge-blue">CƠ HỘI MỞ RỘNG DANH MỤC</span>`;
+        titleEl.innerHTML = `Sản phẩm Đối thủ chưa khớp tại Phong Vũ (${isLoa ? "LOA" : "OCGN"}) <span class="badge-blue">CƠ HỘI MỞ RỘNG DANH MỤC</span>`;
       }
       const filteredU = unmatchedAll.filter((r) => {
         if (pc.compFilter !== "all" && pc.compFilter !== "both" && r.compId !== pc.compFilter) return false;
@@ -11902,7 +12015,7 @@
             <th>Đối thủ</th>
             <th class="pc-pv-col">Tên sản phẩm Đối thủ</th>
             <th>Brand</th>
-            <th>Loại / Dung lượng</th>
+            <th>${isLoa ? "Loại Loa / Công suất" : "Loại / Dung lượng"}</th>
             <th class="num">Giá bán (VAT)</th>
             <th class="num">Giá gốc / Giảm</th>
           </tr>`;
@@ -11913,7 +12026,7 @@
         } else {
           tbody.innerHTML = filteredU.map((r) => `
             <tr>
-              <td><span class="pc-comp-pill is-${esc(r.compId)}">${esc(r.compShort)}</span></td>
+              <td>${renderCompLogoChip(r.compId, r.compShort, "is-sm")}</td>
               <td class="pc-pv-col">
                 <a href="${esc(r.url)}" target="_blank" rel="noopener noreferrer" class="pc-tgdd-link">${esc(r.name)} ↗</a>
               </td>
@@ -11930,9 +12043,9 @@
         }
       }
       pc.lastExport = {
-        headers: ["Competitor", "Product Name", "Brand", "Type", "Capacity", "Price", "Old Price", "Discount %", "URL"],
+        headers: ["Competitor", "Product Name", "Brand", "Type", isLoa ? "Wattage" : "Capacity", "Price", "Old Price", "Discount %", "URL"],
         rows: filteredU.map((r) => [r.compShort, r.name, r.brand, r.driveType, r.capacity, r.price, r.oldPrice, r.discountPct, r.url]),
-        filename: `sp_doi_thu_chua_khop_ocgn_${new Date().toISOString().slice(0, 10)}.csv`,
+        filename: `sp_doi_thu_chua_khop_${pc.cat || "ocgn"}_${new Date().toISOString().slice(0, 10)}.csv`,
       };
       return;
     }
@@ -11941,7 +12054,7 @@
     // MODE A: MULTI-COMPETITOR MATRIX (1 ROW = 1 PV SKU vs ALL COMPETITORS)
     // -----------------------------------------------------------------------
     if (titleEl) {
-      titleEl.innerHTML = `Ma trận So Sánh Giá — Phong Vũ vs ${compsMeta.map((c) => esc(c.short)).join(" • ")} <span class="badge-blue">NH11-01-07 Ổ CỨNG GẮN NGOÀI</span>`;
+      titleEl.innerHTML = `Ma trận So Sánh Giá <span class="badge-blue">${esc(catFullBadge)}</span> <span class="pc-lowest-legend-badge">🟢 Ô nền xanh = Giá Rẻ Nhất trên dòng (bằng giá rẻ nhất cùng xanh)</span>`;
     }
 
     const filteredM = scopedMatrix.filter((r) => {
@@ -11971,21 +12084,24 @@
     });
 
     if (hintEl) {
-      hintEl.textContent = `Hiển thị ${fmtInt(filteredM.length)} / ${fmtInt(matrixAll.length)} SKU Phong Vũ khớp đối thủ • Click mã SKU để mở hồ sơ 360° hoặc click giá đối thủ để mở link trực tiếp`;
+      hintEl.textContent = `Hiển thị ${fmtInt(filteredM.length)} / ${fmtInt(matrixAll.length)} SKU Phong Vũ khớp đối thủ • Ô nền Xanh lá hiển thị mức giá rẻ nhất trên từng dòng (nếu 2 hoặc nhiều bên bằng giá rẻ nhất thì cùng tô xanh)`;
     }
 
     if (thead) {
       const cols = [
-        { key: "pvName", label: "Sản phẩm Phong Vũ (SKU & Tên SP)", cls: "pc-pv-col" },
-        { key: "pvPrice", label: "Giá PV Hiện tại", cls: "num" },
-        ...compsMeta.map((c) => ({ key: c.id, label: c.name, cls: "num pc-comp-col" })),
-        { key: "diffVsBestVnd", label: "PV vs Giá Thấp Nhất", cls: "num" },
-        { key: "diffVsBestPct", label: "Vị thế Giá PV", cls: "" },
-        { key: "pvInvQty", label: "Tồn / 30D PV", cls: "num" },
+        { key: "pvName", label: "Sản phẩm Phong Vũ (SKU & Tên SP)", cls: "pc-pv-col", isLogo: false },
+        { key: "pvPrice", label: "Giá PV Hiện tại", cls: "num", isLogo: false },
+        ...compsMeta.map((c) => ({ key: c.id, label: c.name, compId: c.id, cls: "num pc-comp-col", isLogo: true })),
+        { key: "diffVsBestVnd", label: "PV vs Giá Thấp Nhất", cls: "num", isLogo: false },
+        { key: "diffVsBestPct", label: "Vị thế Giá PV", cls: "", isLogo: false },
+        { key: "pvInvQty", label: "Tồn / 30D PV", cls: "num", isLogo: false },
       ];
       thead.innerHTML = `<tr>${cols.map((c) => {
         const arrow = pc.sortCol === c.key ? (pc.sortDir === "asc" ? " ▲" : " ▼") : "";
-        return `<th class="${c.cls} sortable" data-pc-sort="${c.key}">${esc(c.label)}${arrow}</th>`;
+        const innerHtml = c.isLogo
+          ? `<div class="pc-th-logo-wrap">${renderCompLogoChip(c.compId, c.label)}<span class="pc-th-sort-arrow">${arrow}</span></div>`
+          : `${esc(c.label)}${arrow}`;
+        return `<th class="${c.cls} sortable" data-pc-sort="${c.key}">${innerHtml}</th>`;
       }).join("")}</tr>`;
       thead.querySelectorAll("th[data-pc-sort]").forEach((th) => {
         th.addEventListener("click", () => {
@@ -11997,19 +12113,20 @@
       });
     }
 
-    const renderCompCell = (offer, compShort, isBest) => {
+    const renderCompCell = (offer, compShort, isRowLowest) => {
       if (!offer) return `<td class="num pc-comp-col pc-empty-cell">—</td>`;
       const sign = offer.diffVnd > 0 ? "+" : "";
       const deltaCls = offer.diffVnd > 10000 ? "pc-diff-pos" : offer.diffVnd < -10000 ? "pc-diff-neg" : "pc-diff-eq";
       const deltaText = Math.abs(offer.diffVnd) <= 10000
-        ? "Bằng giá"
+        ? "Bằng giá PV"
         : `PV ${sign}${fmtCompactVnd(offer.diffVnd)} (${sign}${offer.diffPct.toFixed(1)}%)`;
       return `
-        <td class="num pc-comp-col ${isBest ? "pc-is-best-comp" : ""}">
+        <td class="num pc-comp-col ${isRowLowest ? "pc-lowest-price-cell" : ""}">
           <div class="pc-comp-price-line mono">
             <a href="${esc(offer.url)}" target="_blank" rel="noopener noreferrer" class="pc-comp-price-link" title="${esc(offer.name)} — Click để mở trang ${esc(compShort)}">
               <strong>${esc(fmtVndFull(offer.price))}</strong> ↗
             </a>
+            ${isRowLowest ? `<span class="pc-lowest-mini-tag" title="Giá rẻ nhất trên dòng">RẺ NHẤT</span>` : ""}
           </div>
           ${offer.oldPrice > offer.price
             ? `<div class="pc-old-price mono">${esc(fmtVndFull(offer.oldPrice))} <span class="pc-disc-tag">-${offer.discountPct}%</span></div>`
@@ -12029,6 +12146,16 @@
             pv_cheapest: `<span class="inv-badge bad-normal">🏆 PV Rẻ nhất</span>`,
             pv_equal: `<span class="inv-badge listing-active">⚖️ Bằng giá TT</span>`,
           }[r.position] || `<span class="inv-badge other">—</span>`;
+
+          // Compute exact row minimum price across Phong Vũ AND all present competitors
+          const allRowPrices = [];
+          if (r.pvPrice > 0) allRowPrices.push(r.pvPrice);
+          compsMeta.forEach((c) => {
+            const cp = r.competitors?.[c.id]?.price;
+            if (cp && cp > 0) allRowPrices.push(cp);
+          });
+          const minRowPrice = allRowPrices.length ? Math.min(...allRowPrices) : 0;
+          const isPvLowest = minRowPrice > 0 && r.pvPrice === minRowPrice;
 
           const bestSign = r.diffVsBestVnd > 0 ? "+" : "";
           const bestCls = r.diffVsBestVnd > 10000 ? "pc-diff-pos" : r.diffVsBestVnd < -10000 ? "pc-diff-neg" : "pc-diff-eq";
@@ -12052,12 +12179,19 @@
                 </div>
                 <div class="pc-pv-name-wrap">${esc(r.pvName)}</div>
               </td>
-              <td class="num mono pc-pv-price-cell">
-                <div><strong>${esc(fmtVndFull(r.pvPrice))}</strong></div>
+              <td class="num mono pc-pv-price-cell ${isPvLowest ? "pc-lowest-price-cell" : ""}">
+                <div>
+                  <strong>${esc(fmtVndFull(r.pvPrice))}</strong>
+                  ${isPvLowest ? `<span class="pc-lowest-mini-tag" title="Giá rẻ nhất trên dòng">RẺ NHẤT</span>` : ""}
+                </div>
                 ${pvPromoNoteHtml}
                 ${pvUpcomingHtml}
               </td>
-              ${compsMeta.map((c) => renderCompCell(r.competitors?.[c.id], c.short, r.bestCompId === c.id && r.compCount > 1)).join("")}
+              ${compsMeta.map((c) => {
+                const offer = r.competitors?.[c.id];
+                const isCompLowest = Boolean(offer && offer.price > 0 && minRowPrice > 0 && offer.price === minRowPrice);
+                return renderCompCell(offer, c.short, isCompLowest);
+              }).join("")}
               <td class="num mono ${bestCls}">
                 <div><strong>${bestSign}${esc(fmtVndFull(r.diffVsBestVnd))}</strong></div>
                 <div class="pc-best-sub">${bestSign}${r.diffVsBestPct.toFixed(1)}% vs ${esc(bestCompShort)}</div>
@@ -12086,7 +12220,7 @@
 
     pc.lastExport = {
       headers: [
-        "PV SKU", "PV Name", "Brand", "Type", "Capacity", "PV Status", "PV Price",
+        "PV SKU", "PV Name", "Brand", "Type", isLoa ? "Wattage" : "Capacity", "PV Status", "PV Price",
         ...compsMeta.flatMap((c) => [`${c.short} Price`, `${c.short} Diff VND`, `${c.short} URL`]),
         "Best Comp", "Best Comp Price", "PV vs Best VND", "PV vs Best %", "Position", "PV Inv QTY", "PV 30D Sales",
       ],
@@ -12098,7 +12232,7 @@
         }),
         r.bestCompId.toUpperCase(), r.bestCompPrice, r.diffVsBestVnd, r.diffVsBestPct, r.position, r.pvInvQty, r.pvS30d,
       ]),
-      filename: `ma_tran_so_sanh_gia_ocgn_${new Date().toISOString().slice(0, 10)}.csv`,
+      filename: `ma_tran_so_sanh_gia_${pc.cat || "ocgn"}_${new Date().toISOString().slice(0, 10)}.csv`,
     };
   }
 

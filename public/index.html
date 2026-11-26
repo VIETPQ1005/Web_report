@@ -8,10 +8,10 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600;700&family=Chakra+Petch:wght@600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="./styles.css?v=20261126c" />
+  <link rel="stylesheet" href="./styles.css?v=20261126e" />
   <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.1/dist/echarts.min.js" defer></script>
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js" defer></script>
-  <script src="./app.js?v=20261126c" defer></script>
+  <script src="./app.js?v=20261126e" defer></script>
 </head>
 <body>
   <div class="app-shell" id="appShell">
@@ -264,6 +264,10 @@
 
         <div class="inv-top-banner hidden" id="invTopBanner">
           <span class="inv-banner-title" id="invTopBannerTitle">📦 BÁO CÁO TỒN KHO &amp; BAD STOCK</span>
+          <div class="pc-cat-hero-switch hidden" id="pcTopBannerCatSwitch" role="group" aria-label="Chuyển đổi nhóm sản phẩm So Sánh Giá">
+            <button type="button" class="pc-cat-hero-btn active" data-pc-cat="ocgn">💾 OCGN</button>
+            <button type="button" class="pc-cat-hero-btn" data-pc-cat="loa">🔊 LOA</button>
+          </div>
           <span class="badge-blue mono" id="invSnapshotBadge">Snapshot: --</span>
           <button type="button" class="btn-quick-lookup" id="jumpToLookupBtn" title="Mở công cụ tra cứu nhanh theo SKU hoặc Serial">🔍 Tra cứu SKU / Serial</button>
         </div>
@@ -1173,24 +1177,35 @@
       </section>
 
       <!-- ================================================================
-           VIEW 10: MULTI-COMPETITOR PRICE COMPARE (PHONG VŨ vs TGDD • CELLPHONES...)
+           VIEW 10: MULTI-COMPETITOR PRICE COMPARE (PHONG VŨ vs TGDD • CELLPHONES • FPT • HACOM)
            ================================================================ -->
       <section class="view-pane" id="view-pricecompare">
         <!-- LOCAL FILTER BAR -->
         <div class="inv-filter-bar">
           <div class="topbar-filters">
-            <span class="local-filter-tag">SO SÁNH GIÁ — Ổ CỨNG GẮN NGOÀI:</span>
+            <div class="pc-cat-hero-switch" id="pcCatSwitchGroup" title="Chuyển đổi giữa So Sánh Giá OCGN (Ổ cứng gắn ngoài) và LOA (7 thương hiệu)">
+              <button type="button" class="pc-cat-hero-btn active" data-pc-cat="ocgn">💾 OCGN</button>
+              <button type="button" class="pc-cat-hero-btn" data-pc-cat="loa">🔊 LOA</button>
+            </div>
             <div class="seg-tabs" id="pcModeTabs" title="Chế độ xem Ma trận so sánh ngang hoặc Danh sách SP đối thủ chưa có tại PV">
               <button type="button" class="seg-btn active" data-val="matrix">⚖️ Ma trận Đối thủ</button>
               <button type="button" class="seg-btn" data-val="unmatched">🔍 SP Đối thủ chưa khớp PV</button>
             </div>
-            <div class="seg-tabs" id="pcCompTabs" title="Lọc theo Website đối thủ">
+            <div class="seg-tabs pc-logo-filter-tabs" id="pcCompTabs" title="Lọc theo Website đối thủ">
               <button type="button" class="seg-btn active" data-val="all">Tất cả Đối thủ</button>
               <button type="button" class="seg-btn" data-val="both">Có ở ≥2 Đối thủ</button>
-              <button type="button" class="seg-btn" data-val="tgdd">TGDD</button>
-              <button type="button" class="seg-btn" data-val="cps">CellphoneS</button>
-              <button type="button" class="seg-btn" data-val="fpt">FPT Shop</button>
-              <button type="button" class="seg-btn" data-val="hacom">Hacom</button>
+              <button type="button" class="seg-btn pc-logo-tab-btn" data-val="tgdd" title="Thế Giới Di Động">
+                <span class="pc-logo-chip is-tgdd"><img src="./logos/tgdd.png" alt="Thế Giới Di Động" /></span>
+              </button>
+              <button type="button" class="seg-btn pc-logo-tab-btn" data-val="cps" title="CellphoneS">
+                <span class="pc-logo-chip is-cps"><img src="./logos/cps.png" alt="CellphoneS" /></span>
+              </button>
+              <button type="button" class="seg-btn pc-logo-tab-btn" data-val="fpt" title="FPT Shop">
+                <span class="pc-logo-chip is-fpt"><img src="./logos/fpt.png" alt="FPT Shop" /></span>
+              </button>
+              <button type="button" class="seg-btn pc-logo-tab-btn" data-val="hacom" title="Hacom">
+                <span class="pc-logo-chip is-hacom"><img src="./logos/hacom.png" alt="Hacom" /></span>
+              </button>
             </div>
             <div class="seg-tabs" id="pcStatusTabs" title="Lọc theo vị thế giá Phong Vũ">
               <button type="button" class="seg-btn active" data-val="all">Tất cả vị thế</button>

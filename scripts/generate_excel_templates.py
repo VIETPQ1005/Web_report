@@ -212,11 +212,7 @@ def build_update_data_excel():
     return out_path
 
 
-def build_price_compare_excel(payload: dict = None) -> Path:
-    price_json_path = PUBLIC_TEMPLATE_DIR / "price_compare_ocgn.json"
-    if payload is None:
-        payload = json.loads(price_json_path.read_text(encoding="utf-8"))
-
+def _build_sheets_for_category(payload: dict, cat_suffix: str, cap_label: str = "Dung lượng") -> list[tuple[str, list[str], list[list]]]:
     meta = payload.get("meta") or {}
     cur_at = meta.get("scrapedAt") or datetime.datetime.now().isoformat(timespec="seconds")
     prev_at = meta.get("previousScrapedAt") or cur_at
@@ -225,7 +221,6 @@ def build_price_compare_excel(payload: dict = None) -> Path:
     matrix = payload.get("matrixRows") or []
     unmatched = payload.get("unmatchedRows") or []
 
-    # Sheet 1: Thong_Bao_Thay_Doi_Gia (Agent Price Change Notifications & Time Window)
     s1_headers = [
         "Thời điểm cập nhật trước",
         "Thời điểm cập nhật mới",
@@ -236,7 +231,7 @@ def build_price_compare_excel(payload: dict = None) -> Path:
         "SKU Phong Vũ",
         "Tên sản phẩm",
         "Brand",
-        "Dung lượng",
+        cap_label,
         "Giá kỳ trước (VND)",
         "Giá kỳ này (VND)",
         "Chênh lệch Giá Đối thủ (VND)",
@@ -268,7 +263,6 @@ def build_price_compare_excel(payload: dict = None) -> Path:
                 ch.get("url", ""),
             ])
     else:
-        # Baseline initial rows from top discovered changes
         for r in matrix[:15]:
             for cid, cinfo in (r.get("competitors") or {}).items():
                 s1_rows.append([
@@ -291,13 +285,12 @@ def build_price_compare_excel(payload: dict = None) -> Path:
                     cinfo.get("url", ""),
                 ])
 
-    # Sheet 2: Ma_Tran_Nen_Gia_PV (Editable Matrix — Admin can edit this sheet and upload it to update dashboard!)
     s2_headers = [
         "PV SKU",
         "Tên sản phẩm Phong Vũ",
         "Brand",
-        "Loại ổ",
-        "Dung lượng",
+        "Loại",
+        cap_label,
         "Trạng thái PV",
         "Giá PV Hiện tại (VND)",
         "Giá PV Niêm yết (VND)",
@@ -370,13 +363,12 @@ def build_price_compare_excel(payload: dict = None) -> Path:
             r.get("position", ""),
         ])
 
-    # Sheet 3: SP_Doi_Thu_Chua_Khop_PV
     s3_headers = [
         "Mã Đối thủ",
         "Tên sản phẩm Đối thủ",
         "Brand",
-        "Loại ổ",
-        "Dung lượng",
+        "Loại",
+        cap_label,
         "Giá bán (VND)",
         "Giá gốc (VND)",
         "Giảm giá (%)",
@@ -400,17 +392,42 @@ def build_price_compare_excel(payload: dict = None) -> Path:
             u.get("url", ""),
         ])
 
-    sheets = [
-        ("Thong_Bao_Thay_Doi_Gia", s1_headers, s1_rows),
-        ("Ma_Tran_Nen_Gia_PV", s2_headers, s2_rows),
-        ("SP_Doi_Thu_Chua_Khop_PV", s3_headers, s3_rows),
+    if cat_suffix == "OCGN":
+        return [
+            ("Thong_Bao_Thay_Doi_Gia", s1_headers, s1_rows),
+            ("Ma_Tran_Nen_Gia_PV", s2_headers, s2_rows),
+            ("SP_Doi_Thu_Chua_Khop_PV", s3_headers, s3_rows),
+        ]
+    return [
+        (f"Thong_Bao_Gia_{cat_suffix}", s1_headers, s1_rows),
+        (f"Ma_Tran_Nen_Gia_{cat_suffix}", s2_headers, s2_rows),
+        (f"SP_Chua_Khop_{cat_suffix}", s3_headers, s3_rows),
     ]
+
+
+def build_price_compare_excel(payload: dict = None) -> Path:
+    ocgn_path = PUBLIC_TEMPLATE_DIR / "price_compare_ocgn.json"
+    loa_path = PUBLIC_TEMPLATE_DIR / "price_compare_loa.json"
+
+    ocgn_payload = payload if (payload and (payload.get("meta") or {}).get("categoryKey") != "loa") else (
+        json.loads(ocgn_path.read_text(encoding="utf-8")) if ocgn_path.exists() else {}
+    )
+    loa_payload = payload if (payload and (payload.get("meta") or {}).get("categoryKey") == "loa") else (
+        json.loads(loa_path.read_text(encoding="utf-8")) if loa_path.exists() else {}
+    )
+
+    sheets = []
+    if ocgn_payload:
+        sheets.extend(_build_sheets_for_category(ocgn_payload, "OCGN", "Dung lượng"))
+    if loa_payload:
+        sheets.extend(_build_sheets_for_category(loa_payload, "LOA", "Công suất (W)"))
+
     out_path = UPDATE_DATA_DIR / "so_sanh_gia.xlsx"
     write_multi_sheet_xlsx(out_path, sheets)
     # Also save a copy in public/data/so_sanh_gia.xlsx so the user can download it directly from the browser UI
     pub_copy = PUBLIC_TEMPLATE_DIR / "so_sanh_gia.xlsx"
     write_multi_sheet_xlsx(pub_copy, sheets)
-    print(f"Saved `{out_path}` & `{pub_copy}` ({out_path.stat().st_size / 1024:.1f} KB)")
+    print(f"Saved `{out_path}` & `{pub_copy}` ({out_path.stat().st_size / 1024:.1f} KB, {len(sheets)} sheets)")
     return out_path
 
 

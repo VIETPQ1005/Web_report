@@ -22,8 +22,10 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 PUBLIC_DIR = BASE_DIR / "public"
 UPDATE_DATA_DIR = BASE_DIR / "update data"
 SCRAPER_SCRIPT = BASE_DIR / "scripts" / "scrape_tgdd_ocgn.py"
+SCRAPER_LOA_SCRIPT = BASE_DIR / "scripts" / "scrape_loa.py"
 BUILD_SCRIPT = BASE_DIR / "scripts" / "build_data.py"
 PRICE_JSON = PUBLIC_DIR / "data" / "price_compare_ocgn.json"
+PRICE_LOA_JSON = PUBLIC_DIR / "data" / "price_compare_loa.json"
 REPORT_JSON = PUBLIC_DIR / "data" / "report_data.json"
 
 _scan_lock = threading.Lock()
@@ -127,14 +129,18 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
 
         if self.path.startswith("/api/save-price-compare"):
             try:
+                parsed = urllib.parse.urlparse(self.path)
+                qs = urllib.parse.parse_qs(parsed.query)
+                cat = (qs.get("cat") or ["ocgn"])[0]
                 length = int(self.headers.get("Content-Length") or 0)
                 raw = self.rfile.read(length).decode("utf-8", errors="replace")
                 payload = json.loads(raw)
-                PRICE_JSON.write_text(json.dumps(payload, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
+                target_json = PRICE_LOA_JSON if cat == "loa" else PRICE_JSON
+                target_json.write_text(json.dumps(payload, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
                 try:
                     sys.path.insert(0, str(BASE_DIR / "scripts"))
                     from generate_excel_templates import build_price_compare_excel
-                    build_price_compare_excel(payload)
+                    build_price_compare_excel()
                 except Exception:
                     pass
                 return self._send_json(200, {"ok": True})

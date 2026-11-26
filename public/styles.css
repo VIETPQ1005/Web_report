@@ -5136,3 +5136,249 @@ body.theme-light .target-subcat-name-cell::before {
 body.theme-light .target-subcat-share-note {
   color: #475569;
 }
+
+/* ==========================================================================
+   PROMINENT OCGN / LOA HERO CATEGORY SWITCHER, COMPETITOR LOGOS &
+   LOWEST-PRICE GREEN MATRIX HIGHLIGHT (DARK MODE & LIGHT MODE)
+   ========================================================================== */
+.pc-cat-hero-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px;
+  border-radius: 10px;
+  background: linear-gradient(135deg, rgba(13, 18, 28, 0.96) 0%, rgba(20, 30, 48, 0.96) 100%);
+  border: 1.5px solid rgba(0, 229, 255, 0.55);
+  box-shadow: 0 4px 16px rgba(0, 229, 255, 0.16);
+}
+
+.pc-cat-hero-switch.is-top-banner {
+  margin-left: 8px;
+}
+
+.pc-cat-hero-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 6px 16px;
+  border-radius: 7px;
+  border: 1.5px solid transparent;
+  background: rgba(255, 255, 255, 0.04);
+  color: #94A3B8;
+  font-family: var(--font-display);
+  font-size: 13px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+  transition: all 0.18s ease;
+  white-space: nowrap;
+}
+
+.pc-cat-hero-btn:hover {
+  color: #FFFFFF;
+  background: rgba(0, 229, 255, 0.12);
+  border-color: rgba(0, 229, 255, 0.45);
+}
+
+.pc-cat-hero-btn.active[data-pc-cat="ocgn"] {
+  background: linear-gradient(135deg, #00E5FF 0%, #1D7AFC 100%);
+  color: #031124;
+  border-color: #7CEEFF;
+  box-shadow: 0 0 16px rgba(0, 229, 255, 0.55), inset 0 1px 0 rgba(255, 255, 255, 0.45);
+  transform: translateY(-0.5px);
+}
+
+.pc-cat-hero-btn.active[data-pc-cat="loa"] {
+  background: linear-gradient(135deg, #F59E0B 0%, #EC4899 55%, #8B5CF6 100%);
+  color: #FFFFFF;
+  border-color: #FDE68A;
+  box-shadow: 0 0 18px rgba(236, 72, 153, 0.52), inset 0 1px 0 rgba(255, 255, 255, 0.35);
+  transform: translateY(-0.5px);
+}
+
+body.theme-light .pc-cat-hero-switch {
+  background: #F1F5F9;
+  border-color: #6366F1;
+  box-shadow: 0 4px 14px rgba(99, 102, 241, 0.15);
+}
+
+body.theme-light .pc-cat-hero-btn {
+  background: #FFFFFF;
+  color: #475569;
+  border-color: #CBD5E1;
+}
+
+body.theme-light .pc-cat-hero-btn:hover {
+  color: #1E1B4B;
+  border-color: #6366F1;
+  background: #EEF2FF;
+}
+
+body.theme-light .pc-cat-hero-btn.active[data-pc-cat="ocgn"] {
+  background: linear-gradient(135deg, #0284C7 0%, #2563EB 100%);
+  color: #FFFFFF;
+  border-color: #0369A1;
+  box-shadow: 0 4px 12px rgba(37, 99, 235, 0.35);
+}
+
+body.theme-light .pc-cat-hero-btn.active[data-pc-cat="loa"] {
+  background: linear-gradient(135deg, #F43F5E 0%, #D946EF 60%, #6366F1 100%);
+  color: #FFFFFF;
+  border-color: #E11D48;
+  box-shadow: 0 4px 12px rgba(244, 63, 94, 0.35);
+}
+
+/* Competitor Logo Chips:
+   - Hacom: White background (#FFFFFF)
+   - FPT Shop: White background (#FFFFFF)
+   - Thế Giới Di Động: Yellow background (#FFD400)
+   - CellphoneS: Red background (#D70018) */
+.pc-logo-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 3px 9px;
+  border-radius: 6px;
+  line-height: 1;
+  vertical-align: middle;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.22);
+  flex-shrink: 0;
+}
+
+.pc-logo-chip img {
+  height: 19px;
+  width: auto;
+  max-width: 108px;
+  object-fit: contain;
+  display: block;
+}
+
+.pc-logo-chip.is-sm {
+  padding: 2px 7px;
+  border-radius: 5px;
+}
+
+.pc-logo-chip.is-sm img {
+  height: 15px;
+  max-width: 84px;
+}
+
+.pc-logo-chip.is-hacom {
+  background: #FFFFFF !important;
+  border: 1.5px solid #CBD5E1;
+}
+
+.pc-logo-chip.is-fpt {
+  background: #FFFFFF !important;
+  border: 1.5px solid #CBD5E1;
+}
+
+.pc-logo-chip.is-tgdd {
+  background: #FFD400 !important;
+  border: 1.5px solid #EAB308;
+}
+
+.pc-logo-chip.is-cps {
+  background: #D70018 !important;
+  border: 1.5px solid #F43F5E;
+}
+
+.pc-logo-tab-btn {
+  padding: 3px 6px !important;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.pc-logo-tab-btn .pc-logo-chip img {
+  height: 16px;
+  max-width: 86px;
+}
+
+.pc-logo-tab-btn.active {
+  outline: 2px solid #00E5FF;
+  outline-offset: 1px;
+}
+
+body.theme-light .pc-logo-tab-btn.active {
+  outline: 2px solid #4F46E5;
+}
+
+.pc-th-logo-wrap {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 5px;
+}
+
+.pc-th-sort-arrow {
+  font-size: 11px;
+  color: #00E5FF;
+}
+
+body.theme-light .pc-th-sort-arrow {
+  color: #4F46E5;
+}
+
+/* Lowest-Price Green Background Highlight in Comparison Matrix
+   (Applies to whichever price is lowest on the row; if 2+ prices tie for lowest, all tied cells get green background) */
+.pc-compare-table td.pc-lowest-price-cell {
+  background: linear-gradient(180deg, rgba(16, 185, 129, 0.28) 0%, rgba(5, 150, 105, 0.20) 100%) !important;
+  box-shadow: inset 0 0 0 1.5px rgba(52, 211, 153, 0.78) !important;
+  position: relative;
+}
+
+.pc-compare-table td.pc-lowest-price-cell strong,
+.pc-compare-table td.pc-lowest-price-cell .pc-comp-price-link strong {
+  color: #6EE7B7 !important;
+}
+
+.pc-lowest-mini-tag {
+  display: inline-block;
+  margin-left: 4px;
+  padding: 1px 5px;
+  border-radius: 4px;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  background: #10B981;
+  color: #022C22;
+  vertical-align: middle;
+}
+
+.pc-lowest-legend-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: 6px;
+  padding: 2px 9px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  background: rgba(16, 185, 129, 0.2);
+  border: 1px solid rgba(52, 211, 153, 0.6);
+  color: #6EE7B7;
+}
+
+body.theme-light .pc-compare-table td.pc-lowest-price-cell {
+  background: linear-gradient(180deg, #D1FAE5 0%, #A7F3D0 100%) !important;
+  box-shadow: inset 0 0 0 1.5px #059669 !important;
+}
+
+body.theme-light .pc-compare-table td.pc-lowest-price-cell strong,
+body.theme-light .pc-compare-table td.pc-lowest-price-cell .pc-comp-price-link strong {
+  color: #064E3B !important;
+}
+
+body.theme-light .pc-lowest-mini-tag {
+  background: #059669;
+  color: #FFFFFF;
+}
+
+body.theme-light .pc-lowest-legend-badge {
+  background: #D1FAE5;
+  border-color: #059669;
+  color: #065F46;
+}

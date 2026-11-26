@@ -11346,10 +11346,10 @@
       if (!btn) return;
       btn.disabled = true;
       const origText = btn.textContent;
-      btn.textContent = "⏳ Đang quét giá TGDD, CellphoneS & FPT Shop...";
+      btn.textContent = "⏳ Đang quét giá TGDD, CellphoneS, FPT Shop & Hacom...";
       if (fb) {
         fb.className = "update-feedback info";
-        fb.textContent = "Đang kết nối tuần tự với độ trễ an toàn tới Thế Giới Di Động, CellphoneS & FPT Shop (~12–20 giây)...";
+        fb.textContent = "Đang kết nối tuần tự với độ trễ an toàn tới Thế Giới Di Động, CellphoneS, FPT Shop & Hacom (~15–25 giây)...";
       }
       try {
         const res = await fetch("/api/scan-prices", { method: "POST" });
@@ -11366,7 +11366,7 @@
         populatePriceCompareFilters();
         renderPriceCompareView();
         closeScanModal();
-        showToast("✅ Đã quét và cập nhật giá mới nhất từ TGDD, CellphoneS & FPT Shop!");
+        showToast("✅ Đã quét và cập nhật giá mới nhất từ TGDD, CellphoneS, FPT Shop & Hacom!");
       } catch (err) {
         if (fb) {
           fb.className = "update-feedback error";
@@ -11391,6 +11391,7 @@
       { id: "tgdd", name: "Thế Giới Di Động", short: "TGDD", url: "https://www.thegioididong.com/o-cung-di-dong" },
       { id: "cps", name: "CellphoneS", short: "CPS", url: "https://cellphones.com.vn/phu-kien/o-cung-di-dong.html" },
       { id: "fpt", name: "FPT Shop", short: "FPT", url: "https://fptshop.com.vn/phu-kien/o-cung-di-dong" },
+      { id: "hacom", name: "Hacom", short: "HACOM", url: "https://hacom.vn/o-cung-di-dong" },
     ];
     const matrixAll = payload.matrixRows || [];
     const unmatchedAll = payload.unmatchedRows || [];

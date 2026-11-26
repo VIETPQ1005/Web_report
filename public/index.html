@@ -8,10 +8,10 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600;700&family=Chakra+Petch:wght@600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="./styles.css?v=20261125b" />
+  <link rel="stylesheet" href="./styles.css?v=20261126a" />
   <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.1/dist/echarts.min.js" defer></script>
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js" defer></script>
-  <script src="./app.js?v=20261125b" defer></script>
+  <script src="./app.js?v=20261126a" defer></script>
 </head>
 <body>
   <div class="app-shell" id="appShell">
@@ -1191,6 +1191,7 @@
               <button type="button" class="seg-btn" data-val="tgdd">TGDD</button>
               <button type="button" class="seg-btn" data-val="cps">CellphoneS</button>
               <button type="button" class="seg-btn" data-val="fpt">FPT Shop</button>
+              <button type="button" class="seg-btn" data-val="hacom">Hacom</button>
             </div>
             <div class="seg-tabs" id="pcStatusTabs" title="Lọc theo vị thế giá Phong Vũ">
               <button type="button" class="seg-btn active" data-val="all">Tất cả vị thế</button>
@@ -1252,6 +1253,14 @@
             </div>
             <div class="pc-src-val mono" id="pcSrcFptCount">-- SKU</div>
             <div class="pc-src-sub" id="pcSrcFptSub">Số SKU quét được tại FPT Shop</div>
+          </div>
+          <div class="pc-source-card is-hacom">
+            <div class="pc-src-head">
+              <span class="pc-src-badge is-hacom">HACOM</span>
+              <a href="https://hacom.vn/o-cung-di-dong" target="_blank" rel="noopener noreferrer" class="pc-src-link">hacom.vn ↗</a>
+            </div>
+            <div class="pc-src-val mono" id="pcSrcHacomCount">-- SKU</div>
+            <div class="pc-src-sub" id="pcSrcHacomSub">Số SKU quét được tại Hacom</div>
           </div>
         </div>
 
@@ -1527,7 +1536,7 @@
       <div class="modal-header">
         <div>
           <h3 class="modal-title" id="pcScanModalTitle">⚡ Quét Giá Trực Tiếp Từ Website Đối Thủ</h3>
-          <p class="modal-subtitle">Cập nhật giá bán thực tế danh mục <strong>Ổ cứng di động</strong> từ Thế Giới Di Động, CellphoneS &amp; FPT Shop đối chiếu với Phong Vũ.</p>
+          <p class="modal-subtitle">Cập nhật giá bán thực tế danh mục <strong>Ổ cứng di động</strong> từ Thế Giới Di Động, CellphoneS, FPT Shop &amp; Hacom đối chiếu với Phong Vũ.</p>
         </div>
         <button type="button" class="modal-close-btn" id="pcCloseScanModalBtn" aria-label="Đóng">×</button>
       </div>

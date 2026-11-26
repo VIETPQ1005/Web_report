@@ -5,6 +5,7 @@ Currently scrapes:
   1. Thế Giới Di Động (TGDD) — https://www.thegioididong.com/o-cung-di-dong
   2. CellphoneS (CPS)        — https://cellphones.com.vn/phu-kien/o-cung-di-dong.html (GraphQL cate 750)
   3. FPT Shop (FPT)          — https://fptshop.com.vn/phu-kien/o-cung-di-dong
+  4. Hacom (HACOM)           — https://hacom.vn/o-cung-di-dong
 """
 
 import datetime
@@ -27,6 +28,8 @@ CPS_URL = "https://cellphones.com.vn/phu-kien/o-cung-di-dong.html"
 CPS_GQL_URL = "https://api.cellphones.com.vn/v2/graphql/query"
 FPT_BASE = "https://fptshop.com.vn"
 FPT_URL = f"{FPT_BASE}/phu-kien/o-cung-di-dong"
+HACOM_BASE = "https://hacom.vn"
+HACOM_URL = f"{HACOM_BASE}/o-cung-di-dong"
 
 HEADERS = {
     "User-Agent": (
@@ -55,8 +58,8 @@ MODEL_PATTERNS = [
     ("my_passport_ssd", [r"my\s*passport.*ssd", r"ssd.*my\s*passport"]),
     ("my_passport_ultra", [r"my\s*passport\s+ultra"]),
     ("my_passport", [r"my\s*passport(?!\s*(?:ultra|ssd))"]),
-    ("elements_se", [r"elements\s+se"]),
-    ("elements", [r"\belements\b(?!\s+se)"]),
+    ("elements_se", [r"elements?\s+se"]),
+    ("elements", [r"\belements?\b(?!\s+se)"]),
     ("t7_shield", [r"\bt7\s*shield\b", r"shield.*mu-pe", r"mu-pe\d[a-z]\d"]),
     ("t7_touch", [r"\bt7\s*touch\b"]),
     ("t7_std", [r"\bt7\b(?!\s*(?:shield|touch))"]),
@@ -110,8 +113,8 @@ COLOR_MAP = {
 }
 
 
-def fetch_url(url: str, data: bytes = None, extra_headers: dict = None, unverified_ssl: bool = False) -> str:
-    hdrs = dict(HEADERS)
+def fetch_url(url: str, data: bytes = None, extra_headers: dict = None, unverified_ssl: bool = False, raw_headers: dict = None) -> str:
+    hdrs = dict(raw_headers) if raw_headers is not None else dict(HEADERS)
     if extra_headers:
         hdrs.update(extra_headers)
     req = urllib.request.Request(url, data=data, headers=hdrs)
@@ -437,7 +440,7 @@ def scrape_fpt_all() -> list:
         (f"{FPT_URL}?trang=2", "page2"),
     ]:
         try:
-            html_str = fetch_url(url_variant, unverified_ssl=True)
+            html_str = fetch_url(url_variant, unverified_ssl=True, raw_headers={"User-Agent": "Mozilla/5.0"})
             joined = extract_next_f_text(html_str)
             items = extract_fpt_items_from_next_f(joined)
             added = 0
@@ -450,6 +453,84 @@ def scrape_fpt_all() -> list:
                 break
         except Exception as exc:
             print(f"  [FPT {label}] error: {exc}")
+            break
+    return list(all_prods.values())
+
+
+def extract_hacom_items_from_next_f(joined: str) -> tuple[list, int]:
+    decoder = json.JSONDecoder()
+    all_items = []
+    seen_codes = set()
+    raw_total = 0
+    for m in re.finditer(r'"dataItem"\s*:\s*\{', joined):
+        pos = joined.find("{", m.start() + 10)
+        if pos == -1:
+            continue
+        try:
+            obj, _ = decoder.raw_decode(joined, pos)
+        except Exception:
+            continue
+        data_list = obj.get("data") if isinstance(obj, dict) else None
+        if not isinstance(data_list, list):
+            continue
+        raw_total += len(data_list)
+        for it in data_list:
+            if not isinstance(it, dict):
+                continue
+            code = str(it.get("itemCode") or it.get("itemId") or "").strip()
+            name = str(it.get("itemName") or it.get("shortName") or "").strip()
+            url_rel = str(it.get("url") or "").strip().lstrip("/")
+            if not code or not name or code in seen_codes:
+                continue
+            seen_codes.add(code)
+            qty = int(round(float(it.get("onhandQuantity") or 0)))
+            cur_p = int(round(float(it.get("unitSellingPrice") or it.get("price1") or 0)))
+            orig_p = int(round(float(it.get("marketPrice") or 0)))
+            # Exclude out-of-stock / discontinued items on Hacom (onhandQuantity <= 0)
+            if cur_p <= 0 or qty <= 0:
+                continue
+            old_price = orig_p if orig_p > cur_p else 0
+            disc_pct = int(round((old_price - cur_p) / old_price * 100)) if old_price > cur_p > 0 else 0
+            brand_raw = str(it.get("brand") or "").strip()
+            if brand_raw == "$undefined":
+                brand_raw = ""
+            all_items.append({
+                "compId": "hacom",
+                "compShort": "HACOM",
+                "code": code,
+                "name": name,
+                "brand": brand_raw,
+                "price": cur_p,
+                "oldPrice": old_price,
+                "discountPct": disc_pct,
+                "inStock": True,
+                "sold": f"Tồn: {qty}",
+                "url": f"{HACOM_BASE}/{url_rel}" if url_rel else HACOM_URL,
+            })
+    return all_items, raw_total
+
+
+def scrape_hacom_all() -> list:
+    all_prods = {}
+    for page in range(1, 5):
+        url_variant = HACOM_URL if page == 1 else f"{HACOM_URL}?page={page}"
+        try:
+            if page > 1:
+                time.sleep(random.uniform(0.2, 0.45))
+            html_str = fetch_url(url_variant, unverified_ssl=True, raw_headers={"User-Agent": "Mozilla/5.0"})
+            joined = extract_next_f_text(html_str)
+            items, raw_cnt = extract_hacom_items_from_next_f(joined)
+            added = 0
+            for it in items:
+                if it["code"] not in all_prods:
+                    all_prods[it["code"]] = it
+                    added += 1
+            print(f"  [HACOM page={page}] raw={raw_cnt}, in_stock_priced={len(items)}, new={added}, total={len(all_prods)}")
+            # Stop pagination as soon as a page has 0 in-stock items (Hacom sorts in-stock items first)
+            if len(items) == 0 or added == 0:
+                break
+        except Exception as exc:
+            print(f"  [HACOM page={page}] error: {exc}")
             break
     return list(all_prods.values())
 
@@ -516,12 +597,17 @@ def extract_drive_type(name: str) -> str:
         return "SSD"
     if "hdd" in nl:
         return "HDD"
+    if any(k in nl for k in ("my passport", "element", "my book", "one touch", "expansion", "canvio", "2.5 inch", "3.5 inch")):
+        return "HDD"
     return "UNKNOWN"
 
 
 def extract_capacity(name: str) -> str:
     m = CAP_RE.search(name or "")
     if not m:
+        m_t = re.search(r"\b(\d)\s*T\b", name or "", re.I)
+        if m_t:
+            return f"{int(m_t.group(1))}TB"
         m = re.search(r"\b(128|256|500|512)\s*G\b", name or "", re.I)
         if m:
             return f"{int(m.group(1))}GB"
@@ -733,7 +819,11 @@ def main():
     tgdd_prods = scrape_tgdd_all()
     cps_prods = scrape_cps_all()
     fpt_prods = scrape_fpt_all()
-    print(f"Scraped totals: TGDD={len(tgdd_prods)} | CellphoneS={len(cps_prods)} | FPT Shop={len(fpt_prods)}")
+    hacom_prods = scrape_hacom_all()
+    print(
+        f"Scraped totals: TGDD={len(tgdd_prods)} | CellphoneS={len(cps_prods)} | "
+        f"FPT Shop={len(fpt_prods)} | Hacom={len(hacom_prods)}"
+    )
 
     pv_list = load_pv_ocgn()
     pv_by_sku = {p["sku"]: p for p in pv_list}
@@ -743,8 +833,11 @@ def main():
     tgdd_matched, tgdd_unmatched = match_competitor_products(tgdd_prods, pv_priced)
     cps_matched, cps_unmatched = match_competitor_products(cps_prods, pv_priced)
     fpt_matched, fpt_unmatched = match_competitor_products(fpt_prods, pv_priced)
+    hacom_matched, hacom_unmatched = match_competitor_products(hacom_prods, pv_priced)
 
-    all_matched_skus = sorted(set(tgdd_matched.keys()) | set(cps_matched.keys()) | set(fpt_matched.keys()))
+    all_matched_skus = sorted(
+        set(tgdd_matched.keys()) | set(cps_matched.keys()) | set(fpt_matched.keys()) | set(hacom_matched.keys())
+    )
     matrix_rows = []
     for sku in all_matched_skus:
         pv = pv_by_sku[sku]
@@ -756,7 +849,12 @@ def main():
         cheaper_cnt = 0
         equal_cnt = 0
 
-        for cid, cmap in (("tgdd", tgdd_matched), ("cps", cps_matched), ("fpt", fpt_matched)):
+        for cid, cmap in (
+            ("tgdd", tgdd_matched),
+            ("cps", cps_matched),
+            ("fpt", fpt_matched),
+            ("hacom", hacom_matched),
+        ):
             offer = cmap.get(sku)
             if not offer:
                 continue
@@ -831,22 +929,27 @@ def main():
 
     # Sort matrix: multi-competitor matches first, then highest PV premium vs market
     matrix_rows.sort(key=lambda r: (r["compCount"], r["diffVsBestVnd"]), reverse=True)
-    unmatched_rows = tgdd_unmatched + cps_unmatched + fpt_unmatched
+    unmatched_rows = tgdd_unmatched + cps_unmatched + fpt_unmatched + hacom_unmatched
     unmatched_rows.sort(key=lambda r: (0 if r["inStock"] else 1, r["compId"], r["brand"], r["price"]))
 
     both_cnt = sum(1 for r in matrix_rows if r["compCount"] >= 2)
     print(
         f"\nMATRIX SUMMARY: {len(matrix_rows)} unique PV SKUs matched "
-        f"(TGDD={len(tgdd_matched)}, CPS={len(cps_matched)}, FPT={len(fpt_matched)}, Multi>=2={both_cnt})"
+        f"(TGDD={len(tgdd_matched)}, CPS={len(cps_matched)}, FPT={len(fpt_matched)}, "
+        f"HACOM={len(hacom_matched)}, Multi>=2={both_cnt})"
     )
-    print(f"  Unmatched competitor items: TGDD={len(tgdd_unmatched)}, CPS={len(cps_unmatched)}, FPT={len(fpt_unmatched)}")
-    for r in matrix_rows[:15]:
+    print(
+        f"  Unmatched competitor items: TGDD={len(tgdd_unmatched)}, CPS={len(cps_unmatched)}, "
+        f"FPT={len(fpt_unmatched)}, HACOM={len(hacom_unmatched)}"
+    )
+    for r in matrix_rows[:18]:
         t_str = f"TGDD={r['competitors']['tgdd']['price']:,}" if "tgdd" in r["competitors"] else "TGDD=—"
         c_str = f"CPS={r['competitors']['cps']['price']:,}" if "cps" in r["competitors"] else "CPS=—"
         f_str = f"FPT={r['competitors']['fpt']['price']:,}" if "fpt" in r["competitors"] else "FPT=—"
+        h_str = f"HACOM={r['competitors']['hacom']['price']:,}" if "hacom" in r["competitors"] else "HACOM=—"
         print(
-            f"  [{r['position']:14s}] {r['pvSku']} {r['pvName'][:32]:32s} | "
-            f"PV={r['pvPrice']:>10,} | {t_str:15s} | {c_str:15s} | {f_str:15s} | vsBest={r['diffVsBestVnd']:+,}"
+            f"  [{r['position']:14s}] {r['pvSku']} {r['pvName'][:30]:30s} | "
+            f"PV={r['pvPrice']:>10,} | {t_str:14s} | {c_str:14s} | {f_str:14s} | {h_str:15s} | vsBest={r['diffVsBestVnd']:+,}"
         )
 
     payload = {
@@ -885,6 +988,15 @@ def main():
                     "totalCount": len(fpt_prods),
                     "matchedCount": len(fpt_matched),
                     "unmatchedCount": len(fpt_unmatched),
+                },
+                {
+                    "id": "hacom",
+                    "name": "Hacom",
+                    "short": "HACOM",
+                    "url": HACOM_URL,
+                    "totalCount": len(hacom_prods),
+                    "matchedCount": len(hacom_matched),
+                    "unmatchedCount": len(hacom_unmatched),
                 },
             ],
         },

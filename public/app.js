@@ -10858,10 +10858,25 @@
       }
 
       const slimPayload = makeCloudSafePayload(payload);
+      const jsonStr = JSON.stringify(slimPayload);
+      let reqBody = jsonStr;
+      // Compress with browser CompressionStream("gzip") so 7.3 MB JSON becomes ~2 MB (well under Netlify 6 MB limit!)
+      if (typeof CompressionStream === "function") {
+        try {
+          const cs = new CompressionStream("gzip");
+          const writer = cs.writable.getWriter();
+          writer.write(new TextEncoder().encode(jsonStr));
+          writer.close();
+          reqBody = await new Response(cs.readable).arrayBuffer();
+          headers["Content-Encoding"] = "gzip";
+        } catch {
+          reqBody = jsonStr;
+        }
+      }
       const res = await fetch("/api/report-data", {
         method: "POST",
         headers,
-        body: JSON.stringify(slimPayload),
+        body: reqBody,
       });
       const body = await res.json().catch(() => ({}));
 
@@ -10967,6 +10982,15 @@
         );
       } else if (state.raw?.invSerials) {
         nextPayload.invSerials = state.raw.invSerials;
+      }
+      if (!nextPayload.invSerialCube && state.raw?.invSerialCube) {
+        nextPayload.invSerialCube = state.raw.invSerialCube;
+      }
+      if (!nextPayload.masterSummary && state.raw?.masterSummary) {
+        nextPayload.masterSummary = state.raw.masterSummary;
+      }
+      if (!nextPayload.taxonomy && state.raw?.taxonomy) {
+        nextPayload.taxonomy = state.raw.taxonomy;
       }
 
       const mode = await publishPayloadDirectly(nextPayload);
@@ -11083,6 +11107,15 @@
         );
       } else if (state.raw?.invSerials) {
         nextPayload.invSerials = state.raw.invSerials;
+      }
+      if (!nextPayload.invSerialCube && state.raw?.invSerialCube) {
+        nextPayload.invSerialCube = state.raw.invSerialCube;
+      }
+      if (!nextPayload.masterSummary && state.raw?.masterSummary) {
+        nextPayload.masterSummary = state.raw.masterSummary;
+      }
+      if (!nextPayload.taxonomy && state.raw?.taxonomy) {
+        nextPayload.taxonomy = state.raw.taxonomy;
       }
 
       const mode = await publishPayloadDirectly(nextPayload);
@@ -11262,9 +11295,24 @@
     const insight = document.getElementById("pcInsightText");
     if (insight) insight.textContent = "Đang tải dữ liệu so sánh giá đa đối thủ...";
     try {
-      const res = await fetch(`./data/price_compare_ocgn.json?t=${Date.now()}`, { cache: "no-store" });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      pc.data = normalizePriceComparePayload(await res.json());
+      let json = null;
+      try {
+        const cloudRes = await fetchWithTimeout(`/api/report-data?type=price-compare&t=${Date.now()}`, { cache: "no-store" }, 3500);
+        if (cloudRes && cloudRes.ok && (cloudRes.headers.get("content-type") || "").includes("application/json")) {
+          const cand = await cloudRes.json();
+          if (cand && Array.isArray(cand.matrixRows) && cand.matrixRows.length > 0) {
+            json = cand;
+          }
+        }
+      } catch {
+        // fallback to static baseline
+      }
+      if (!json) {
+        const res = await fetch(`./data/price_compare_ocgn.json?t=${Date.now()}`, { cache: "no-store" });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        json = await res.json();
+      }
+      pc.data = normalizePriceComparePayload(json);
       pc.loaded = true;
       populatePriceCompareFilters();
       if (state.activeView === "pricecompare") renderPriceCompareView();
@@ -11601,11 +11649,17 @@
           pc.loaded = true;
           populatePriceCompareFilters();
           renderPriceCompareView();
-          // Also save to local server if active
+          // Also persist to Netlify Blobs (/api/report-data?type=price-compare) & local server if active
+          const pcJsonStr = JSON.stringify(pc.data);
+          fetch("/api/report-data?type=price-compare", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: pcJsonStr,
+          }).catch(() => {});
           fetch("/api/save-price-compare", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(pc.data),
+            body: pcJsonStr,
           }).catch(() => {});
           closeScanModal();
           showToast(`✅ Admin đã cập nhật thay đổi giá từ "${file.name}" (${newChanges.length} biến động mới)!`);

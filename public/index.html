@@ -8,10 +8,10 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600;700&family=Chakra+Petch:wght@600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="./styles.css?v=20261126b" />
+  <link rel="stylesheet" href="./styles.css?v=20261126c" />
   <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.1/dist/echarts.min.js" defer></script>
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js" defer></script>
-  <script src="./app.js?v=20261126b" defer></script>
+  <script src="./app.js?v=20261126c" defer></script>
 </head>
 <body>
   <div class="app-shell" id="appShell">
@@ -222,11 +222,10 @@
             <button type="button" class="btn-clear-global hidden" id="clearGlobalFilterBtn" title="Xóa bộ lọc Category, Subcat 2 &amp; đặt lại Kỳ báo cáo Năm hiện tại">✕ Bỏ lọc</button>
 
             <div class="update-split-btn">
-              <button type="button" class="btn-update-data" id="autoSyncDataBtn" title="Bấm 1 lần để tự động đọc tất cả file Excel trong thư mục gốc và cập nhật lên Web">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/><path d="M16 16h5v5"/></svg>
+              <button type="button" class="btn-update-data" id="autoSyncDataBtn" title="Insert file Form Excel update_data.xlsx để cập nhật trực tiếp lên Web">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
                 <span id="autoSyncBtnText">Update Data</span>
               </button>
-              <button type="button" class="btn-update-gear" id="openUpdateModalBtn" title="Cài đặt thư mục dữ liệu gốc & tùy chọn đồng bộ" aria-label="Cài đặt nguồn dữ liệu gốc">⚙</button>
             </div>
 
             <div class="theme-switch-group" id="themeSwitchGroup" role="group" aria-label="Chuyển đổi giao diện Dark Mode và Light Mode">
@@ -1357,66 +1356,31 @@
   </div>
 
   <!-- ======================================================================
-       UPDATE DATA MODAL (INSERT SINGLE EXCEL FORM `update_data.xlsx`)
+       UPDATE DATA MODAL (SIMPLE INSERT FILE DIALOG)
        ====================================================================== -->
   <div class="modal-backdrop" id="updateDataModal" aria-hidden="true" role="dialog" aria-modal="true" aria-labelledby="updateModalTitle">
-    <div class="modal-dialog">
+    <div class="modal-dialog" style="max-width:460px">
       <div class="modal-header">
         <div>
-          <h2 class="modal-title" id="updateModalTitle">📥 Update Data — Insert Form Excel <code>update_data.xlsx</code></h2>
-          <p class="modal-subtitle">Tất cả dữ liệu gốc làm báo cáo đã được gom vào 1 Form Excel mẫu duy nhất tại thư mục <code>update data/update_data.xlsx</code>. Lưu ý: Sheet <strong>Sale_Revenue_Detail</strong> chỉ cần cập nhật từ ngày <strong>01/10/2026</strong> (tức từ dòng <strong>407,594</strong> trở đi; 407,592 dòng lịch sử trước đó đã được khóa cache).</p>
+          <h2 class="modal-title" id="updateModalTitle">📥 Insert File (<code>update_data.xlsx</code>)</h2>
         </div>
         <button type="button" class="modal-close-btn" id="closeUpdateModalBtn" aria-label="Đóng">×</button>
       </div>
 
-      <div class="modal-body">
-        <!-- Cloud & Storage status banner -->
-        <div class="cloud-status-bar" id="cloudStatusBar">
-          <span class="status-dot" id="cloudStatusDot"></span>
-          <span id="cloudStatusText">Sẵn sàng nhận file Form Excel <code>update_data.xlsx</code>...</span>
-        </div>
+      <div class="modal-body" style="padding:18px 20px;display:flex;flex-direction:column;gap:12px">
+        <input type="file" id="updateDataFileInput" accept=".xlsx,.xls" class="hidden" />
 
-        <!-- Insert Form Excel Card -->
-        <div class="source-folder-card linked" id="sourceFolderCard">
-          <div class="source-folder-head">
-            <div class="source-folder-icon">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="12" y1="18" x2="12" y2="12"/><line x1="9" y1="15" x2="15" y2="15"/></svg>
-            </div>
-            <div class="source-folder-info">
-              <div class="source-folder-title" id="linkedFolderTitle">Form Excel Mẫu: <code>update data/update_data.xlsx</code></div>
-              <div class="source-folder-sub" id="linkedFolderSub">
-                Gồm 8 Sheet chuẩn: <code>Sale_Revenue_Detail</code> (từ <strong>01/10/2026 — dòng 407594+</strong>), <code>Master_Product</code>, <code>Inventory_Details</code>, <code>Inventory_SKU_Level</code>, <code>Inventory_Branch_Level</code>, <code>Inventory_Serial_Details</code>, <code>Bad_Stock_by_Serial</code>, <code>Bao_cao_quan_ly_gia</code>.
-              </div>
-            </div>
-          </div>
-
-          <input type="file" id="updateDataFileInput" accept=".xlsx,.xls" class="hidden" />
-
-          <div class="source-folder-actions" style="display:flex;flex-wrap:wrap;gap:10px;align-items:center">
-            <button type="button" class="btn-publish-live" id="insertUpdateExcelBtn">
-              <span>📂 Chọn &amp; Insert File Form Excel (<code>update_data.xlsx</code>)</span>
-            </button>
-            <a href="/api/download-template?type=update_data" download="update_data.xlsx" class="btn-mini" id="downloadUpdateTemplateBtn" title="Tải file mẫu update_data.xlsx từ thư mục update data/">⬇ Tải Form mẫu <code>update_data.xlsx</code></a>
-          </div>
-        </div>
+        <button type="button" class="btn-publish-live" id="insertUpdateExcelBtn" style="width:100%;justify-content:center;padding:12px 16px;font-size:13.5px">
+          <span>📂 Insert File <code>update_data.xlsx</code></span>
+        </button>
 
         <!-- Validation / Progress message -->
         <div class="update-feedback hidden" id="updateFeedback"></div>
 
-        <!-- Optional Passcode Row (auto-shown if UPDATE_DATA_KEY is configured in Netlify) -->
+        <!-- Optional Passcode Row (auto-shown only if UPDATE_DATA_KEY is configured in Netlify) -->
         <div class="passcode-row hidden" id="passcodeRow">
-          <label for="updatePasscodeInput" class="passcode-label">🔒 Mã bảo vệ cập nhật (UPDATE_DATA_KEY):</label>
-          <input type="password" id="updatePasscodeInput" class="dark-search passcode-input" placeholder="Nhập mã bảo vệ Netlify..." autocomplete="off" />
-        </div>
-      </div>
-
-      <div class="modal-footer">
-        <div class="modal-footer-left">
-          <button type="button" class="btn-ghost-danger" id="revertDefaultDataBtn" title="Xóa bản cập nhật cloud và quay về dữ liệu gốc trong GitHub">↺ Khôi phục bản GitHub</button>
-          <button type="button" class="btn-mini" id="downloadCurrentJsonBtn" title="Tải file report_data.json hiện tại để sao lưu">⬇ Sao lưu JSON</button>
-        </div>
-        <div class="modal-footer-right">
-          <button type="button" class="btn-mini" id="cancelUpdateModalBtn">Đóng</button>
+          <label for="updatePasscodeInput" class="passcode-label">🔒 Mã bảo vệ (UPDATE_DATA_KEY):</label>
+          <input type="password" id="updatePasscodeInput" class="dark-search passcode-input" placeholder="Nhập mã bảo vệ..." autocomplete="off" />
         </div>
       </div>
     </div>
@@ -1558,52 +1522,25 @@
   </div>
 
   <!-- ================================================================
-       MODAL: ADMIN CẬP NHẬT THAY ĐỔI GIÁ (INSERT FORM EXCEL SO_SANH_GIA.XLSX & AGENT SYNC)
+       MODAL: ADMIN CẬP NHẬT THAY ĐỔI GIÁ (SIMPLE INSERT FILE SO_SANH_GIA.XLSX)
        ================================================================ -->
   <div class="modal-backdrop" id="pcScanModal" aria-hidden="true" role="dialog" aria-modal="true" aria-labelledby="pcScanModalTitle">
-    <div class="modal-dialog pc-scan-modal-dialog">
+    <div class="modal-dialog" style="max-width:460px">
       <div class="modal-header">
         <div>
-          <h3 class="modal-title" id="pcScanModalTitle">🛠️ Admin Cập Nhật Thay Đổi Giá (Form Excel &amp; Agent Nén Giá)</h3>
-          <p class="modal-subtitle">Các Trinh Sát (TGDĐ, CellphoneS, FPT, Hacom) thông báo có thay đổi giá và gửi về cho <strong>Agent Nén Giá (Wall•E)</strong> điền vào Form Excel <code>update data/so_sanh_gia.xlsx</code>.</p>
+          <h3 class="modal-title" id="pcScanModalTitle">🛠️ Admin Cập Nhật Thay Đổi Giá</h3>
         </div>
         <button type="button" class="modal-close-btn" id="pcCloseScanModalBtn" aria-label="Đóng">×</button>
       </div>
-      <div class="modal-body">
-        <div class="pc-scan-last-bar" id="pcScanLastTimeInfo">Khung thời gian giữa 2 lần cập nhật: --</div>
+      <div class="modal-body" style="padding:18px 20px;display:flex;flex-direction:column;gap:12px">
+        <div class="pc-scan-last-bar" id="pcScanLastTimeInfo" style="margin-bottom:0">Khung thời gian giữa 2 lần cập nhật: --</div>
 
-        <!-- Option 1: Insert Form Excel so_sanh_gia.xlsx -->
-        <div class="pc-scan-guide-box is-best-time">
-          <div class="pc-guide-title">📥 1. Insert Form Excel So Sánh Giá (<code>update data/so_sanh_gia.xlsx</code>)</div>
-          <p style="margin:0 0 10px;color:var(--text-secondary)">
-            Form Excel gồm 3 Sheet do <strong>Wall•E Nén Giá</strong> tổng hợp từ 4 Trinh Sát: <code>Thong_Bao_Thay_Doi_Gia</code>, <code>Ma_Tran_Nen_Gia_PV</code>, và <code>SP_Doi_Thu_Chua_Khop_PV</code>. Admin có thể chỉnh sửa giá trong file Excel rồi Insert trực tiếp lên Dashboard:
-          </p>
-          <input type="file" id="pcExcelFileInput" accept=".xlsx,.xls" class="hidden" />
-          <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center">
-            <button type="button" class="btn-publish-live" id="pcInsertExcelBtn">📂 Chọn &amp; Insert Form Excel <code>so_sanh_gia.xlsx</code></button>
-            <a href="./data/so_sanh_gia.xlsx" download="so_sanh_gia.xlsx" class="btn-mini">⬇ Tải Form Excel <code>so_sanh_gia.xlsx</code> hiện tại</a>
-          </div>
-        </div>
-
-        <!-- Option 2: Trigger Agents to scan & fill so_sanh_gia.xlsx -->
-        <div class="pc-scan-guide-box is-warn">
-          <div class="pc-guide-title">🤖 2. Giao 4 Trinh Sát báo giá mới về cho Wall•E điền vào Form Excel</div>
-          <ul class="pc-guide-list">
-            <li><strong>Quy trình Agent:</strong> Leader Eve giao việc cho 4 Trinh Sát (TGDĐ, CellphoneS, FPT, Hacom) → Phát hiện thay đổi giá → Gửi Wall•E nén giá và tự động ghi vào <code>update data/so_sanh_gia.xlsx</code>.</li>
-            <li><strong>Khung giờ khuyến nghị (Chống chặn IP):</strong> Cách nhau <strong>30 – 60 phút</strong> vào <strong>08:30 – 09:30 sáng</strong> hoặc <strong>13:30 – 14:30 chiều</strong>.</li>
-          </ul>
-        </div>
+        <input type="file" id="pcExcelFileInput" accept=".xlsx,.xls" class="hidden" />
+        <button type="button" class="btn-publish-live" id="pcInsertExcelBtn" style="width:100%;justify-content:center;padding:12px 16px;font-size:13.5px">
+          <span>📂 Insert File <code>so_sanh_gia.xlsx</code></span>
+        </button>
 
         <div class="update-feedback hidden" id="pcScanFeedback"></div>
-      </div>
-      <div class="modal-footer">
-        <div class="modal-footer-left">
-          <span class="muted" style="font-size:11px">Lưu tại: <code>update data/so_sanh_gia.xlsx</code></span>
-        </div>
-        <div class="modal-footer-right" style="display:flex;gap:8px">
-          <button type="button" class="btn-mini" id="pcCancelScanModalBtn">Đóng</button>
-          <button type="button" class="btn-scan-price" id="pcConfirmScanBtn">🤖 Cử 4 Trinh Sát &amp; Wall•E Điền Form Excel Mới</button>
-        </div>
       </div>
     </div>
   </div>

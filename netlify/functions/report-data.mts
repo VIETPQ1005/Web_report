@@ -1,8 +1,10 @@
 import { getStore } from "@netlify/blobs";
 import type { Config, Context } from "@netlify/functions";
+import { gunzipSync } from "node:zlib";
 
 const BLOB_KEY = "latest-v3-storage";
-const MAX_PAYLOAD_BYTES = 5_800_000; // Keep safely under Netlify 6 MB buffered payload limit
+const PRICE_BLOB_KEY = "latest-price-compare-ocgn";
+const MAX_PAYLOAD_BYTES = 15_000_000; // Allow up to 15 MB uncompressed JSON (POST body itself can be gzip-compressed ~2 MB)
 
 interface ReportPayload {
   meta: {
@@ -143,10 +145,25 @@ export default async (req: Request, context: Context) => {
   const url = new URL(req.url);
   const store = getReportStore(context);
   const authRequired = Boolean((Netlify.env.get("UPDATE_DATA_KEY") || "").trim());
+  const isPriceCompare = url.searchParams.get("type") === "price-compare";
 
-  // GET /api/report-data or GET /api/report-data?meta=1
+  // GET /api/report-data or GET /api/report-data?meta=1 or GET /api/report-data?type=price-compare
   if (req.method === "GET") {
     try {
+      if (isPriceCompare) {
+        const pEntry = await store.getWithMetadata(PRICE_BLOB_KEY, { type: "text", consistency: "strong" });
+        if (pEntry === null) {
+          return jsonResponse({ exists: false }, 404);
+        }
+        return new Response(pEntry.data as string, {
+          status: 200,
+          headers: {
+            "Content-Type": "application/json; charset=utf-8",
+            "Cache-Control": "no-store, no-cache, must-revalidate",
+            "X-Data-Source": "netlify-blobs",
+          },
+        });
+      }
       if (url.searchParams.get("meta") === "1") {
         const metaEntry = await store.getMetadata(BLOB_KEY, { consistency: "strong" });
         return jsonResponse({
@@ -198,7 +215,17 @@ export default async (req: Request, context: Context) => {
     }
 
     try {
-      const rawText = await req.text();
+      const contentEncoding = (req.headers.get("content-encoding") || "").toLowerCase();
+      let rawText = "";
+      if (contentEncoding === "gzip") {
+        const ab = await req.arrayBuffer();
+        if (!ab || ab.byteLength === 0) {
+          return jsonResponse({ ok: false, error: "Body trống." }, 400);
+        }
+        rawText = gunzipSync(Buffer.from(ab)).toString("utf-8");
+      } else {
+        rawText = await req.text();
+      }
       if (!rawText) {
         return jsonResponse({ ok: false, error: "Body trống." }, 400);
       }
@@ -206,10 +233,17 @@ export default async (req: Request, context: Context) => {
         return jsonResponse(
           {
             ok: false,
-            error: "File dữ liệu sau xử lý vượt quá giới hạn 5.5 MB của Netlify Function.",
+            error: "File dữ liệu sau xử lý vượt quá giới hạn 15 MB.",
           },
           413
         );
+      }
+
+      if (isPriceCompare) {
+        const parsedPc = JSON.parse(rawText);
+        const updatedAt = new Date().toISOString();
+        await store.set(PRICE_BLOB_KEY, JSON.stringify(parsedPc), { metadata: { updatedAt } });
+        return jsonResponse({ ok: true, source: "netlify-blobs", updatedAt });
       }
 
       let parsed: ReportPayload;

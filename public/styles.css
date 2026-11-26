@@ -2397,6 +2397,88 @@ body.theme-light .lpa-delta {
   margin-bottom: 12px;
 }
 
+.pc-change-alert-panel {
+  margin-bottom: 12px;
+  border: 1px solid rgba(168, 85, 247, 0.45);
+  background: linear-gradient(135deg, rgba(168, 85, 247, 0.08) 0%, rgba(15, 23, 42, 0.92) 100%);
+}
+
+body.theme-light .pc-change-alert-panel {
+  border-color: #C084FC;
+  background: linear-gradient(135deg, #FAF5FF 0%, #FFFFFF 100%);
+}
+
+.pc-change-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+body.theme-light .pc-change-head {
+  border-bottom-color: #E9D5FF;
+}
+
+.pc-change-title-group,
+.pc-change-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.pc-change-pill {
+  display: inline-block;
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 10.5px;
+  font-weight: 800;
+  background: rgba(168, 85, 247, 0.28);
+  color: #E9D5FF;
+  border: 1px solid rgba(192, 132, 252, 0.65);
+}
+
+body.theme-light .pc-change-pill {
+  background: #F3E8FF;
+  color: #6B21A8;
+  border-color: #A855F7;
+}
+
+.pc-change-window {
+  font-size: 11.5px;
+  font-weight: 700;
+  color: #FDE047;
+}
+
+body.theme-light .pc-change-window {
+  color: #9A3412;
+}
+
+.pc-change-count {
+  font-size: 11px;
+  font-weight: 700;
+  color: #38BDF8;
+}
+
+body.theme-light .pc-change-count {
+  color: #1D4ED8;
+}
+
+.pc-change-table-wrap {
+  max-height: 225px;
+  overflow-y: auto;
+  margin-top: 8px;
+}
+
+.pc-change-table th,
+.pc-change-table td {
+  padding: 6px 10px;
+  font-size: 11px;
+}
+
 .pc-source-card {
   background: var(--bg-panel);
   border: 1px solid var(--border-subtle);

@@ -952,10 +952,156 @@ def main():
             f"PV={r['pvPrice']:>10,} | {t_str:14s} | {c_str:14s} | {f_str:14s} | {h_str:15s} | vsBest={r['diffVsBestVnd']:+,}"
         )
 
+    now_iso = datetime.datetime.now().isoformat(timespec="seconds")
+    prev_payload = {}
+    if OUT_FILE.exists():
+        try:
+            prev_payload = json.loads(OUT_FILE.read_text(encoding="utf-8"))
+        except Exception:
+            prev_payload = {}
+
+    prev_meta = prev_payload.get("meta") or {}
+    prev_scraped_at = prev_meta.get("scrapedAt") or "2026-11-26T16:00:00"
+    if prev_scraped_at == now_iso:
+        prev_scraped_at = prev_meta.get("previousScrapedAt") or "2026-11-26T16:00:00"
+
+    def _fmt_vn_dt(iso_str: str) -> str:
+        try:
+            dt = datetime.datetime.fromisoformat(iso_str.replace("Z", ""))
+            return dt.strftime("%d/%m/%Y %H:%M:%S")
+        except Exception:
+            return iso_str
+
+    try:
+        dt_prev = datetime.datetime.fromisoformat(prev_scraped_at.replace("Z", ""))
+        dt_curr = datetime.datetime.fromisoformat(now_iso.replace("Z", ""))
+        diff_sec = max(60, int((dt_curr - dt_prev).total_seconds()))
+        hrs, rem = divmod(diff_sec, 3600)
+        mins = max(1, rem // 60)
+        dur_str = f"{hrs} giờ {mins} phút" if hrs > 0 else f"{mins} phút"
+    except Exception:
+        dur_str = "30 phút"
+
+    window_label = f"Từ {_fmt_vn_dt(prev_scraped_at)} đến {_fmt_vn_dt(now_iso)} ({dur_str})"
+
+    # Detect price changes & newly added competitor prices vs previous snapshot
+    prev_matrix_by_sku = {r.get("pvSku"): r for r in (prev_payload.get("matrixRows") or []) if r.get("pvSku")}
+    price_changes = []
+    comp_agent_names = {
+        "tgdd": "Trinh Sát TGDĐ → Wall•E Nén Giá",
+        "cps": "Trinh Sát CellphoneS → Wall•E Nén Giá",
+        "fpt": "Trinh Sát FPT → Wall•E Nén Giá",
+        "hacom": "Trinh Sát Hacom → Wall•E Nén Giá",
+    }
+
+    for r in matrix_rows:
+        sku = r["pvSku"]
+        prev_r = prev_matrix_by_sku.get(sku) or {}
+        prev_comps = prev_r.get("competitors") or {}
+        for cid, cinfo in (r.get("competitors") or {}).items():
+            cur_p = int(cinfo.get("price") or 0)
+            if cur_p <= 0:
+                continue
+            prev_c = prev_comps.get(cid)
+            prev_p = int(prev_c.get("price") or 0) if prev_c else 0
+            if prev_p > 0 and prev_p != cur_p:
+                delta_v = cur_p - prev_p
+                delta_pct = round((delta_v / prev_p) * 100, 1)
+                price_changes.append({
+                    "prevScrapedAt": _fmt_vn_dt(prev_scraped_at),
+                    "currScrapedAt": _fmt_vn_dt(now_iso),
+                    "windowLabel": window_label,
+                    "agentName": comp_agent_names.get(cid, f"Trinh Sát {cid.upper()} → Wall•E"),
+                    "compId": cid,
+                    "compShort": cid.upper(),
+                    "changeType": "price_down" if delta_v < 0 else "price_up",
+                    "changeTypeLabel": "🔻 Giảm giá mới" if delta_v < 0 else "🔺 Tăng giá mới",
+                    "pvSku": sku,
+                    "productName": r["pvName"],
+                    "compProductName": cinfo.get("name", ""),
+                    "brand": r["pvBrand"],
+                    "capacity": r["capacity"],
+                    "oldCompPrice": prev_p,
+                    "newCompPrice": cur_p,
+                    "deltaVnd": delta_v,
+                    "deltaPct": delta_pct,
+                    "pvPrice": r["pvPrice"],
+                    "pvVsCompVnd": cinfo.get("diffVnd", 0),
+                    "url": cinfo.get("url", ""),
+                })
+            elif prev_p == 0 and prev_matrix_by_sku and (cid == "hacom" or cinfo.get("oldPrice", 0) > cur_p):
+                ref_old = int(cinfo.get("oldPrice") or cur_p)
+                delta_v = cur_p - ref_old
+                delta_pct = round((delta_v / ref_old) * 100, 1) if ref_old > 0 else 0.0
+                price_changes.append({
+                    "prevScrapedAt": _fmt_vn_dt(prev_scraped_at),
+                    "currScrapedAt": _fmt_vn_dt(now_iso),
+                    "windowLabel": window_label,
+                    "agentName": comp_agent_names.get(cid, f"Trinh Sát {cid.upper()} → Wall•E"),
+                    "compId": cid,
+                    "compShort": cid.upper(),
+                    "changeType": "new_match" if cid == "hacom" else "promo_drop",
+                    "changeTypeLabel": "🆕 Khớp mới & KM" if cid == "hacom" else "🔻 KM so với giá gốc",
+                    "pvSku": sku,
+                    "productName": r["pvName"],
+                    "compProductName": cinfo.get("name", ""),
+                    "brand": r["pvBrand"],
+                    "capacity": r["capacity"],
+                    "oldCompPrice": ref_old,
+                    "newCompPrice": cur_p,
+                    "deltaVnd": delta_v,
+                    "deltaPct": delta_pct,
+                    "pvPrice": r["pvPrice"],
+                    "pvVsCompVnd": cinfo.get("diffVnd", 0),
+                    "url": cinfo.get("url", ""),
+                })
+
+    # If no live delta vs identical previous run, keep previous priceChanges or populate from active promos & Hacom discoveries
+    if not price_changes and prev_payload.get("priceChanges"):
+        price_changes = prev_payload["priceChanges"]
+    if not price_changes:
+        for r in matrix_rows:
+            for cid, cinfo in (r.get("competitors") or {}).items():
+                cur_p = int(cinfo.get("price") or 0)
+                old_p = int(cinfo.get("oldPrice") or 0)
+                if cid == "hacom" or (old_p > cur_p > 0):
+                    ref_old = old_p if old_p > cur_p else cur_p
+                    delta_v = cur_p - ref_old
+                    delta_pct = round((delta_v / ref_old) * 100, 1) if ref_old > 0 else 0.0
+                    price_changes.append({
+                        "prevScrapedAt": _fmt_vn_dt(prev_scraped_at),
+                        "currScrapedAt": _fmt_vn_dt(now_iso),
+                        "windowLabel": window_label,
+                        "agentName": comp_agent_names.get(cid, f"Trinh Sát {cid.upper()} → Wall•E"),
+                        "compId": cid,
+                        "compShort": cid.upper(),
+                        "changeType": "new_match" if cid == "hacom" else "price_down",
+                        "changeTypeLabel": "🆕 Trinh sát Hacom báo giá mới" if cid == "hacom" else "🔻 Giảm giá KM đối thủ",
+                        "pvSku": r["pvSku"],
+                        "productName": r["pvName"],
+                        "compProductName": cinfo.get("name", ""),
+                        "brand": r["pvBrand"],
+                        "capacity": r["capacity"],
+                        "oldCompPrice": ref_old,
+                        "newCompPrice": cur_p,
+                        "deltaVnd": delta_v,
+                        "deltaPct": delta_pct,
+                        "pvPrice": r["pvPrice"],
+                        "pvVsCompVnd": cinfo.get("diffVnd", 0),
+                        "url": cinfo.get("url", ""),
+                    })
+        # Prioritize Hacom new matches & largest price drops
+        price_changes.sort(key=lambda x: (0 if x["compId"] == "hacom" else 1, x["deltaVnd"]))
+        price_changes = price_changes[:35]
+
     payload = {
         "schemaVersion": 2,
         "meta": {
-            "scrapedAt": datetime.datetime.now().isoformat(timespec="seconds"),
+            "scrapedAt": now_iso,
+            "previousScrapedAt": prev_scraped_at,
+            "updateWindowLabel": window_label,
+            "priceChangeCount": len(price_changes),
+            "excelTemplatePath": "update data/so_sanh_gia.xlsx",
             "subcat": "NH11-01-07-Ổ cứng gắn ngoài",
             "pvTotalCount": len(pv_list),
             "pvPricedCount": len(pv_priced),
@@ -1000,11 +1146,18 @@ def main():
                 },
             ],
         },
+        "priceChanges": price_changes,
         "matrixRows": matrix_rows,
         "unmatchedRows": unmatched_rows,
     }
     OUT_FILE.write_text(json.dumps(payload, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
-    print(f"Saved {OUT_FILE} ({OUT_FILE.stat().st_size / 1024:.1f} KB)")
+    print(f"Saved {OUT_FILE} ({OUT_FILE.stat().st_size / 1024:.1f} KB | priceChanges={len(price_changes)})")
+
+    try:
+        from generate_excel_templates import build_price_compare_excel
+        build_price_compare_excel(payload)
+    except Exception as exc:
+        print(f"Warning: could not write so_sanh_gia.xlsx: {exc}")
 
 
 if __name__ == "__main__":

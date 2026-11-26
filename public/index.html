@@ -8,10 +8,10 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600;700&family=Chakra+Petch:wght@600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="./styles.css?v=20261126a" />
+  <link rel="stylesheet" href="./styles.css?v=20261126b" />
   <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.1/dist/echarts.min.js" defer></script>
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js" defer></script>
-  <script src="./app.js?v=20261126a" defer></script>
+  <script src="./app.js?v=20261126b" defer></script>
 </head>
 <body>
   <div class="app-shell" id="appShell">
@@ -1210,7 +1210,7 @@
               <option value="">Dung lượng</option>
             </select>
             <button type="button" class="btn-reset-mini" id="pcResetBtn">↺ Reset</button>
-            <button type="button" class="btn-scan-price" id="pcOpenScanModalBtn" title="Quét lại giá bán mới nhất từ Website đối thủ (kèm khuyến nghị chống chặn IP)">⚡ QUÉT GIÁ</button>
+            <button type="button" class="btn-scan-price" id="pcOpenScanModalBtn" title="Admin cập nhật thay đổi giá từ các Agent &amp; Form Excel so_sanh_gia.xlsx">🛠️ Admin Cập nhật thay đổi giá</button>
           </div>
         </div>
 
@@ -1218,6 +1218,41 @@
         <div class="chips-strip">
           <div class="chips-list" id="pcActiveChips"></div>
           <div class="insight-inline" id="pcInsightText">Đang tải dữ liệu so sánh giá đa đối thủ...</div>
+        </div>
+
+        <!-- PRICE CHANGE NOTIFICATION & TIME WINDOW BETWEEN 2 UPDATES BANNER -->
+        <div class="panel-block pc-change-alert-panel" id="pcChangeAlertPanel">
+          <div class="pc-change-head">
+            <div class="pc-change-title-group">
+              <span class="pc-change-pill">🔔 THÔNG BÁO GIÁ THAY ĐỔI TỪ AGENT</span>
+              <span class="pc-change-window mono" id="pcUpdateWindowBadge">Khung thời gian giữa 2 lần cập nhật: --</span>
+            </div>
+            <div class="pc-change-actions">
+              <span class="pc-change-count mono" id="pcChangeCountBadge">0 biến động</span>
+              <a href="./data/so_sanh_gia.xlsx" download="so_sanh_gia.xlsx" class="btn-mini" title="Tải Form Excel so_sanh_gia.xlsx do Wall•E nén giá từ 4 Trinh sát">📥 Form Excel so_sanh_gia.xlsx</a>
+              <button type="button" class="btn-mini" id="pcToggleChangesBtn">Thu gọn / Mở rộng</button>
+            </div>
+          </div>
+          <div class="pc-change-body" id="pcChangeAlertBody">
+            <div class="table-wrap pc-change-table-wrap">
+              <table class="dark-table pc-change-table">
+                <thead>
+                  <tr>
+                    <th>Khung thời gian cập nhật</th>
+                    <th>Trinh sát báo cáo → Wall•E</th>
+                    <th>Đối thủ</th>
+                    <th>Biến động</th>
+                    <th>SKU PV &amp; Sản phẩm</th>
+                    <th class="num">Giá kỳ trước</th>
+                    <th class="num">Giá kỳ này</th>
+                    <th class="num">Thay đổi (VND / %)</th>
+                    <th class="num">Giá PV hiện tại</th>
+                  </tr>
+                </thead>
+                <tbody id="pcChangeTableBody"></tbody>
+              </table>
+            </div>
+          </div>
         </div>
 
         <!-- 3 SOURCE DATA TELEMETRY BOXES (PV SKU COUNT • TGDD COUNT • CELLPHONES COUNT) -->
@@ -1322,14 +1357,14 @@
   </div>
 
   <!-- ======================================================================
-       AUTO-SYNC SOURCE DATA MODAL (LINK SOURCE FOLDER ONCE -> 1-CLICK SYNC)
+       UPDATE DATA MODAL (INSERT SINGLE EXCEL FORM `update_data.xlsx`)
        ====================================================================== -->
   <div class="modal-backdrop" id="updateDataModal" aria-hidden="true" role="dialog" aria-modal="true" aria-labelledby="updateModalTitle">
     <div class="modal-dialog">
       <div class="modal-header">
         <div>
-          <h2 class="modal-title" id="updateModalTitle">Đồng bộ Tự động từ Dữ liệu Gốc</h2>
-          <p class="modal-subtitle">Liên kết thư mục gốc <code>D:\Project_AI\Website\data</code> 1 lần duy nhất. Từ lần sau chỉ cần bấm nút <strong>Update Data</strong> là Web tự quét toàn bộ file Excel Sales &amp; Tồn kho và cập nhật ngay lập tức — không cần kéo thả file.</p>
+          <h2 class="modal-title" id="updateModalTitle">📥 Update Data — Insert Form Excel <code>update_data.xlsx</code></h2>
+          <p class="modal-subtitle">Tất cả dữ liệu gốc làm báo cáo đã được gom vào 1 Form Excel mẫu duy nhất tại thư mục <code>update data/update_data.xlsx</code>. Lưu ý: Sheet <strong>Sale_Revenue_Detail</strong> chỉ cần cập nhật từ ngày <strong>01/10/2026</strong> (tức từ dòng <strong>407,594</strong> trở đi; 407,592 dòng lịch sử trước đó đã được khóa cache).</p>
         </div>
         <button type="button" class="modal-close-btn" id="closeUpdateModalBtn" aria-label="Đóng">×</button>
       </div>
@@ -1338,37 +1373,31 @@
         <!-- Cloud & Storage status banner -->
         <div class="cloud-status-bar" id="cloudStatusBar">
           <span class="status-dot" id="cloudStatusDot"></span>
-          <span id="cloudStatusText">Đang kiểm tra kết nối lưu trữ Web...</span>
+          <span id="cloudStatusText">Sẵn sàng nhận file Form Excel <code>update_data.xlsx</code>...</span>
         </div>
 
-        <!-- Source Folder Auto-Link Card -->
-        <div class="source-folder-card" id="sourceFolderCard">
+        <!-- Insert Form Excel Card -->
+        <div class="source-folder-card linked" id="sourceFolderCard">
           <div class="source-folder-head">
             <div class="source-folder-icon">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 7a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"/></svg>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="12" y1="18" x2="12" y2="12"/><line x1="9" y1="15" x2="15" y2="15"/></svg>
             </div>
             <div class="source-folder-info">
-              <div class="source-folder-title" id="linkedFolderTitle">Chưa liên kết thư mục dữ liệu gốc</div>
-              <div class="source-folder-sub" id="linkedFolderSub">Chọn thư mục chứa file Excel (ví dụ <code>D:\Project_AI\Website\data</code>) — trình duyệt ghi nhớ vĩnh viễn để bấm 1 nút là tự cập nhật.</div>
+              <div class="source-folder-title" id="linkedFolderTitle">Form Excel Mẫu: <code>update data/update_data.xlsx</code></div>
+              <div class="source-folder-sub" id="linkedFolderSub">
+                Gồm 8 Sheet chuẩn: <code>Sale_Revenue_Detail</code> (từ <strong>01/10/2026 — dòng 407594+</strong>), <code>Master_Product</code>, <code>Inventory_Details</code>, <code>Inventory_SKU_Level</code>, <code>Inventory_Branch_Level</code>, <code>Inventory_Serial_Details</code>, <code>Bad_Stock_by_Serial</code>, <code>Bao_cao_quan_ly_gia</code>.
+              </div>
             </div>
           </div>
 
-          <div class="source-folder-actions">
-            <button type="button" class="btn-publish-live" id="linkSourceFolderBtn">
-              <span id="linkFolderBtnLabel">📁 Liên kết thư mục gốc &amp; Cập nhật ngay</span>
-            </button>
-            <button type="button" class="btn-sync-emerald hidden" id="syncNowFromModalBtn">↻ Đồng bộ ngay từ thư mục này</button>
-            <button type="button" class="btn-mini hidden" id="unlinkFolderBtn">Hủy liên kết</button>
-          </div>
-        </div>
+          <input type="file" id="updateDataFileInput" accept=".xlsx,.xls" class="hidden" />
 
-        <!-- Live Server Pull (for viewers on other PC / mobile without local folder) -->
-        <div class="cloud-pull-row">
-          <div>
-            <div class="cloud-pull-title">Xem trên máy khác / Điện thoại?</div>
-            <div class="cloud-pull-sub">Kéo dữ liệu mới nhất vừa được cập nhật trên Netlify Cloud về màn hình ngay mà không cần tải lại trang.</div>
+          <div class="source-folder-actions" style="display:flex;flex-wrap:wrap;gap:10px;align-items:center">
+            <button type="button" class="btn-publish-live" id="insertUpdateExcelBtn">
+              <span>📂 Chọn &amp; Insert File Form Excel (<code>update_data.xlsx</code>)</span>
+            </button>
+            <a href="/api/download-template?type=update_data" download="update_data.xlsx" class="btn-mini" id="downloadUpdateTemplateBtn" title="Tải file mẫu update_data.xlsx từ thư mục update data/">⬇ Tải Form mẫu <code>update_data.xlsx</code></a>
           </div>
-          <button type="button" class="btn-mini" id="refreshFromCloudBtn">🔄 Tải mới từ Web</button>
         </div>
 
         <!-- Validation / Progress message -->
@@ -1529,34 +1558,39 @@
   </div>
 
   <!-- ================================================================
-       MODAL: CẢNH BÁO AN TOÀN & QUÉT GIÁ ĐỐI THỦ (ANTI-BLOCK GUIDE)
+       MODAL: ADMIN CẬP NHẬT THAY ĐỔI GIÁ (INSERT FORM EXCEL SO_SANH_GIA.XLSX & AGENT SYNC)
        ================================================================ -->
   <div class="modal-backdrop" id="pcScanModal" aria-hidden="true" role="dialog" aria-modal="true" aria-labelledby="pcScanModalTitle">
     <div class="modal-dialog pc-scan-modal-dialog">
       <div class="modal-header">
         <div>
-          <h3 class="modal-title" id="pcScanModalTitle">⚡ Quét Giá Trực Tiếp Từ Website Đối Thủ</h3>
-          <p class="modal-subtitle">Cập nhật giá bán thực tế danh mục <strong>Ổ cứng di động</strong> từ Thế Giới Di Động, CellphoneS, FPT Shop &amp; Hacom đối chiếu với Phong Vũ.</p>
+          <h3 class="modal-title" id="pcScanModalTitle">🛠️ Admin Cập Nhật Thay Đổi Giá (Form Excel &amp; Agent Nén Giá)</h3>
+          <p class="modal-subtitle">Các Trinh Sát (TGDĐ, CellphoneS, FPT, Hacom) thông báo có thay đổi giá và gửi về cho <strong>Agent Nén Giá (Wall•E)</strong> điền vào Form Excel <code>update data/so_sanh_gia.xlsx</code>.</p>
         </div>
         <button type="button" class="modal-close-btn" id="pcCloseScanModalBtn" aria-label="Đóng">×</button>
       </div>
       <div class="modal-body">
-        <div class="pc-scan-last-bar" id="pcScanLastTimeInfo">Lần quét gần nhất: --</div>
+        <div class="pc-scan-last-bar" id="pcScanLastTimeInfo">Khung thời gian giữa 2 lần cập nhật: --</div>
 
-        <div class="pc-scan-guide-box is-warn">
-          <div class="pc-guide-title">⚠️ Cảnh báo an toàn để không bị Website đối thủ phát hiện &amp; chặn IP</div>
-          <ul class="pc-guide-list">
-            <li><strong>Không quét dồn dập liên tục:</strong> Mỗi lần quét nên cách nhau tối thiểu <strong>30 – 60 phút</strong> (khuyến nghị chỉ quét <strong>2 – 3 lần/ngày</strong>).</li>
-            <li><strong>Cơ chế bảo vệ tự động:</strong> Bộ quét đã tích hợp độ trễ ngẫu nhiên (<code>0.35s – 0.85s</code>) giữa các trang và giả lập trình duyệt chuẩn để mô phỏng người dùng thật.</li>
-          </ul>
+        <!-- Option 1: Insert Form Excel so_sanh_gia.xlsx -->
+        <div class="pc-scan-guide-box is-best-time">
+          <div class="pc-guide-title">📥 1. Insert Form Excel So Sánh Giá (<code>update data/so_sanh_gia.xlsx</code>)</div>
+          <p style="margin:0 0 10px;color:var(--text-secondary)">
+            Form Excel gồm 3 Sheet do <strong>Wall•E Nén Giá</strong> tổng hợp từ 4 Trinh Sát: <code>Thong_Bao_Thay_Doi_Gia</code>, <code>Ma_Tran_Nen_Gia_PV</code>, và <code>SP_Doi_Thu_Chua_Khop_PV</code>. Admin có thể chỉnh sửa giá trong file Excel rồi Insert trực tiếp lên Dashboard:
+          </p>
+          <input type="file" id="pcExcelFileInput" accept=".xlsx,.xls" class="hidden" />
+          <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center">
+            <button type="button" class="btn-publish-live" id="pcInsertExcelBtn">📂 Chọn &amp; Insert Form Excel <code>so_sanh_gia.xlsx</code></button>
+            <a href="./data/so_sanh_gia.xlsx" download="so_sanh_gia.xlsx" class="btn-mini">⬇ Tải Form Excel <code>so_sanh_gia.xlsx</code> hiện tại</a>
+          </div>
         </div>
 
-        <div class="pc-scan-guide-box is-best-time">
-          <div class="pc-guide-title">🕒 Khung giờ quét giá TỐT NHẤT trong ngày</div>
+        <!-- Option 2: Trigger Agents to scan & fill so_sanh_gia.xlsx -->
+        <div class="pc-scan-guide-box is-warn">
+          <div class="pc-guide-title">🤖 2. Giao 4 Trinh Sát báo giá mới về cho Wall•E điền vào Form Excel</div>
           <ul class="pc-guide-list">
-            <li><strong>08:30 – 09:30 sáng (Khuyên dùng):</strong> Ngay sau khi đối thủ vừa cập nhật xong bảng giá &amp; khuyến mãi đầu ngày; lưu lượng khách thật bắt đầu cao nên hoàn toàn tự nhiên.</li>
-            <li><strong>13:30 – 14:30 chiều (Khuyên dùng):</strong> Kiểm tra các đợt điều chỉnh Flash Sale giữa ngày khi lưu lượng truy cập tự nhiên đạt đỉnh.</li>
-            <li><strong>⛔ Hạn chế quét lúc 00:00 – 02:00 đêm:</strong> Khung giờ vắng người dùng thật, tường lửa (Cloudflare/WAF) của đối thủ quét bot rất gắt và giá đang chạy batch chưa ổn định.</li>
+            <li><strong>Quy trình Agent:</strong> Leader Eve giao việc cho 4 Trinh Sát (TGDĐ, CellphoneS, FPT, Hacom) → Phát hiện thay đổi giá → Gửi Wall•E nén giá và tự động ghi vào <code>update data/so_sanh_gia.xlsx</code>.</li>
+            <li><strong>Khung giờ khuyến nghị (Chống chặn IP):</strong> Cách nhau <strong>30 – 60 phút</strong> vào <strong>08:30 – 09:30 sáng</strong> hoặc <strong>13:30 – 14:30 chiều</strong>.</li>
           </ul>
         </div>
 
@@ -1564,11 +1598,11 @@
       </div>
       <div class="modal-footer">
         <div class="modal-footer-left">
-          <span class="muted" style="font-size:11px">Thời gian quét dự kiến: ~12 – 20 giây</span>
+          <span class="muted" style="font-size:11px">Lưu tại: <code>update data/so_sanh_gia.xlsx</code></span>
         </div>
         <div class="modal-footer-right" style="display:flex;gap:8px">
           <button type="button" class="btn-mini" id="pcCancelScanModalBtn">Đóng</button>
-          <button type="button" class="btn-scan-price" id="pcConfirmScanBtn">⚡ Xác nhận Quét Giá Ngay</button>
+          <button type="button" class="btn-scan-price" id="pcConfirmScanBtn">🤖 Cử 4 Trinh Sát &amp; Wall•E Điền Form Excel Mới</button>
         </div>
       </div>
     </div>

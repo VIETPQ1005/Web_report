@@ -119,7 +119,7 @@ def _parse_price_num(raw_val) -> int:
         return 0
 
 
-def build_price_report_map(data_dir: Path, known_skus: set) -> tuple:
+def build_price_report_map(data_dir: Path, known_skus: set, extra_sources: list = None) -> tuple:
     """
     Parse Bao_cao_quan_ly_gia.xlsx (Price change report):
       - New promotion price (Priority 1 if > 0)
@@ -129,18 +129,22 @@ def build_price_report_map(data_dir: Path, known_skus: set) -> tuple:
     Returns (price_by_sku_dict, source_filenames).
     Each value is [cur_normal_price, new_normal_price, active_date_iso, new_promo_price].
     """
-    price_files = sorted(
-        f for f in data_dir.glob("*.xlsx")
-        if not f.name.startswith("~$")
-        and ("quan_ly_gia" in f.name.lower() or "bao_cao_gia" in f.name.lower() or "price" in f.name.lower())
-    )
+    if extra_sources:
+        price_files = list(extra_sources)
+    else:
+        price_files = sorted(
+            f for f in data_dir.glob("*.xlsx")
+            if not f.name.startswith("~$")
+            and ("quan_ly_gia" in f.name.lower() or "bao_cao_gia" in f.name.lower() or "price" in f.name.lower())
+        )
     if not price_files:
         return {}, []
 
     price_by_sku = {}
     sources = []
-    for fp in price_files:
-        sources.append(fp.name)
+    for entry in price_files:
+        fp, sf = entry if isinstance(entry, tuple) else (entry, None)
+        sources.append(f"{fp.name}#{sf}" if sf else fp.name)
         sku_idx = 2
         cat_idx = 1
         cur_idx = 12
@@ -149,7 +153,7 @@ def build_price_report_map(data_dir: Path, known_skus: set) -> tuple:
         promo_idx = 17
         header_found = False
 
-        for _tag, r in stream_xlsx_rows(fp):
+        for _tag, r in stream_xlsx_rows(fp, only_sheet=sf):
             if not r:
                 continue
             if not header_found:
@@ -369,10 +373,17 @@ def normalize_subcat2(raw_full: str = "", code: str = "", name: str = "", cat3_c
     return c or n or "Khác"
 
 
-def stream_xlsx_rows(xlsx_path: Path, min_row: int = 2, max_row: int | None = None, include_row_num: bool = False):
+def stream_xlsx_rows(
+    xlsx_path: Path,
+    min_row: int = 2,
+    max_row: int | None = None,
+    include_row_num: bool = False,
+    only_sheet: str | None = None,
+):
     """Generator yielding (headers, row_vals) via streaming XML iterparse.
     When min_row > 2, skips parsing cells for rows 2..(min_row-1) for fast incremental reads.
     When max_row is set, stops immediately after Excel row max_row.
+    When only_sheet is set, reads only that specific worksheet XML path (e.g. 'xl/worksheets/sheet1.xml').
     """
     with zipfile.ZipFile(xlsx_path, "r") as z:
         shared: list[str] = []
@@ -383,7 +394,13 @@ def stream_xlsx_rows(xlsx_path: Path, min_row: int = 2, max_row: int | None = No
                         shared.append("".join(t.text or "" for t in elem.iter(TAG_T)))
                         elem.clear()
 
-        sheets = sorted([n for n in z.namelist() if re.match(r"^xl/worksheets/sheet\d+\.xml$", n)])
+        if only_sheet and only_sheet in z.namelist():
+            sheets = [only_sheet]
+        else:
+            sheets = sorted(
+                [n for n in z.namelist() if re.match(r"^xl/worksheets/sheet\d+\.xml$", n)],
+                key=lambda s: int(re.search(r"(\d+)", s).group(1)),
+            )
         for sf in sheets:
             with z.open(sf) as f:
                 headers = None
@@ -445,6 +462,14 @@ def stream_xlsx_rows(xlsx_path: Path, min_row: int = 2, max_row: int | None = No
 
 def detect_dataset_kind(headers: list[str], filename: str) -> str:
     lower_set = {h.strip().lower() for h in headers if h}
+    joined_low = " | ".join(lower_set)
+    if (
+        "price change report" in joined_low
+        or "báo cáo thay đổi giá" in joined_low
+        or "current normal selling price" in joined_low
+        or "new normal selling price" in joined_low
+    ):
+        return "price_report"
     if "report date" in lower_set:
         return "sales"
     if "bad stock company" in lower_set or "bad stock site" in lower_set or "aging company" in lower_set:
@@ -484,24 +509,46 @@ def detect_dataset_kind(headers: list[str], filename: str) -> str:
     return "sales"
 
 
-def build(rebuild_sales_cache: bool = False):
+def build(rebuild_sales_cache: bool = False, update_excel_path: Path | None = None):
     t_start = time.time()
-    xlsx_files = sorted([p for p in DATA_DIR.glob("*.xlsx") if not p.name.startswith("~$")])
-    if not xlsx_files and not FROZEN_SALES_CACHE.exists():
-        print(f"ERROR: No .xlsx files found in {DATA_DIR}", file=sys.stderr)
-        sys.exit(1)
+    # Each entry in files_by_kind[kind] is either Path or (Path, sheet_xml_path)
+    files_by_kind: dict[str, list] = defaultdict(list)
 
-    # Phase 1: Classify files by peeking header row (skip opening frozen 84MB Sale_Revenue_Detail.xlsx!)
-    files_by_kind: dict[str, list[Path]] = defaultdict(list)
-    for f in xlsx_files:
-        if f.name.lower() == FROZEN_SALES_FILENAME.lower():
-            files_by_kind["sales"].append(f)
-            continue
-        for tag, payload in stream_xlsx_rows(f):
-            if tag == "__HEADERS__":
-                kind = detect_dataset_kind(payload, f.name)
-                files_by_kind[kind].append(f)
-                break
+    def _unpack_source(entry) -> tuple[Path, str | None]:
+        if isinstance(entry, tuple):
+            return entry[0], entry[1]
+        return entry, None
+
+    if update_excel_path is not None and update_excel_path.exists():
+        print(f"[UPDATE_DATA.XLSX MODE] Reading multi-sheet workbook: {update_excel_path}")
+        with zipfile.ZipFile(update_excel_path, "r") as zf:
+            sheet_xmls = sorted(
+                [n for n in zf.namelist() if re.match(r"^xl/worksheets/sheet\d+\.xml$", n)],
+                key=lambda s: int(re.search(r"(\d+)", s).group(1)),
+            )
+        for sf in sheet_xmls:
+            for tag, payload in stream_xlsx_rows(update_excel_path, only_sheet=sf):
+                if tag == "__HEADERS__":
+                    kind = detect_dataset_kind(payload, sf)
+                    files_by_kind[kind].append((update_excel_path, sf))
+                    print(f"  + Mapped {sf} -> kind='{kind}'")
+                    break
+    else:
+        xlsx_files = sorted([p for p in DATA_DIR.glob("*.xlsx") if not p.name.startswith("~$")])
+        if not xlsx_files and not FROZEN_SALES_CACHE.exists():
+            print(f"ERROR: No .xlsx files found in {DATA_DIR}", file=sys.stderr)
+            sys.exit(1)
+
+        # Phase 1: Classify files by peeking header row (skip opening frozen 84MB Sale_Revenue_Detail.xlsx!)
+        for f in xlsx_files:
+            if f.name.lower() == FROZEN_SALES_FILENAME.lower():
+                files_by_kind["sales"].append(f)
+                continue
+            for tag, payload in stream_xlsx_rows(f):
+                if tag == "__HEADERS__":
+                    kind = detect_dataset_kind(payload, f.name)
+                    files_by_kind[kind].append(f)
+                    break
 
     # ------------------------------------------------------------------
     # 1. MASTER PRODUCT (17,118 SKUs) — Build first so every other file
@@ -525,10 +572,11 @@ def build(rebuild_sales_cache: bool = False):
     mp_sources = []
     mp_summary_agg: dict[tuple, list] = defaultdict(lambda: [0, 0, 0.0])  # (cat, subcat, brand, status, range) -> [skuCnt, invQty, invVal]
 
-    for f in files_by_kind["master_product"]:
+    for entry in files_by_kind["master_product"]:
+        f, sf = _unpack_source(entry)
         hmap = {}
         rc = 0
-        for tag, vals in stream_xlsx_rows(f):
+        for tag, vals in stream_xlsx_rows(f, only_sheet=sf):
             if tag == "__HEADERS__":
                 hmap = {h.lower(): i for i, h in enumerate(vals) if h}
                 continue
@@ -629,14 +677,15 @@ def build(rebuild_sales_cache: bool = False):
     bulk_qty = 0
     all_months_set = set()
 
-    def ingest_sales_file(f: Path, min_row: int = 2, max_row: int | None = None, snapshot_at_row: int | None = None, on_snapshot=None) -> tuple[int, int]:
+    def ingest_sales_file(entry, min_row: int = 2, max_row: int | None = None, snapshot_at_row: int | None = None, on_snapshot=None) -> tuple[int, int]:
         nonlocal tot_sales, tot_qty, tot_cogs, tot_gp, tot_rows
         nonlocal min_date, max_date, bulk_count, bulk_sales, bulk_qty
+        f, sf = _unpack_source(entry)
         hmap = {}
         rc = 0
         after_snap_rc = 0
         snap_taken = False
-        for tag, payload in stream_xlsx_rows(f, min_row=min_row, max_row=max_row, include_row_num=True):
+        for tag, payload in stream_xlsx_rows(f, min_row=min_row, max_row=max_row, include_row_num=True, only_sheet=sf):
             if tag == "__HEADERS__":
                 hmap = {h.lower(): i for i, h in enumerate(payload) if h}
                 continue
@@ -747,8 +796,11 @@ def build(rebuild_sales_cache: bool = False):
             snap_taken = True
         return rc, after_snap_rc
 
-    frozen_file = next((f for f in files_by_kind["sales"] if f.name.lower() == FROZEN_SALES_FILENAME.lower()), None)
-    extra_sales_files = [f for f in files_by_kind["sales"] if f is not frozen_file]
+    frozen_file = next(
+        (e for e in files_by_kind["sales"] if not isinstance(e, tuple) and e.name.lower() == FROZEN_SALES_FILENAME.lower()),
+        None,
+    )
+    extra_sales_files = [e for e in files_by_kind["sales"] if e is not frozen_file]
 
     if FROZEN_SALES_CACHE.exists() and not rebuild_sales_cache:
         t_cache = time.time()
@@ -883,9 +935,10 @@ def build(rebuild_sales_cache: bool = False):
             })
             print(f"[2/6 SALES]     + Included {after_rc:,} rows after lock (row {FROZEN_SALES_END_ROW + 1:,}+) from {frozen_file.name}")
 
-    # Always merge any additional incremental sales files (e.g. Sale_Revenue_Detail_New.xlsx)
-    for f in extra_sales_files:
-        rc, _ = ingest_sales_file(f, min_row=2)
+    # Always merge any additional incremental sales files (e.g. Sale_Revenue_Detail_New.xlsx or update_data.xlsx sheet)
+    for entry in extra_sales_files:
+        f, sf = _unpack_source(entry)
+        rc, _ = ingest_sales_file(entry, min_row=2)
         sales_sources.append({"file": f.name, "sizeBytes": f.stat().st_size, "rows": rc, "kind": "sales_incremental"})
         print(f"[2/6 SALES]     + Merged {rc:,} incremental rows from {f.name}")
 
@@ -954,10 +1007,11 @@ def build(rebuild_sales_cache: bool = False):
     inv_raw_list = []
     inv_sources = []
     max_recv_d = None
-    for f in files_by_kind["inv_details"]:
+    for entry in files_by_kind["inv_details"]:
+        f, sf = _unpack_source(entry)
         hmap = {}
         rc = 0
-        for tag, vals in stream_xlsx_rows(f):
+        for tag, vals in stream_xlsx_rows(f, only_sheet=sf):
             if tag == "__HEADERS__":
                 hmap = {h.lower(): i for i, h in enumerate(vals) if h}
                 continue
@@ -1061,10 +1115,11 @@ def build(rebuild_sales_cache: bool = False):
     sku_vel_sources = []
     s7t = s30t = s90t = s180t = sqt = 0
     svt = 0.0
-    for f in files_by_kind["sku_level"]:
+    for entry in files_by_kind["sku_level"]:
+        f, sf = _unpack_source(entry)
         hmap = {}
         rc = 0
-        for tag, vals in stream_xlsx_rows(f):
+        for tag, vals in stream_xlsx_rows(f, only_sheet=sf):
             if tag == "__HEADERS__":
                 hmap = {h.lower(): i for i, h in enumerate(vals) if h}
                 continue
@@ -1102,10 +1157,11 @@ def build(rebuild_sales_cache: bool = False):
     br_maps = {"sites": {}, "siteNames": {}}
     br_rows = []
     br_sources = []
-    for f in files_by_kind["branch_level"]:
+    for entry in files_by_kind["branch_level"]:
+        f, sf = _unpack_source(entry)
         hmap = {}
         rc = 0
-        for tag, vals in stream_xlsx_rows(f):
+        for tag, vals in stream_xlsx_rows(f, only_sheet=sf):
             if tag == "__HEADERS__":
                 hmap = {h.lower(): i for i, h in enumerate(vals) if h}
                 continue
@@ -1143,10 +1199,11 @@ def build(rebuild_sales_cache: bool = False):
     # ------------------------------------------------------------------
     bad_by_sn: dict[str, dict] = {}
     bad_sources = []
-    for f in files_by_kind["bad_stock"]:
+    for entry in files_by_kind["bad_stock"]:
+        f, sf = _unpack_source(entry)
         hmap = {}
         rc = 0
-        for tag, vals in stream_xlsx_rows(f):
+        for tag, vals in stream_xlsx_rows(f, only_sheet=sf):
             if tag == "__HEADERS__":
                 hmap = {h.lower(): i for i, h in enumerate(vals) if h}
                 continue
@@ -1208,10 +1265,11 @@ def build(rebuild_sales_cache: bool = False):
     sn_risk_cnt = 0
     sn_risk_val = 0.0
 
-    for f in files_by_kind["serial_details"]:
+    for entry in files_by_kind["serial_details"]:
+        f, sf = _unpack_source(entry)
         hmap = {}
         rc = 0
-        for tag, vals in stream_xlsx_rows(f):
+        for tag, vals in stream_xlsx_rows(f, only_sheet=sf):
             if tag == "__HEADERS__":
                 hmap = {h.lower(): i for i, h in enumerate(vals) if h}
                 continue
@@ -1495,7 +1553,7 @@ def build(rebuild_sales_cache: bool = False):
 
     # Lazy Shard 1: Master Product Full + YTD Sales per SKU + Price Change Report
     known_skus = {str(r[0]).strip() for r in mp_rows} | set(sku_ytd_sales.keys())
-    price_by_sku, price_sources = build_price_report_map(DATA_DIR, known_skus)
+    price_by_sku, price_sources = build_price_report_map(DATA_DIR, known_skus, extra_sources=files_by_kind.get("price_report"))
     master_shard = {
         "meta": {"generatedAt": now_iso, "rowCount": len(mp_rows), "sources": mp_sources + price_sources, "priceCount": len(price_by_sku)},
         "lookups": mp_lookups,
@@ -1562,8 +1620,10 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Build Star-Schema Sales + Inventory + Lazy Lookup Shards from data/*.xlsx")
     parser.add_argument("--push-url", default="", help="Optional Netlify site URL to push report_data.json live")
     parser.add_argument("--key", default=os.environ.get("UPDATE_DATA_KEY", ""), help="Optional UPDATE_DATA_KEY passcode")
-    parser.add_argument("--rebuild-sales-cache", action="store_true", help="Force re-reading rows 2..478302 of Sale_Revenue_Detail.xlsx to recreate frozen cache")
+    parser.add_argument("--rebuild-sales-cache", action="store_true", help="Force re-reading rows 2..407593 of Sale_Revenue_Detail.xlsx to recreate frozen cache")
+    parser.add_argument("--update-excel", default="", help="Path to single multi-sheet update_data.xlsx file")
     args = parser.parse_args()
-    data_str = build(rebuild_sales_cache=args.rebuild_sales_cache)
+    up_path = Path(args.update_excel) if args.update_excel else None
+    data_str = build(rebuild_sales_cache=args.rebuild_sales_cache, update_excel_path=up_path)
     if args.push_url:
         push_live(args.push_url, data_str, args.key)

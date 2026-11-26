@@ -10193,6 +10193,15 @@
   }
 
   function detectDatasetKindJs(headerSet, filename) {
+    const joinedLow = Array.from(headerSet).join(" | ");
+    if (
+      joinedLow.includes("price change report") ||
+      joinedLow.includes("báo cáo thay đổi giá") ||
+      joinedLow.includes("current normal selling price") ||
+      joinedLow.includes("new normal selling price")
+    ) {
+      return "price_report";
+    }
     if (headerSet.has("report date")) return "sales";
     if (headerSet.has("bad stock company") || headerSet.has("bad stock site") || headerSet.has("aging company")) return "bad_stock";
     if (headerSet.has("serial number") && (headerSet.has("inv days since first received") || headerSet.has("initial import type") || headerSet.has("supplier short name"))) return "serial_details";
@@ -10201,6 +10210,7 @@
     if (headerSet.has("subcat 3 (code - name)") || headerSet.has("has serial number") || headerSet.has("warranty period") || headerSet.has("latest quotation")) return "master_product";
     if (headerSet.has("bin code") || headerSet.has("inventory qty")) return "inv_details";
     const fn = (filename || "").toLowerCase();
+    if (fn.includes("quan_ly_gia") || fn.includes("price")) return "price_report";
     if (fn.includes("bad")) return "bad_stock";
     if (fn.includes("serial")) return "serial_details";
     if (fn.includes("branch")) return "branch_level";
@@ -10599,15 +10609,13 @@
       throw new Error("Thư viện đọc Excel (SheetJS) chưa tải xong. Kiểm tra kết nối mạng và thử lại.");
     }
 
-    const buckets = { sales: [], inv_details: [], sku_level: [], branch_level: [], bad_stock: [], serial_details: [], master_product: [] };
-    const sources = { sales: [], inv_details: [], sku_level: [], branch_level: [], bad_stock: [], serial_details: [], master_product: [] };
+    const buckets = { sales: [], inv_details: [], sku_level: [], branch_level: [], bad_stock: [], serial_details: [], master_product: [], price_report: [] };
+    const sources = { sales: [], inv_details: [], sku_level: [], branch_level: [], bad_stock: [], serial_details: [], master_product: [], price_report: [] };
 
     for (let fIdx = 0; fIdx < files.length; fIdx++) {
       const file = files[fIdx];
       const buf = await file.arrayBuffer();
       const wb = XLSX.read(buf, { type: "array", raw: true });
-      let detectedKind = null;
-      let fileRows = 0;
 
       wb.SheetNames.forEach((sheetName) => {
         const sheet = wb.Sheets[sheetName];
@@ -10624,8 +10632,9 @@
           }
         }
         const headers = (rows2d[headerRowIdx] || []).map((h) => String(h || "").trim().toLowerCase());
-        const kind = detectDatasetKindJs(new Set(headers.filter(Boolean)), file.name);
-        detectedKind = kind;
+        const kind = detectDatasetKindJs(new Set(headers.filter(Boolean)), `${file.name}#${sheetName}`);
+        if (kind === "price_report") return;
+        let sheetRows = 0;
 
         for (let r = headerRowIdx + 1; r < rows2d.length; r++) {
           const row = rows2d[r];
@@ -10639,13 +10648,12 @@
             if (h) rec[h] = c < row.length ? row[c] : null;
           }
           buckets[kind].push(rec);
-          fileRows++;
+          sheetRows++;
+        }
+        if (sheetRows > 0) {
+          sources[kind].push({ file: `${file.name}#${sheetName}`, sizeBytes: file.size, rows: sheetRows, kind });
         }
       });
-
-      if (detectedKind && fileRows > 0) {
-        sources[detectedKind].push({ file: file.name, sizeBytes: file.size, rows: fileRows, kind: detectedKind });
-      }
     }
 
     const totalAny = Object.values(buckets).reduce((s, arr) => s + arr.length, 0);
@@ -10980,40 +10988,116 @@
     }
   }
 
-  async function linkSourceFolderAndSync() {
-    if (!supportsDirectorySync()) {
-      showUpdateFeedback("Trình duyệt không hỗ trợ liên kết thư mục. Hãy dùng Chrome/Edge trên HTTPS Netlify.", "error");
-      return;
-    }
+  async function handleInsertUpdateDataExcel(file) {
+    if (!file) return;
+    setSyncButtonsBusy(true, "Đang xử lý Form Excel...");
+    showUpdateFeedback(`Đang đọc và cập nhật từ Form Excel "${file.name}" (Sale_Revenue_Detail từ dòng 407,594 — 01/10/2026)...`, "info");
+
     try {
-      const dirHandle = await window.showDirectoryPicker({
-        id: "cyberpulse-source-data",
-        mode: "read",
-      });
-      await idbSetSourceDir(dirHandle);
-      await refreshLinkedFolderUi();
-      await syncFromDirectoryHandle(dirHandle);
+      // 1. Try fast Python server-side ETL (/api/upload-update-data) which merges with data/.sales_frozen_cache.json.gz
+      const isHttp = location.protocol === "http:" || location.protocol === "https:";
+      if (isHttp) {
+        try {
+          const buf = await file.arrayBuffer();
+          const res = await fetch("/api/upload-update-data", {
+            method: "POST",
+            headers: { "Content-Type": "application/octet-stream" },
+            body: buf,
+          });
+          const ct = res.headers.get("content-type") || "";
+          if (ct.includes("application/json")) {
+            const body = await res.json();
+            if (!res.ok || !body.ok) {
+              throw new Error(body.error || `HTTP ${res.status}`);
+            }
+            if (isValidDataset(body.data)) {
+              const mode = await publishPayloadDirectly(body.data);
+              closeUpdateModal();
+              showToast(`✅ Đã Insert "${file.name}" & ghép Cache lịch sử (407,592 dòng) thành công (${mode === "cloud" ? "☁ Web Live" : "💾 Local"})!`);
+              return;
+            }
+          }
+        } catch (srvErr) {
+          // If server endpoint is unavailable (e.g. static Netlify host), fall through to client-side SheetJS merge
+          console.info("Local Python ETL endpoint not active, using browser SheetJS merge:", srvErr);
+        }
+      }
+
+      // 2. Client-side SheetJS parse + merge incremental Sales (>= 2026-10-01) with locked historical Sales (< 2026-10-01)
+      const { buckets, sources } = await parseUploadedFiles([file]);
+      let nextPayload = null;
+
+      if (buckets.sales.length > 0) {
+        const incPayload = buildPayloadFromRecords(buckets.sales, sources.sales);
+        if (state.raw && Array.isArray(state.raw.rows) && state.raw.rows.length > 0) {
+          // Preserve locked historical sales rows before 2026-10-01 (rows 2..407593) and merge new rows >= 2026-10-01
+          const histRecs = extractExistingRecords(state.raw).filter((r) => String(r["report date"] || "") < "2026-10-01");
+          const mergedRecs = histRecs.concat(buckets.sales);
+          nextPayload = buildPayloadFromRecords(mergedRecs, sources.sales);
+          nextPayload.salesDaily = state.raw.salesDaily;
+          nextPayload.storageReport = state.raw.storageReport;
+        } else {
+          nextPayload = incPayload;
+        }
+      } else if (state.raw) {
+        nextPayload = {
+          ...state.raw,
+          meta: { ...state.raw.meta, updatedAt: new Date().toISOString() },
+        };
+      }
+
+      if (!nextPayload) {
+        throw new Error("Không tìm thấy dữ liệu hợp lệ trong file update_data.xlsx.");
+      }
+
+      let masterMap = new Map();
+      if (buckets.master_product.length > 0) {
+        const mpRes = buildMasterProductsJs(buckets.master_product, sources.master_product);
+        if (mpRes.section) nextPayload.masterProducts = mpRes.section;
+        masterMap = mpRes.masterMap;
+      } else if (state.raw?.masterProducts) {
+        nextPayload.masterProducts = state.raw.masterProducts;
+      }
+
+      if (buckets.inv_details.length > 0) {
+        nextPayload.inventory = buildInventoryPayloadFromRecords(buckets.inv_details, sources.inv_details, masterMap);
+      } else if (state.raw?.inventory) {
+        nextPayload.inventory = state.raw.inventory;
+      }
+
+      if (buckets.sku_level.length > 0) {
+        nextPayload.invSkuLevel = buildSkuLevelJs(buckets.sku_level, sources.sku_level, masterMap);
+      } else if (state.raw?.invSkuLevel) {
+        nextPayload.invSkuLevel = state.raw.invSkuLevel;
+      }
+
+      if (buckets.branch_level.length > 0) {
+        nextPayload.invBranchLevel = buildBranchLevelJs(buckets.branch_level, sources.branch_level);
+      } else if (state.raw?.invBranchLevel) {
+        nextPayload.invBranchLevel = state.raw.invBranchLevel;
+      }
+
+      if (buckets.serial_details.length > 0 || buckets.bad_stock.length > 0) {
+        nextPayload.invSerials = buildSerialsAndBadStockJs(
+          buckets.serial_details, buckets.bad_stock, sources.serial_details, sources.bad_stock, masterMap
+        );
+      } else if (state.raw?.invSerials) {
+        nextPayload.invSerials = state.raw.invSerials;
+      }
+
+      const mode = await publishPayloadDirectly(nextPayload);
+      closeUpdateModal();
+      showToast(`✅ Đã Insert Form Excel "${file.name}" thành công (${mode === "cloud" ? "☁ Web Live" : "💾 Local Cache"})!`);
     } catch (err) {
-      if (err && err.name === "AbortError") return;
-      showUpdateFeedback(`Không thể liên kết thư mục: ${err.message}`, "error");
+      showUpdateFeedback(`Lỗi xử lý Form Excel: ${err.message}`, "error");
+      showToast(`Lỗi Insert Form Excel: ${err.message}`, true);
+    } finally {
+      setSyncButtonsBusy(false);
     }
   }
 
-  async function runAutoUpdateFromSource() {
-    // 1. If a source folder is already linked -> instant 1-click auto-sync (NO modal, NO file drag!)
-    if (supportsDirectorySync()) {
-      const dirHandle = await idbGetSourceDir();
-      if (dirHandle) {
-        await syncFromDirectoryHandle(dirHandle);
-        return;
-      }
-      // First time on Chrome/Edge HTTPS: open 1-click source folder setup dialog
-      openUpdateModal();
-      return;
-    }
-
-    // 2. On other browsers / mobile (no local folder API): pull latest live data directly from Cloud
-    await refreshFromCloud();
+  function runAutoUpdateFromSource() {
+    openUpdateModal();
   }
 
   async function refreshFromCloud() {
@@ -11102,15 +11186,13 @@
     const closeBtn = document.getElementById("closeUpdateModalBtn");
     const cancelBtn = document.getElementById("cancelUpdateModalBtn");
     const modal = document.getElementById("updateDataModal");
-    const linkFolderBtn = document.getElementById("linkSourceFolderBtn");
-    const syncNowBtn = document.getElementById("syncNowFromModalBtn");
-    const unlinkBtn = document.getElementById("unlinkFolderBtn");
-    const refreshCloudBtn = document.getElementById("refreshFromCloudBtn");
+    const insertExcelBtn = document.getElementById("insertUpdateExcelBtn");
+    const updateFileInput = document.getElementById("updateDataFileInput");
     const revertBtn = document.getElementById("revertDefaultDataBtn");
     const downloadJsonBtn = document.getElementById("downloadCurrentJsonBtn");
 
-    if (autoSyncBtn) autoSyncBtn.addEventListener("click", runAutoUpdateFromSource);
-    if (railBtn) railBtn.addEventListener("click", runAutoUpdateFromSource);
+    if (autoSyncBtn) autoSyncBtn.addEventListener("click", openUpdateModal);
+    if (railBtn) railBtn.addEventListener("click", openUpdateModal);
     if (openBtn) openBtn.addEventListener("click", openUpdateModal);
     if (closeBtn) closeBtn.addEventListener("click", closeUpdateModal);
     if (cancelBtn) cancelBtn.addEventListener("click", closeUpdateModal);
@@ -11127,22 +11209,16 @@
       }
     });
 
-    if (linkFolderBtn) linkFolderBtn.addEventListener("click", linkSourceFolderAndSync);
-    if (syncNowBtn) {
-      syncNowBtn.addEventListener("click", async () => {
-        const dirHandle = await idbGetSourceDir();
-        if (dirHandle) await syncFromDirectoryHandle(dirHandle);
-        else await linkSourceFolderAndSync();
+    if (insertExcelBtn && updateFileInput) {
+      insertExcelBtn.addEventListener("click", () => {
+        updateFileInput.value = "";
+        updateFileInput.click();
+      });
+      updateFileInput.addEventListener("change", (e) => {
+        const file = e.target.files?.[0];
+        if (file) handleInsertUpdateDataExcel(file);
       });
     }
-    if (unlinkBtn) {
-      unlinkBtn.addEventListener("click", async () => {
-        await idbClearSourceDir();
-        await refreshLinkedFolderUi();
-        showUpdateFeedback("Đã hủy liên kết thư mục gốc.", "info");
-      });
-    }
-    if (refreshCloudBtn) refreshCloudBtn.addEventListener("click", refreshFromCloud);
     if (revertBtn) revertBtn.addEventListener("click", revertToDefaultData);
 
     if (downloadJsonBtn) {
@@ -11299,7 +11375,7 @@
       }
     });
 
-    // Scan Price Modal & Anti-Block Warning
+    // Admin Update Price Changes Modal (Insert so_sanh_gia.xlsx or Trigger 4 Scouts -> Wall-E)
     const scanModal = document.getElementById("pcScanModal");
     const openScanModal = () => {
       if (!scanModal) return;
@@ -11307,21 +11383,20 @@
       const fb = document.getElementById("pcScanFeedback");
       if (fb) { fb.className = "update-feedback hidden"; fb.textContent = ""; }
 
-      const scrapedAt = pc.data?.meta?.scrapedAt;
+      const meta = pc.data?.meta || {};
+      const scrapedAt = meta.scrapedAt;
+      const prevAt = meta.previousScrapedAt;
+      const winLbl = meta.updateWindowLabel;
       if (lastBar) {
-        if (scrapedAt) {
-          const diffMin = Math.max(0, Math.round((Date.now() - new Date(scrapedAt).getTime()) / 60000));
-          if (diffMin < 30) {
-            lastBar.className = "pc-scan-last-bar is-recent-warn";
-            lastBar.innerHTML = `⚠️ <strong>Vừa quét cách đây ${fmtInt(diffMin)} phút</strong> (${esc(formatIsoVn(scrapedAt))}) — Khuyến nghị đợi đủ <strong>30 – 60 phút</strong> trước khi quét lại để tránh bị đối thủ chặn IP.`;
-          } else {
-            lastBar.className = "pc-scan-last-bar";
-            const hrs = diffMin >= 60 ? `${(diffMin / 60).toFixed(1)} giờ trước` : `${fmtInt(diffMin)} phút trước`;
-            lastBar.innerHTML = `✅ <strong>Lần quét gần nhất:</strong> ${esc(formatIsoVn(scrapedAt))} (${esc(hrs)}) — An toàn để quét mới.`;
-          }
+        if (winLbl) {
+          lastBar.className = "pc-scan-last-bar";
+          lastBar.innerHTML = `🕒 <strong>Khung thời gian giữa 2 lần cập nhật:</strong> ${esc(winLbl)} • <strong>${fmtInt((pc.data?.priceChanges || []).length)}</strong> thông báo thay đổi giá từ Agent.`;
+        } else if (scrapedAt) {
+          lastBar.className = "pc-scan-last-bar";
+          lastBar.innerHTML = `🕒 <strong>Khung thời gian cập nhật:</strong> ${prevAt ? `${esc(formatIsoVn(prevAt))} → ` : ""}${esc(formatIsoVn(scrapedAt))}`;
         } else {
           lastBar.className = "pc-scan-last-bar";
-          lastBar.textContent = "Lần quét gần nhất: Chưa xác định";
+          lastBar.textContent = "Khung thời gian giữa 2 lần cập nhật: Chưa xác định";
         }
       }
       scanModal.classList.add("open");
@@ -11340,22 +11415,225 @@
       if (e.target === scanModal) closeScanModal();
     });
 
+    document.getElementById("pcToggleChangesBtn")?.addEventListener("click", () => {
+      document.getElementById("pcChangeAlertBody")?.classList.toggle("hidden");
+    });
+
+    // Option 1: Admin Inserts Form Excel `so_sanh_gia.xlsx`
+    const pcInsertBtn = document.getElementById("pcInsertExcelBtn");
+    const pcFileInp = document.getElementById("pcExcelFileInput");
+    if (pcInsertBtn && pcFileInp) {
+      pcInsertBtn.addEventListener("click", () => {
+        pcFileInp.value = "";
+        pcFileInp.click();
+      });
+      pcFileInp.addEventListener("change", async (e) => {
+        const file = e.target.files?.[0];
+        if (!file) return;
+        const fb = document.getElementById("pcScanFeedback");
+        if (fb) {
+          fb.className = "update-feedback info";
+          fb.textContent = `Đang đọc Form Excel "${file.name}" và đối chiếu thay đổi giá...`;
+        }
+        try {
+          const buf = await file.arrayBuffer();
+          const wb = XLSX.read(buf, { type: "array", raw: true });
+          const prevPayload = pc.data || {};
+          const prevMeta = prevPayload.meta || {};
+          const prevAtIso = prevMeta.scrapedAt || new Date(Date.now() - 1800000).toISOString();
+          const nowIso = new Date().toISOString();
+          const diffMin = Math.max(1, Math.round((Date.now() - new Date(prevAtIso).getTime()) / 60000));
+          const durStr = diffMin >= 60 ? `${Math.floor(diffMin / 60)} giờ ${diffMin % 60} phút` : `${diffMin} phút`;
+          const winLabel = `Từ ${formatIsoVn(prevAtIso)} đến ${formatIsoVn(nowIso)} (${durStr})`;
+
+          const prevBySku = new Map((prevPayload.matrixRows || []).map((r) => [String(r.pvSku), r]));
+          const matrixSheetName = wb.SheetNames.find((n) => n.toLowerCase().includes("ma_tran") || n.toLowerCase().includes("matrix")) || wb.SheetNames[1] || wb.SheetNames[0];
+          const sheetM = wb.Sheets[matrixSheetName];
+          const rows2d = sheetM ? XLSX.utils.sheet_to_json(sheetM, { header: 1, raw: true, defval: "" }) : [];
+
+          const newChanges = [];
+          const updatedMatrix = [];
+
+          if (rows2d.length >= 2) {
+            const hdrs = rows2d[0].map((h) => String(h || "").trim().toLowerCase());
+            const idxOf = (kw) => hdrs.findIndex((h) => h.includes(kw));
+            const iSku = idxOf("pv sku") >= 0 ? idxOf("pv sku") : 0;
+            const iName = idxOf("tên sản phẩm phong vũ") >= 0 ? idxOf("tên sản phẩm phong vũ") : 1;
+            const iBrand = idxOf("brand") >= 0 ? idxOf("brand") : 2;
+            const iType = idxOf("loại") >= 0 ? idxOf("loại") : 3;
+            const iCap = idxOf("dung lượng") >= 0 ? idxOf("dung lượng") : 4;
+            const iStatus = idxOf("trạng thái") >= 0 ? idxOf("trạng thái") : 5;
+            const iPvP = idxOf("giá pv hiện tại") >= 0 ? idxOf("giá pv hiện tại") : 6;
+            const iPvNorm = idxOf("giá pv niêm yết") >= 0 ? idxOf("giá pv niêm yết") : 7;
+            const iPvPromo = idxOf("giá pv km") >= 0 ? idxOf("giá pv km") : 8;
+            const iInv = idxOf("tồn kho pv") >= 0 ? idxOf("tồn kho pv") : 9;
+            const iS7 = idxOf("bán 7d") >= 0 ? idxOf("bán 7d") : 10;
+            const iS30 = idxOf("bán 30d") >= 0 ? idxOf("bán 30d") : 11;
+
+            const compCols = [
+              { id: "tgdd", short: "TGDD", agent: "Trinh Sát TGDĐ → Wall•E", pIdx: idxOf("giá tgdđ") >= 0 ? idxOf("giá tgdđ") : 12 },
+              { id: "cps", short: "CPS", agent: "Trinh Sát CellphoneS → Wall•E", pIdx: idxOf("giá cellphones") >= 0 ? idxOf("giá cellphones") : 16 },
+              { id: "fpt", short: "FPT", agent: "Trinh Sát FPT → Wall•E", pIdx: idxOf("giá fpt") >= 0 ? idxOf("giá fpt") : 20 },
+              { id: "hacom", short: "HACOM", agent: "Trinh Sát Hacom → Wall•E", pIdx: idxOf("giá hacom") >= 0 ? idxOf("giá hacom") : 24 },
+            ];
+
+            for (let rIdx = 1; rIdx < rows2d.length; rIdx++) {
+              const row = rows2d[rIdx];
+              const sku = String(row[iSku] || "").trim();
+              if (!sku) continue;
+              const prevR = prevBySku.get(sku) || {};
+              const pvP = Math.round(parseNumericVal(row[iPvP])) || prevR.pvPrice || 0;
+              const pvNorm = Math.round(parseNumericVal(row[iPvNorm])) || prevR.pvNormalPrice || pvP;
+              const pvPromo = Math.round(parseNumericVal(row[iPvPromo])) || prevR.pvPromoPrice || 0;
+              const comps = {};
+              let bestId = "";
+              let bestPrice = 0;
+              let hiCnt = 0, chCnt = 0, eqCnt = 0;
+
+              compCols.forEach((cc) => {
+                const cpPrice = Math.round(parseNumericVal(row[cc.pIdx]));
+                if (cpPrice <= 0) return;
+                const cpOld = Math.round(parseNumericVal(row[cc.pIdx + 1])) || 0;
+                const cpName = String(row[cc.pIdx + 2] || prevR.competitors?.[cc.id]?.name || row[iName] || "").trim();
+                const cpUrl = String(row[cc.pIdx + 3] || prevR.competitors?.[cc.id]?.url || "").trim();
+                const diff = pvP - cpPrice;
+                const diffPct = Number(((diff / cpPrice) * 100).toFixed(1));
+                const discPct = cpOld > cpPrice ? Math.round(((cpOld - cpPrice) / cpOld) * 100) : 0;
+
+                if (Math.abs(diff) <= 10000) eqCnt++;
+                else if (diff > 0) hiCnt++;
+                else chCnt++;
+                if (bestPrice === 0 || cpPrice < bestPrice) {
+                  bestPrice = cpPrice;
+                  bestId = cc.id;
+                }
+                comps[cc.id] = {
+                  name: cpName,
+                  price: cpPrice,
+                  oldPrice: cpOld,
+                  discountPct: discPct,
+                  inStock: true,
+                  sold: "",
+                  url: cpUrl,
+                  diffVnd: diff,
+                  diffPct,
+                };
+
+                const oldLoggedP = prevR.competitors?.[cc.id]?.price || 0;
+                if (oldLoggedP > 0 && oldLoggedP !== cpPrice) {
+                  const dVnd = cpPrice - oldLoggedP;
+                  const dPct = Number(((dVnd / oldLoggedP) * 100).toFixed(1));
+                  newChanges.push({
+                    prevScrapedAt: formatIsoVn(prevAtIso),
+                    currScrapedAt: formatIsoVn(nowIso),
+                    windowLabel: winLabel,
+                    agentName: cc.agent,
+                    compId: cc.id,
+                    compShort: cc.short,
+                    changeType: dVnd < 0 ? "price_down" : "price_up",
+                    changeTypeLabel: dVnd < 0 ? "🔻 Admin/Agent Giảm giá" : "🔺 Admin/Agent Tăng giá",
+                    pvSku: sku,
+                    productName: String(row[iName] || prevR.pvName || "").trim(),
+                    brand: canonPcBrand(row[iBrand] || prevR.pvBrand || ""),
+                    capacity: String(row[iCap] || prevR.capacity || "").trim(),
+                    oldCompPrice: oldLoggedP,
+                    newCompPrice: cpPrice,
+                    deltaVnd: dVnd,
+                    deltaPct: dPct,
+                    pvPrice: pvP,
+                    pvVsCompVnd: diff,
+                    url: cpUrl,
+                  });
+                }
+              });
+
+              const compCnt = Object.keys(comps).length;
+              if (compCnt === 0) continue;
+              const diffBest = bestPrice > 0 ? pvP - bestPrice : 0;
+              const diffBestPct = bestPrice > 0 ? Number(((diffBest / bestPrice) * 100).toFixed(1)) : 0;
+              const pos = hiCnt === compCnt ? "pv_higher_all" : hiCnt > 0 ? "pv_higher_some" : chCnt > 0 ? "pv_cheapest" : "pv_equal";
+
+              updatedMatrix.push({
+                ...prevR,
+                pvSku: sku,
+                pvName: String(row[iName] || prevR.pvName || "").trim(),
+                pvBrand: canonPcBrand(row[iBrand] || prevR.pvBrand || ""),
+                driveType: String(row[iType] || prevR.driveType || "SSD").trim(),
+                capacity: String(row[iCap] || prevR.capacity || "").trim(),
+                pvStatus: String(row[iStatus] || prevR.pvStatus || "Normal").trim(),
+                pvPrice: pvP,
+                pvNormalPrice: pvNorm,
+                pvPromoPrice: pvPromo,
+                pvIsPromo: pvPromo > 0 && pvPromo !== pvNorm,
+                pvInvQty: Math.round(parseNumericVal(row[iInv])) || prevR.pvInvQty || 0,
+                pvS7d: Math.round(parseNumericVal(row[iS7])) || prevR.pvS7d || 0,
+                pvS30d: Math.round(parseNumericVal(row[iS30])) || prevR.pvS30d || 0,
+                competitors: comps,
+                compCount: compCnt,
+                bestCompId: bestId,
+                bestCompPrice: bestPrice,
+                diffVsBestVnd: diffBest,
+                diffVsBestPct: diffBestPct,
+                higherCount: hiCnt,
+                cheaperCount: chCnt,
+                equalCount: eqCnt,
+                position: pos,
+              });
+            }
+          }
+
+          const finalChanges = newChanges.length > 0 ? newChanges.concat(prevPayload.priceChanges || []).slice(0, 40) : (prevPayload.priceChanges || []);
+          const nextPcPayload = {
+            ...prevPayload,
+            meta: {
+              ...prevMeta,
+              previousScrapedAt: prevAtIso,
+              scrapedAt: nowIso,
+              updateWindowLabel: winLabel,
+              priceChangeCount: finalChanges.length,
+              matrixCount: updatedMatrix.length || (prevPayload.matrixRows || []).length,
+            },
+            priceChanges: finalChanges,
+            matrixRows: updatedMatrix.length ? updatedMatrix : (prevPayload.matrixRows || []),
+          };
+
+          pc.data = normalizePriceComparePayload(nextPcPayload);
+          pc.loaded = true;
+          populatePriceCompareFilters();
+          renderPriceCompareView();
+          // Also save to local server if active
+          fetch("/api/save-price-compare", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(pc.data),
+          }).catch(() => {});
+          closeScanModal();
+          showToast(`✅ Admin đã cập nhật thay đổi giá từ "${file.name}" (${newChanges.length} biến động mới)!`);
+        } catch (err) {
+          if (fb) {
+            fb.className = "update-feedback error";
+            fb.textContent = `Lỗi đọc Form Excel so_sanh_gia.xlsx: ${err.message}`;
+          }
+        }
+      });
+    }
+
     document.getElementById("pcConfirmScanBtn")?.addEventListener("click", async () => {
       const btn = document.getElementById("pcConfirmScanBtn");
       const fb = document.getElementById("pcScanFeedback");
       if (!btn) return;
       btn.disabled = true;
       const origText = btn.textContent;
-      btn.textContent = "⏳ Đang quét giá TGDD, CellphoneS, FPT Shop & Hacom...";
+      btn.textContent = "⏳ 4 Trinh Sát đang báo giá về Wall•E & điền so_sanh_gia.xlsx...";
       if (fb) {
         fb.className = "update-feedback info";
-        fb.textContent = "Đang kết nối tuần tự với độ trễ an toàn tới Thế Giới Di Động, CellphoneS, FPT Shop & Hacom (~15–25 giây)...";
+        fb.textContent = "4 Trinh Sát (TGDĐ, CellphoneS, FPT, Hacom) đang quét thay đổi giá, gửi về Wall•E nén giá và ghi vào `update data/so_sanh_gia.xlsx` (~15–25 giây)...";
       }
       try {
         const res = await fetch("/api/scan-prices", { method: "POST" });
         const contentType = res.headers.get("content-type") || "";
         if (!contentType.includes("application/json")) {
-          throw new Error("Máy chủ hiện tại là bản tĩnh (không có Python Local API). Hãy chạy bằng `python scripts/local_server.py` hoặc chạy lệnh `python scripts/scrape_tgdd_ocgn.py` tại máy.");
+          throw new Error("Máy chủ hiện tại là bản tĩnh. Hãy dùng nút 'Chọn & Insert Form Excel so_sanh_gia.xlsx' phía trên hoặc chạy `python scripts/local_server.py`.");
         }
         const body = await res.json();
         if (!res.ok || !body.ok) {
@@ -11366,11 +11644,11 @@
         populatePriceCompareFilters();
         renderPriceCompareView();
         closeScanModal();
-        showToast("✅ Đã quét và cập nhật giá mới nhất từ TGDD, CellphoneS, FPT Shop & Hacom!");
+        showToast("✅ 4 Trinh Sát & Wall•E đã cập nhật thay đổi giá và lưu vào update data/so_sanh_gia.xlsx!");
       } catch (err) {
         if (fb) {
           fb.className = "update-feedback error";
-          fb.textContent = `Không thể quét trực tiếp: ${err.message}`;
+          fb.textContent = `Không thể chạy Agent trực tiếp: ${err.message}`;
         }
       } finally {
         btn.disabled = false;
@@ -11395,6 +11673,55 @@
     ];
     const matrixAll = payload.matrixRows || [];
     const unmatchedAll = payload.unmatchedRows || [];
+    const changesAll = payload.priceChanges || [];
+
+    // Populate Price Change Notification Banner & Time Window Between 2 Updates
+    const winBadge = document.getElementById("pcUpdateWindowBadge");
+    const cntBadge = document.getElementById("pcChangeCountBadge");
+    const chBody = document.getElementById("pcChangeTableBody");
+    const winText = meta.updateWindowLabel || (meta.previousScrapedAt && meta.scrapedAt
+      ? `Từ ${formatIsoVn(meta.previousScrapedAt)} đến ${formatIsoVn(meta.scrapedAt)}`
+      : `Cập nhật lúc ${formatIsoVn(meta.scrapedAt) || "—"}`);
+    if (winBadge) winBadge.textContent = `🕒 Khung thời gian giữa 2 lần cập nhật: ${winText}`;
+    if (cntBadge) cntBadge.textContent = `${fmtInt(changesAll.length)} thông báo thay đổi giá`;
+    if (chBody) {
+      const scopedChanges = changesAll.filter((ch) => {
+        if (pc.compFilter !== "all" && pc.compFilter !== "both" && ch.compId !== pc.compFilter) return false;
+        if (pc.brand && ch.brand !== pc.brand) return false;
+        if (pc.capacity && ch.capacity !== pc.capacity) return false;
+        return true;
+      });
+      if (!scopedChanges.length) {
+        chBody.innerHTML = `<tr><td colspan="9" class="muted">Không có thông báo biến động giá nào trong bộ lọc hiện tại.</td></tr>`;
+      } else {
+        chBody.innerHTML = scopedChanges.slice(0, 15).map((ch) => {
+          const dVnd = Number(ch.deltaVnd || 0);
+          const dPct = Number(ch.deltaPct || 0);
+          const dSign = dVnd > 0 ? "+" : "";
+          const dCls = dVnd < 0 ? "pc-diff-neg" : dVnd > 0 ? "pc-diff-pos" : "pc-diff-eq";
+          return `
+            <tr>
+              <td class="mono" style="font-size:10.5px">${esc(ch.windowLabel || winText)}</td>
+              <td><strong>${esc(ch.agentName || `Trinh Sát ${ch.compShort} → Wall•E`)}</strong></td>
+              <td><span class="pc-comp-pill is-${esc(ch.compId || "")}">${esc(ch.compShort || "")}</span></td>
+              <td><span class="inv-badge ${dVnd < 0 ? "bad-normal" : "listing-active"}">${esc(ch.changeTypeLabel || "Thay đổi giá")}</span></td>
+              <td class="pc-pv-col">
+                <strong class="mono" style="color:#38BDF8">${esc(ch.pvSku)}</strong> — ${esc(ch.productName)}
+              </td>
+              <td class="num mono">${ch.oldCompPrice ? esc(fmtVndFull(ch.oldCompPrice)) : "—"}</td>
+              <td class="num mono">
+                <a href="${esc(ch.url || "#")}" target="_blank" rel="noopener noreferrer" class="pc-comp-price-link">
+                  <strong>${esc(fmtVndFull(ch.newCompPrice))}</strong> ↗
+                </a>
+              </td>
+              <td class="num mono ${dCls}">
+                <strong>${dVnd !== 0 ? `${dSign}${esc(fmtVndFull(dVnd))} (${dSign}${dPct.toFixed(1)}%)` : "Giá mới"}</strong>
+              </td>
+              <td class="num mono"><strong>${esc(fmtVndFull(ch.pvPrice))}</strong></td>
+            </tr>`;
+        }).join("");
+      }
+    }
 
     // Populate the 3+ Source Data Telemetry Boxes (Phong Vũ SKU count + each competitor scanned count)
     const srcGrid = document.getElementById("pcSourceCardsGrid");

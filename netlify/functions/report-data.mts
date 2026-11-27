@@ -4,6 +4,7 @@ import { gunzipSync } from "node:zlib";
 
 const BLOB_KEY = "latest-v3-storage";
 const PRICE_BLOB_KEY = "latest-price-compare-ocgn";
+const PRICE_LOA_BLOB_KEY = "latest-price-compare-loa";
 const MAX_PAYLOAD_BYTES = 15_000_000; // Allow up to 15 MB uncompressed JSON (POST body itself can be gzip-compressed ~2 MB)
 
 interface ReportPayload {
@@ -145,13 +146,15 @@ export default async (req: Request, context: Context) => {
   const url = new URL(req.url);
   const store = getReportStore(context);
   const authRequired = Boolean((Netlify.env.get("UPDATE_DATA_KEY") || "").trim());
-  const isPriceCompare = url.searchParams.get("type") === "price-compare";
+  const reqType = url.searchParams.get("type") || "";
+  const isPriceCompare = reqType === "price-compare" || reqType === "price-compare-loa";
+  const priceBlobKey = reqType === "price-compare-loa" ? PRICE_LOA_BLOB_KEY : PRICE_BLOB_KEY;
 
-  // GET /api/report-data or GET /api/report-data?meta=1 or GET /api/report-data?type=price-compare
+  // GET /api/report-data or GET /api/report-data?meta=1 or GET /api/report-data?type=price-compare[-loa]
   if (req.method === "GET") {
     try {
       if (isPriceCompare) {
-        const pEntry = await store.getWithMetadata(PRICE_BLOB_KEY, { type: "text", consistency: "strong" });
+        const pEntry = await store.getWithMetadata(priceBlobKey, { type: "text", consistency: "strong" });
         if (pEntry === null) {
           return jsonResponse({ exists: false }, 404);
         }
@@ -242,7 +245,7 @@ export default async (req: Request, context: Context) => {
       if (isPriceCompare) {
         const parsedPc = JSON.parse(rawText);
         const updatedAt = new Date().toISOString();
-        await store.set(PRICE_BLOB_KEY, JSON.stringify(parsedPc), { metadata: { updatedAt } });
+        await store.set(priceBlobKey, JSON.stringify(parsedPc), { metadata: { updatedAt } });
         return jsonResponse({ ok: true, source: "netlify-blobs", updatedAt });
       }
 

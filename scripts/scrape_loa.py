@@ -992,8 +992,22 @@ def main():
         "matrixRows": matrix_rows,
         "unmatchedRows": unmatched_rows,
     }
+    try:
+        from enrich_pv_backlinks import PV_LOA_CAT_URL, enrich_payload_with_pv_backlinks, load_backlink_cache, save_backlink_cache
+        pv_cache = load_backlink_cache()
+        enrich_payload_with_pv_backlinks(payload, PV_LOA_CAT_URL, pv_cache)
+        save_backlink_cache(pv_cache)
+    except Exception as exc:
+        print(f"Warning: could not enrich PV LOA backlinks: {exc}")
+
     OUT_FILE.write_text(json.dumps(payload, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
     print(f"Saved {OUT_FILE} ({OUT_FILE.stat().st_size / 1024:.1f} KB)")
+
+    try:
+        from generate_excel_templates import build_price_compare_excel
+        build_price_compare_excel(payload)
+    except Exception as exc:
+        print(f"Warning: could not write so_sanh_gia.xlsx: {exc}")
 
 
 if __name__ == "__main__":

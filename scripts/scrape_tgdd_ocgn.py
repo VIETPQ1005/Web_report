@@ -1150,6 +1150,14 @@ def main():
         "matrixRows": matrix_rows,
         "unmatchedRows": unmatched_rows,
     }
+    try:
+        from enrich_pv_backlinks import PV_OCGN_CAT_URL, enrich_payload_with_pv_backlinks, load_backlink_cache, save_backlink_cache
+        pv_cache = load_backlink_cache()
+        enrich_payload_with_pv_backlinks(payload, PV_OCGN_CAT_URL, pv_cache)
+        save_backlink_cache(pv_cache)
+    except Exception as exc:
+        print(f"Warning: could not enrich PV OCGN backlinks: {exc}")
+
     OUT_FILE.write_text(json.dumps(payload, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
     print(f"Saved {OUT_FILE} ({OUT_FILE.stat().st_size / 1024:.1f} KB | priceChanges={len(price_changes)})")
 

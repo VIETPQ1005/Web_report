@@ -237,12 +237,15 @@ def _build_sheets_for_category(payload: dict, cat_suffix: str, cap_label: str = 
         "Chênh lệch Giá Đối thủ (VND)",
         "Chênh lệch (%)",
         "Giá Phong Vũ hiện tại (VND)",
+        "Link Phong Vũ",
         "PV vs Đối thủ (VND)",
         "Link sản phẩm",
     ]
     s1_rows = []
     if changes:
         for ch in changes:
+            sku_c = str(ch.get("pvSku") or "").strip()
+            pv_u = ch.get("pvUrl") or (f"https://phongvu.vn/--s{sku_c}" if sku_c else "")
             s1_rows.append([
                 ch.get("prevScrapedAt", prev_at),
                 ch.get("currScrapedAt", cur_at),
@@ -250,7 +253,7 @@ def _build_sheets_for_category(payload: dict, cat_suffix: str, cap_label: str = 
                 ch.get("agentName", f"Trinh Sát {ch.get('compShort', '')}"),
                 ch.get("compShort", ""),
                 ch.get("changeTypeLabel", ch.get("changeType", "Thay đổi giá")),
-                ch.get("pvSku", ""),
+                sku_c,
                 ch.get("productName", ""),
                 ch.get("brand", ""),
                 ch.get("capacity", ""),
@@ -259,11 +262,14 @@ def _build_sheets_for_category(payload: dict, cat_suffix: str, cap_label: str = 
                 ch.get("deltaVnd", 0),
                 ch.get("deltaPct", 0.0),
                 ch.get("pvPrice", 0),
+                pv_u,
                 ch.get("pvVsCompVnd", 0),
                 ch.get("url", ""),
             ])
     else:
         for r in matrix[:15]:
+            sku_c = str(r.get("pvSku") or "").strip()
+            pv_u = r.get("pvUrl") or (f"https://phongvu.vn/--s{sku_c}" if sku_c else "")
             for cid, cinfo in (r.get("competitors") or {}).items():
                 s1_rows.append([
                     prev_at,
@@ -272,7 +278,7 @@ def _build_sheets_for_category(payload: dict, cat_suffix: str, cap_label: str = 
                     f"Trinh Sát {cid.upper()} → Wall•E Nén Giá",
                     cid.upper(),
                     "Khởi tạo / Xác nhận giá",
-                    r.get("pvSku", ""),
+                    sku_c,
                     r.get("pvName", ""),
                     r.get("pvBrand", ""),
                     r.get("capacity", ""),
@@ -281,6 +287,7 @@ def _build_sheets_for_category(payload: dict, cat_suffix: str, cap_label: str = 
                     (cinfo.get("price", 0) - (cinfo.get("oldPrice") or cinfo.get("price", 0))),
                     -float(cinfo.get("discountPct") or 0),
                     r.get("pvPrice", 0),
+                    pv_u,
                     cinfo.get("diffVnd", 0),
                     cinfo.get("url", ""),
                 ])
@@ -295,6 +302,7 @@ def _build_sheets_for_category(payload: dict, cat_suffix: str, cap_label: str = 
         "Giá PV Hiện tại (VND)",
         "Giá PV Niêm yết (VND)",
         "Giá PV KM (VND)",
+        "Link Phong Vũ",
         "Tồn kho PV",
         "Bán 7D PV",
         "Bán 30D PV",
@@ -327,8 +335,10 @@ def _build_sheets_for_category(payload: dict, cat_suffix: str, cap_label: str = 
         cp = comps.get("cps") or {}
         fp = comps.get("fpt") or {}
         hc = comps.get("hacom") or {}
+        sku_c = str(r.get("pvSku") or "").strip()
+        pv_u = r.get("pvUrl") or (f"https://phongvu.vn/--s{sku_c}" if sku_c else "")
         s2_rows.append([
-            r.get("pvSku", ""),
+            sku_c,
             r.get("pvName", ""),
             r.get("pvBrand", ""),
             r.get("driveType", ""),
@@ -337,6 +347,7 @@ def _build_sheets_for_category(payload: dict, cat_suffix: str, cap_label: str = 
             r.get("pvPrice", 0),
             r.get("pvNormalPrice", 0),
             r.get("pvPromoPrice", 0),
+            pv_u,
             r.get("pvInvQty", 0),
             r.get("pvS7d", 0),
             r.get("pvS30d", 0),

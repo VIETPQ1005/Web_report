@@ -11609,6 +11609,7 @@
             const iPvP = idxOf("giá pv hiện tại") >= 0 ? idxOf("giá pv hiện tại") : 6;
             const iPvNorm = idxOf("giá pv niêm yết") >= 0 ? idxOf("giá pv niêm yết") : 7;
             const iPvPromo = idxOf("giá pv km") >= 0 ? idxOf("giá pv km") : 8;
+            const iPvUrl = idxOf("link phong vũ");
             const iInv = idxOf("tồn kho pv") >= 0 ? idxOf("tồn kho pv") : 9;
             const iS7 = idxOf("bán 7d") >= 0 ? idxOf("bán 7d") : 10;
             const iS30 = idxOf("bán 30d") >= 0 ? idxOf("bán 30d") : 11;
@@ -11628,6 +11629,9 @@
               const pvP = Math.round(parseNumericVal(row[iPvP])) || prevR.pvPrice || 0;
               const pvNorm = Math.round(parseNumericVal(row[iPvNorm])) || prevR.pvNormalPrice || pvP;
               const pvPromo = Math.round(parseNumericVal(row[iPvPromo])) || prevR.pvPromoPrice || 0;
+              const pvUrl = (iPvUrl >= 0 && String(row[iPvUrl] || "").trim())
+                ? String(row[iPvUrl]).trim()
+                : (prevR.pvUrl || `https://phongvu.vn/--s${sku}`);
               const comps = {};
               let bestId = "";
               let bestPrice = 0;
@@ -11684,6 +11688,7 @@
                     deltaVnd: dVnd,
                     deltaPct: dPct,
                     pvPrice: pvP,
+                    pvUrl,
                     pvVsCompVnd: diff,
                     url: cpUrl,
                   });
@@ -11699,6 +11704,7 @@
               updatedMatrix.push({
                 ...prevR,
                 pvSku: sku,
+                pvUrl,
                 pvName: String(row[iName] || prevR.pvName || "").trim(),
                 pvBrand: canonPcBrand(row[iBrand] || prevR.pvBrand || ""),
                 driveType: String(row[iType] || prevR.driveType || "SSD").trim(),
@@ -11884,7 +11890,11 @@
               <td class="num mono ${dCls}">
                 <strong>${dVnd !== 0 ? `${dSign}${esc(fmtVndFull(dVnd))} (${dSign}${dPct.toFixed(1)}%)` : "Giá mới"}</strong>
               </td>
-              <td class="num mono"><strong>${esc(fmtVndFull(ch.pvPrice))}</strong></td>
+              <td class="num mono">
+                <a href="${esc(ch.pvUrl || (ch.pvSku ? `https://phongvu.vn/--s${ch.pvSku}` : "#"))}" target="_blank" rel="noopener noreferrer" class="pc-comp-price-link" title="Click mở trang sản phẩm ${esc(ch.pvSku)} trên Phong Vũ">
+                  <strong>${esc(fmtVndFull(ch.pvPrice))}</strong> ↗
+                </a>
+              </td>
             </tr>`;
         }).join("");
       }
@@ -11895,14 +11905,15 @@
     if (srcGrid) {
       const pvPriced = meta.pvPricedCount || 0;
       const pvTotal = meta.pvTotalCount || 0;
+      const pvCatUrl = meta.pvCategoryUrl || (isLoa ? "https://phongvu.vn/c/loa" : "https://phongvu.vn/c/o-cung-di-dong");
       const pvCardHtml = `
         <div class="pc-source-card is-pv">
           <div class="pc-src-head">
             <span class="pc-src-badge is-pv">PHONG VŨ (PV)</span>
-            <span class="pc-src-cat mono">${esc(catCodeLabel)}</span>
+            <a href="${esc(pvCatUrl)}" target="_blank" rel="noopener noreferrer" class="pc-src-link">${esc(pvCatUrl.replace("https://", ""))} ↗</a>
           </div>
           <div class="pc-src-val mono">${fmtInt(pvPriced)} SKU có giá</div>
-          <div class="pc-src-sub">Tổng danh mục: <strong>${fmtInt(pvTotal)} SKU</strong> • Đã khớp đối thủ: <strong>${fmtInt(matrixAll.length)} SKU</strong></div>
+          <div class="pc-src-sub">Tổng danh mục: <strong>${fmtInt(pvTotal)} SKU</strong> • Đã khớp &amp; gắn Backlink PV: <strong>${fmtInt(matrixAll.length)} SKU</strong></div>
         </div>`;
       const compCardsHtml = compsMeta.map((c) => {
         const urlsList = Array.isArray(c.urls) && c.urls.length ? c.urls : [c.url];
@@ -12175,11 +12186,13 @@
             ? `<div class="pc-pv-sub">📅 ${fmtDmy(r.pvActiveDate)} → ${esc(fmtVndFull(r.pvNewPrice))}</div>`
             : "";
 
+          const pvBacklink = r.pvUrl || (r.pvSku ? `https://phongvu.vn/--s${r.pvSku}` : "https://phongvu.vn");
+
           return `
             <tr>
               <td class="pc-pv-col">
                 <div class="pc-pv-head">
-                  <button type="button" class="link-sku-btn" data-pc-jump-sku="${esc(r.pvSku)}">${esc(r.pvSku)}</button>
+                  <button type="button" class="link-sku-btn" data-pc-jump-sku="${esc(r.pvSku)}" title="Click để mở Hồ sơ Tra cứu 360° của SKU ${esc(r.pvSku)}">${esc(r.pvSku)}</button>
                   <span class="inv-badge other">${esc(r.pvBrand)}</span>
                   ${r.driveType && r.driveType !== "UNKNOWN" ? `<span class="inv-badge listing-active">${esc(r.driveType)}</span>` : ""}
                   ${r.capacity ? `<span class="inv-badge normal">${esc(r.capacity)}</span>` : ""}
@@ -12189,7 +12202,9 @@
               </td>
               <td class="num mono pc-pv-price-cell ${isPvLowest ? "pc-lowest-price-cell" : ""}">
                 <div>
-                  <strong>${esc(fmtVndFull(r.pvPrice))}</strong>
+                  <a href="${esc(pvBacklink)}" target="_blank" rel="noopener noreferrer" class="pc-comp-price-link" title="${esc(r.pvName)} — Click mở trực tiếp trang sản phẩm trên PhongVu.vn">
+                    <strong>${esc(fmtVndFull(r.pvPrice))}</strong> ↗
+                  </a>
                   ${isPvLowest ? `<span class="pc-lowest-mini-tag" title="Giá rẻ nhất trên dòng">RẺ NHẤT</span>` : ""}
                 </div>
                 ${pvPromoNoteHtml}
@@ -12228,12 +12243,13 @@
 
     pc.lastExport = {
       headers: [
-        "PV SKU", "PV Name", "Brand", "Type", isLoa ? "Wattage" : "Capacity", "PV Status", "PV Price",
+        "PV SKU", "PV Name", "Brand", "Type", isLoa ? "Wattage" : "Capacity", "PV Status", "PV Price", "PV URL",
         ...compsMeta.flatMap((c) => [`${c.short} Price`, `${c.short} Diff VND`, `${c.short} URL`]),
         "Best Comp", "Best Comp Price", "PV vs Best VND", "PV vs Best %", "Position", "PV Inv QTY", "PV 30D Sales",
       ],
       rows: filteredM.map((r) => [
         r.pvSku, r.pvName, r.pvBrand, r.driveType, r.capacity, r.pvStatus, r.pvPrice,
+        r.pvUrl || (r.pvSku ? `https://phongvu.vn/--s${r.pvSku}` : ""),
         ...compsMeta.flatMap((c) => {
           const o = r.competitors?.[c.id];
           return o ? [o.price, o.diffVnd, o.url] : ["", "", ""];

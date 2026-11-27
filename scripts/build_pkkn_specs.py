@@ -111,6 +111,7 @@ EXTERNAL_MODEL_KNOWLEDGE = {
     "30127": {"standard": "USB 3.0 Male to Female Extension", "speed": "5Gbps", "material": "Đầu mạ vàng, chống nhiễu 3 lớp"},
     "20826": {"standard": "USB 3.0 Active Extension Cable 5m", "speed": "5Gbps", "material": "Tích hợp Chipset khuếch đại tín hiệu FE1.1s"},
     "30205": {"modelRef": "US372", "standard": "USB-C Gen 2 / Thunderbolt 3 Extension", "maxRes": "4K@60Hz", "pdWatt": "PD 100W (20V/5A)", "speed": "10Gbps", "material": "Vỏ nhôm, dây bọc dù"},
+    "35998": {"modelRef": "CM888 Uno", "maxRes": "HDMI 4K@60Hz", "pdWatt": "PD 100W (Pass-through 85W)", "speed": "2xUSB-C 3.2 10Gbps + 2xUSB-A 3.2 10Gbps", "material": "Thiết kế Ugreen Uno màn hình biểu cảm, vỏ kim loại/CNC"},
     "UH6120C": {"maxRes": "HDMI 4K@60Hz", "pdWatt": "PD 100W", "speed": "LAN Gigabit 1Gbps + 1xUSB-C 5Gbps + 2xUSB-A 5Gbps", "material": "Vỏ hợp kim nhôm + dây bện"},
     "UH5020C": {"maxRes": "HDMI 4K@60Hz", "pdWatt": "PD 100W", "speed": "1xUSB-C 5Gbps + 2xUSB-A 5Gbps", "material": "Vỏ hợp kim nhôm cao cấp"},
     "UH7020C": {"maxRes": "HDMI 4K@60Hz", "pdWatt": "PD 100W", "speed": "SD + microSD UHS-I 104MB/s + 1xUSB-C + 2xUSB-A 5Gbps", "material": "Vỏ hợp kim nhôm"},
@@ -271,8 +272,8 @@ def parse_structured_specs(name: str, brand: str, subcat3: str, warranty_mo: int
     # 2. Product Type / Group (`productGroup`)
     if any(w in nl for w in ("docking",)):
         product_group = "Docking Station"
-    elif any(w in nl for w in ("bộ chia", "hub")):
-        if "hdmi sang" in nl or "multi hdmi" in nl:
+    elif any(w in nl for w in ("bộ chia", "hub")) or re.search(r"\b\d+\s*(?:in|-in-)\s*1\b", nl) or len(re.findall(r"\+", name)) >= 2:
+        if "hdmi sang" in nl or "multi hdmi" in nl or "1 ra 2" in nl or "1 ra 4" in nl or "1 ra 8" in nl:
             product_group = "Bộ chia HDMI (Splitter)"
         else:
             product_group = "Bộ chia / Hub đa năng"
@@ -364,16 +365,16 @@ def parse_structured_specs(name: str, brand: str, subcat3: str, warranty_mo: int
                 output_ports.append("Micro-B 3.0")
 
             # Count USB-C / USB-A ports in Hub descriptions (e.g., + 2C + 3A, 4xUSB-A)
-            c_cnt = re.search(r"\b(\d+)\s*(?:x\s*)?(?:usb[\s\-]*)?c\b", raw_out, re.I)
+            c_cnt = re.search(r"\b(\d+)\s*(?:x|\*)\s*(?:usb[\s\-]*)?c\b", raw_out, re.I)
             if c_cnt:
                 output_ports.append(f"{c_cnt.group(1)}×USB-C (PD/Data)")
             elif "usb-c" in raw_out or "+ 1c" in raw_out or "+ c" in raw_out or "type-c" in raw_out:
                 output_ports.append("1×USB-C (PD/Data)")
 
-            a_cnt = re.search(r"\b(\d+)\s*(?:x\s*)?(?:usb[\s\-]*a|a)\b", raw_out, re.I)
+            a_cnt = re.search(r"\b(\d+)\s*(?:x|\*)\s*(?:usb[\s\-]*a|usb\s*3\.|usb\s*2\.|a)\b", raw_out, re.I)
             if a_cnt:
                 output_ports.append(f"{a_cnt.group(1)}×USB-A 3.0")
-            elif "usb 3.0" in raw_out or "usb-a" in raw_out:
+            elif "usb 3.0" in raw_out or "usb 3.2" in raw_out or "usb-a" in raw_out:
                 output_ports.append("USB-A 3.0")
         else:
             # Symmetrical cable (HDMI, DisplayPort, VGA, Audio 3.5, USB Extension)
@@ -415,12 +416,21 @@ def parse_structured_specs(name: str, brand: str, subcat3: str, warranty_mo: int
     in_one_m = re.search(r"\b(\d{1,2})\s*(?:in|-in-)\s*1\b", nl)
     if in_one_m:
         port_count = int(in_one_m.group(1))
+    elif "35998" in nl or "cm888" in nl:
+        port_count = 6
     elif "1 ra 8" in nl or "8xhdmi" in nl:
         port_count = 8
     elif "4xusb" in nl:
         port_count = 4
     elif "1 ra 2" in nl:
         port_count = 2
+    elif product_group == "Bộ chia / Hub đa năng" and len(output_ports) > 1:
+        # Sum explicit multipliers like 2×USB-C + 2×USB-A + HDMI
+        tot_p = 0
+        for op in output_ports:
+            m_mult = re.match(r"^(\d+)×", op)
+            tot_p += int(m_mult.group(1)) if m_mult else 1
+        port_count = max(2, tot_p)
 
     # 4. Resolution / Standard (`resolution`)
     resolution = ext_kb.get("maxRes") or ""
@@ -587,10 +597,11 @@ def main():
             "stockDays": round(float(sr[11] or 0), 1),
         }
 
-    # Filter in-stock SKUs of NH11-01-04-Phụ kiện kết nối
-    in_stock_rows = [r for r in (mp.get("rows") or []) if r[3] == target_sub_idx and float(r[18] or 0) > 0]
-    in_stock_rows.sort(key=lambda r: (-float(r[18] or 0), -float(r[20] or 0), str(r[0])))
-    print(f"[PKKN Spec Builder] Found {len(in_stock_rows)} in-stock SKUs in '{TARGET_SUBCAT}'.")
+    # Extract all SKUs of NH11-01-04-Phụ kiện kết nối (both in-stock and out-of-stock)
+    all_subcat_rows = [r for r in (mp.get("rows") or []) if r[3] == target_sub_idx]
+    all_subcat_rows.sort(key=lambda r: (-(1 if float(r[18] or 0) > 0 else 0), -float(r[18] or 0), -float(r[20] or 0), str(r[0])))
+    in_stock_rows = [r for r in all_subcat_rows if float(r[18] or 0) > 0]
+    print(f"[PKKN Spec Builder] Found {len(in_stock_rows)} in-stock SKUs / {len(all_subcat_rows)} total Master SKUs in '{TARGET_SUBCAT}'.")
 
     # Load web deepsearch cache
     cache: dict[str, dict] = {}
@@ -614,7 +625,7 @@ def main():
             missing_to_fetch.append((sku, str(r[1] or "")))
 
     if missing_to_fetch:
-        print(f"[PKKN Spec Builder] Deep-searching {len(missing_to_fetch)} SKUs from phongvu.vn...")
+        print(f"[PKKN Spec Builder] Deep-searching {len(missing_to_fetch)} in-stock SKUs from phongvu.vn...")
         with concurrent.futures.ThreadPoolExecutor(max_workers=12) as pool:
             futs = [pool.submit(fetch_pv_product_page, sku, name) for sku, name in missing_to_fetch]
             done_cnt = 0
@@ -636,7 +647,7 @@ def main():
     group_counts = {}
     brand_counts = {}
 
-    for r in in_stock_rows:
+    for r in all_subcat_rows:
         sku = str(r[0]).strip()
         name = str(r[1] or "").strip()
         subcat3 = subcat3s[r[4]] if (isinstance(r[4], int) and 0 <= r[4] < len(subcat3s)) else ""
@@ -650,8 +661,6 @@ def main():
         cost_price = wcogs if wcogs > 0 else (last_pur if last_pur > 0 else latest_quote)
 
         sell_price, listed_price, price_source = compute_effective_selling_price(r, pbs.get(sku), today_iso)
-        # Note: Cost price in Master Product is Net (ex-VAT), while retail price includes VAT (~8-10%).
-        # We compute both direct Margin % ((Sell - Cost) / Sell) and Markup % ((Sell - Cost) / Cost) for clear buyer comparison.
         gp_vnd = (sell_price - cost_price) if (sell_price > 0 and cost_price > 0) else 0
         gm_pct = round((gp_vnd / sell_price) * 100, 1) if (sell_price > 0 and cost_price > 0) else 0.0
         markup_pct = round((gp_vnd / cost_price) * 100, 1) if (cost_price > 0 and sell_price > 0) else 0.0
@@ -668,12 +677,13 @@ def main():
         s180d = vel.get("s180d", 0)
         stock_days = vel.get("stockDays", 0.0)
 
-        web_info = cache.get(sku) or {"sku": sku, "pvUrl": slugify_vn(name, sku)}
+        web_info = cache.get(sku) or {"sku": sku, "pvUrl": backlinks_cache.get(sku) or slugify_vn(name, sku)}
         specs = parse_structured_specs(name, brand, subcat3, warranty_mo, web_info)
 
         pg = specs["productGroup"]
-        group_counts[pg] = group_counts.get(pg, 0) + 1
-        brand_counts[brand] = brand_counts.get(brand, 0) + 1
+        if inv_qty > 0:
+            group_counts[pg] = group_counts.get(pg, 0) + 1
+            brand_counts[brand] = brand_counts.get(brand, 0) + 1
 
         sku_items.append({
             "sku": sku,
@@ -684,6 +694,7 @@ def main():
             "status": status,
             "range": prod_range,
             "pvUrl": web_info.get("pvUrl") or slugify_vn(name, sku),
+            "inStock": inv_qty > 0,
             "invQty": inv_qty,
             "invVal": inv_val,
             "s7d": s7d,
@@ -708,7 +719,9 @@ def main():
         "meta": {
             "subcat": TARGET_SUBCAT,
             "updatedAt": dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            "totalInStockSkus": len(sku_items),
+            "totalMasterSkus": len(sku_items),
+            "totalInStockSkus": len(in_stock_rows),
+            "totalOutOfStockSkus": len(sku_items) - len(in_stock_rows),
             "totalInvQty": sum(x["invQty"] for x in sku_items),
             "totalInvVal": sum(x["invVal"] for x in sku_items),
             "totalSales30d": sum(x["s30d"] for x in sku_items),

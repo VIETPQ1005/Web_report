@@ -428,6 +428,7 @@
       loaded: false,
       loading: false,
       data: null,
+      stockMode: "in_stock", // in_stock | all | out_of_stock
       group: "",
       brand: "",
       inputPort: "",
@@ -12395,11 +12396,27 @@
         modelTokens.push(tok.toUpperCase());
       }
     }
-    const regexTokens = fullRaw.matchAll(/\b(UG-\d+|\d{5}|CM\d{3}|CR\d{3}|MM\d{3}|US\d{3}|HD\d{3}[A-Z0-9\-]*|DP\d{3}|HM\d{2}[A-Z0-9\-]*|UH\d{4}C|UA\d{3}C|UE\d{3}C?|XD\d{2,3}|DC\d{3}|DOCK\d{3}[A-Z]*|V-V\d{3}|KY-[A-Z0-9\-]+|8TH72AA|8WW45AA|8G9Q9AA|CAC-[A-Z0-9]+|UT[JK]-U3-BK|PAPW[A-Z0-9\-]+|PW11-[A-Z0-9\-]+|AH-12F[A-Z0-9\-]*|CAHUB-[A-Z0-9]+|DLK\d+[A-Z0-9/]*)\b/gi);
+      const regexTokens = fullRaw.matchAll(/\b(UG-\d+|\d{5}|CM\d{3}|CR\d{3}|MM\d{3}|US\d{3}|HD\d{3}[A-Z0-9\-]*|DP\d{3}|HM\d{2}[A-Z0-9\-]*|UH\d{4}C|UA\d{3}C|UE\d{3}C?|XD\d{2,3}|DC\d{3}|DOCK\d{3}[A-Z]*|V-V\d{3}|KY-[A-Z0-9\-]+|8TH72AA|8WW45AA|8G9Q9AA|CAC-[A-Z0-9]+|UT[JK]-U3-BK|PAPW[A-Z0-9\-]+|PW11-[A-Z0-9\-]+|AH-12F[A-Z0-9\-]*|CAHUB-[A-Z0-9]+|DLK\d+[A-Z0-9/]*)\b/gi);
     for (const rm of regexTokens) {
       const tok = rm[1].trim().toUpperCase();
       if (!modelTokens.includes(tok)) modelTokens.push(tok);
     }
+    // Cross-map known Ugreen part numbers <-> model codes (e.g. CM888 <-> 35998, CM511 <-> 15596, CM478 <-> 15495)
+    const MODEL_ALIAS_MAP = {
+      "CM888": "35998", "35998": "CM888",
+      "CM511": "15596", "15596": "CM511",
+      "CM478": "15495", "15495": "CM478",
+      "CM512": "45000", "45000": "CM512",
+      "CM219": "50985", "50985": "CM219",
+      "CR113": "20290", "20290": "CR113",
+      "CR111": "20256", "20256": "CR111",
+      "US372": "30205", "30205": "US372",
+      "HD175": "45430", "HD150": "40179", "HD171": "25908", "DP120": "25905", "DP131": "55568", "DP115": "80395",
+    };
+    [...modelTokens].forEach((t) => {
+      const alias = MODEL_ALIAS_MAP[t];
+      if (alias && !modelTokens.includes(alias)) modelTokens.push(alias);
+    });
     const model = modelTokens.length ? modelTokens.join(" / ") : "Tiêu chuẩn";
 
     // 2. Port Count & Multi-port detection
@@ -12658,7 +12675,6 @@
           mp.rows.forEach((r) => {
             if (r[MP_C.SUBCAT] !== subIdx) return;
             const invQty = Math.round(Number(r[MP_C.INV_QTY] || 0));
-            if (invQty <= 0) return;
 
             const sku = String(r[MP_C.SKU]).trim();
             const name = String(r[MP_C.NAME] || "").trim();
@@ -12973,21 +12989,26 @@
     const newGmPct = (newSell > 0 && newCost > 0) ? ((newGp / newSell) * 100) : 0;
     const newMarkupPct = (newCost > 0 && newSell > 0) ? ((newGp / newCost) * 100) : 0;
 
-    // Score all 116 in-stock SKUs to find exact model matches and closest comparable peers
-    const scored = items.map((it) => {
+    // Score all 641 Master SKUs (both in-stock and out-of-stock) to detect exact matches and comparable peers
+    const scoredAll = items.map((it) => {
       const sim = computeSimilarityScore(parsedNew, newCost, newSell, it);
       return { item: it, score: sim.score, reasons: sim.reasons, isExactModel: sim.isExactModel };
-    }).sort((a, b) => (Number(b.isExactModel) - Number(a.isExactModel)) || (b.score - a.score) || (b.item.s30d - a.item.s30d));
+    }).sort((a, b) => (Number(b.isExactModel) - Number(a.isExactModel)) || (b.score - a.score) || (b.item.invQty - a.item.invQty) || (b.item.s30d - a.item.s30d));
 
-    const exactMatches = scored.filter((x) => x.isExactModel);
-    const comparablePeers = scored.filter((x) => x.score >= 52).slice(0, 6);
-    const activePeers = comparablePeers.length ? comparablePeers : scored.filter((x) => x.score >= 35).slice(0, 5);
+    const exactMatches = scoredAll.filter((x) => x.isExactModel);
+    const inStockComparable = scoredAll.filter((x) => !x.isExactModel && (x.item.invQty > 0) && x.score >= 52).slice(0, 6);
+    const fallbackInStock = scoredAll.filter((x) => !x.isExactModel && (x.item.invQty > 0) && x.score >= 35).slice(0, 5);
+    const peerList = inStockComparable.length ? inStockComparable : fallbackInStock;
+    const activePeers = [...exactMatches, ...peerList].slice(0, 7);
 
     // Highlight matched SKUs in the main table below
     state.pkknSpecs.matchedSkus = new Set(activePeers.map((x) => x.item.sku));
 
-    // Calculate Peer Benchmarks (Weighted by 30D sales or simple average of valid peers)
-    const pricedPeers = activePeers.map((x) => x.item).filter((it) => it.costPrice > 0 && it.sellingPrice > 0);
+    // Calculate Peer Benchmarks from IN-STOCK peers (or include exact match if priced)
+    const benchmarkSource = (inStockComparable.length ? inStockComparable : activePeers)
+      .map((x) => x.item)
+      .filter((it) => it.costPrice > 0 && it.sellingPrice > 0);
+    const pricedPeers = benchmarkSource;
     const avgPeerCost = pricedPeers.length
       ? Math.round(pricedPeers.reduce((s, it) => s + it.costPrice, 0) / pricedPeers.length)
       : 0;
@@ -12997,8 +13018,9 @@
     const avgPeerGm = pricedPeers.length
       ? Number((pricedPeers.reduce((s, it) => s + it.gmPct, 0) / pricedPeers.length).toFixed(1))
       : 32.0;
-    const totalPeerInv = activePeers.reduce((s, x) => s + (x.item.invQty || 0), 0);
-    const totalPeerS30d = activePeers.reduce((s, x) => s + (x.item.s30d || 0), 0);
+    const inStockPeersOnly = (inStockComparable.length ? inStockComparable : fallbackInStock).map((x) => x.item);
+    const totalPeerInv = inStockPeersOnly.reduce((s, it) => s + (it.invQty || 0), 0);
+    const totalPeerS30d = inStockPeersOnly.reduce((s, it) => s + (it.s30d || 0), 0);
     const peerStockDays = totalPeerS30d > 0 ? Math.round((totalPeerInv / totalPeerS30d) * 30) : 999;
 
     const costDiffPct = (avgPeerCost > 0 && newCost > 0) ? (((newCost - avgPeerCost) / avgPeerCost) * 100) : 0;
@@ -13009,21 +13031,28 @@
     let fitScore = 70;
     const evalNotes = [];
 
-    // 0. Exact SKU Already In Stock Check
+    // 0. Exact SKU Already Exists in Master Product (In-Stock vs Out-of-Stock Check)
     if (exactMatches.length > 0) {
       const ex = exactMatches[0].item;
-      evalNotes.push(
-        `🎯 <strong>PHÁT HIỆN TRÙNG ĐÚNG MÃ ĐANG KINH DOANH TẠI PHONG VŨ (Độ khớp 100%):</strong> Sản phẩm này chính là SKU <a href="${esc(ex.pvUrl)}" target="_blank" rel="noopener noreferrer" class="pc-tgdd-link"><strong>[${esc(ex.sku)}] ${esc(ex.name)}</strong> ↗</a> — Hiện đang có <strong>Giá nhập (WCOGS): ${fmtVndFull(ex.costPrice)}</strong>, <strong>Giá bán PV: ${fmtVndFull(ex.sellingPrice)}</strong> (GM <strong>${ex.gmPct.toFixed(1)}%</strong>), Tồn kho: <strong>${fmtInt(ex.invQty)} sp</strong>, Bán 30D: <strong>${fmtInt(ex.s30d)} sp</strong> (~${Math.round(ex.stockDays || 0)} ngày tồn).`
-      );
+      if (ex.invQty > 0) {
+        evalNotes.push(
+          `🎯 <strong>PHÁT HIỆN TRÙNG ĐÚNG MÃ ĐANG CÓ TỒN KHO TẠI PHONG VŨ (Độ khớp 100%):</strong> Sản phẩm này chính là SKU <a href="${esc(ex.pvUrl)}" target="_blank" rel="noopener noreferrer" class="pc-tgdd-link"><strong>[${esc(ex.sku)}] ${esc(ex.name)}</strong> ↗</a> — Hiện đang <strong>CÒN TỒN KHO: ${fmtInt(ex.invQty)} sp</strong> (Bán 30D: <strong>${fmtInt(ex.s30d)} sp</strong> ~ ${Math.round(ex.stockDays || 0)} ngày tồn) • <strong>Giá nhập (WCOGS): ${fmtVndFull(ex.costPrice)}</strong> • <strong>Giá bán PV: ${fmtVndFull(ex.sellingPrice)}</strong> (GM <strong>${ex.gmPct.toFixed(1)}%</strong>).`
+        );
+      } else {
+        fitScore += 6;
+        evalNotes.push(
+          `⚠️ <strong>PHÁT HIỆN ĐÃ CÓ MÃ TRÊN HỆ THỐNG PHONG VŨ NHƯNG ĐANG HẾT TỒN KHO (Tồn = 0):</strong> Sản phẩm này đã được tạo mã SKU <a href="${esc(ex.pvUrl)}" target="_blank" rel="noopener noreferrer" class="pc-tgdd-link"><strong>[${esc(ex.sku)}] ${esc(ex.name)}</strong> ↗</a> (Trạng thái mua: <strong>${esc(ex.status)}</strong>, Range: <strong>${esc(ex.range || "No")}</strong>) — <strong>Giá nhập lịch sử (WCOGS/Last Purchase): ${ex.costPrice > 0 ? fmtVndFull(ex.costPrice) : "Chưa có"}</strong> • <strong>Giá bán niêm yết PV: ${ex.sellingPrice > 0 ? fmtVndFull(ex.sellingPrice) : "Chưa có"}</strong> (GM lịch sử: <strong>${ex.gmPct.toFixed(1)}%</strong>). <em>Không cần tạo mã SKU mới khi nhập lại hàng (Re-order)!</em>`
+        );
+      }
       if (newCost > 0 && ex.costPrice > 0) {
         const diffEx = newCost - ex.costPrice;
         const diffExPct = (diffEx / ex.costPrice) * 100;
         if (diffEx < -1000) {
           fitScore += 12;
-          evalNotes.push(`✅ <strong>Giá chào mới của NCC tốt hơn giá vốn hiện tại:</strong> Thấp hơn <strong>${fmtVndFull(Math.abs(diffEx))} (${diffExPct.toFixed(1)}%)</strong> so với giá vốn SKU [${esc(ex.sku)}] đang tồn (${fmtVndFull(ex.costPrice)}).`);
+          evalNotes.push(`✅ <strong>Giá chào mới của NCC tốt hơn giá nhập cũ trên hệ thống:</strong> Thấp hơn <strong>${fmtVndFull(Math.abs(diffEx))} (${diffExPct.toFixed(1)}%)</strong> so với giá vốn SKU [${esc(ex.sku)}] (${fmtVndFull(ex.costPrice)}).`);
         } else if (diffEx > 1000) {
           fitScore -= 18;
-          evalNotes.push(`🚨 <strong>Giá chào của NCC cao hơn giá vốn hiện tại của chính mã này:</strong> Cao hơn <strong>+${fmtVndFull(diffEx)} (+${diffExPct.toFixed(1)}%)</strong> so với SKU [${esc(ex.sku)}] (${fmtVndFull(ex.costPrice)}). Yêu cầu NCC giảm về tối đa <strong>${fmtVndFull(ex.costPrice)}</strong>.`);
+          evalNotes.push(`🚨 <strong>Giá chào của NCC cao hơn giá vốn của chính mã này trên hệ thống:</strong> Cao hơn <strong>+${fmtVndFull(diffEx)} (+${diffExPct.toFixed(1)}%)</strong> so với SKU [${esc(ex.sku)}] (${fmtVndFull(ex.costPrice)}). Yêu cầu NCC giảm về tối đa <strong>${fmtVndFull(ex.costPrice)}</strong>.`);
         }
       }
     }
@@ -13203,7 +13232,9 @@
                       <div class="muted" style="font-size:10px">+${esc(fmtCompactVnd(item.gpVnd))}</div>
                     </td>
                     <td class="num mono">
-                      <div style="color:#00E5FF"><strong>${fmtInt(item.invQty)}</strong> tồn</div>
+                      ${item.invQty > 0
+                        ? `<div style="color:#00E5FF"><strong>${fmtInt(item.invQty)}</strong> tồn</div>`
+                        : `<div style="color:#F43F5E"><strong>HẾT TỒN (0)</strong></div>`}
                       <div style="color:#12D37A;font-size:10.5px">${fmtInt(item.s30d)} / 30D</div>
                     </td>
                   </tr>`;
@@ -13227,9 +13258,26 @@
     if (!data || !Array.isArray(data.items)) return;
 
     const allItems = data.items;
+    const inStockTotal = allItems.filter((x) => x.invQty > 0).length;
+    const oosTotal = allItems.length - inStockTotal;
+    const stockSel = document.getElementById("pkknFilterStockMode");
+    if (stockSel && stockSel.options.length >= 3) {
+      stockSel.options[0].textContent = `📦 Đang có tồn kho (${fmtInt(inStockTotal)} SKU)`;
+      stockSel.options[1].textContent = `🗂️ Toàn bộ Master (${fmtInt(allItems.length)} SKU — Cả hết tồn)`;
+      stockSel.options[2].textContent = `⚠️ Đã có mã PV nhưng Hết tồn (${fmtInt(oosTotal)} SKU)`;
+      stockSel.value = pk.stockMode || "in_stock";
+    }
+
     const q = (pk.search || "").trim().toLowerCase();
 
     const filtered = allItems.filter((it) => {
+      const isMatchedFromEval = pk.matchedSkus && pk.matchedSkus.has(it.sku);
+      if (!isMatchedFromEval && !q) {
+        if (pk.stockMode === "in_stock" && !(it.invQty > 0)) return false;
+        if (pk.stockMode === "out_of_stock" && it.invQty > 0) return false;
+      } else if (q && pk.stockMode === "out_of_stock" && it.invQty > 0) {
+        return false;
+      }
       if (pk.group && it.productGroup !== pk.group) return false;
       if (pk.brand && it.brand !== pk.brand) return false;
       if (pk.inputPort && it.inputPort !== pk.inputPort) return false;
@@ -13401,8 +13449,11 @@
                 <div class="muted" style="font-size:9.5px">Markup +${it.markupPct.toFixed(0)}%</div>
               </td>
               <td class="num mono">
-                <div style="color:#00E5FF"><strong>${fmtInt(it.invQty)}</strong> sp</div>
-                <div class="muted" style="font-size:10px">${esc(fmtCompactVnd(it.invVal))}</div>
+                ${it.invQty > 0
+                  ? `<div style="color:#00E5FF"><strong>${fmtInt(it.invQty)}</strong> sp</div>
+                     <div class="muted" style="font-size:10px">${esc(fmtCompactVnd(it.invVal))}</div>`
+                  : `<div><span class="inv-badge bad-verybad">HẾT TỒN (0)</span></div>
+                     <div class="muted" style="font-size:9.5px;margin-top:2px">Đã có mã PV</div>`}
               </td>
               <td class="num mono">
                 <div style="color:#12D37A"><strong>${fmtInt(it.s30d)}</strong> / 30D</div>
@@ -13464,6 +13515,10 @@
 
   function bindPkknSpecsEvents() {
     const pk = state.pkknSpecs;
+    document.getElementById("pkknFilterStockMode")?.addEventListener("change", (e) => {
+      pk.stockMode = e.target.value || "in_stock";
+      renderPkknSpecsView();
+    });
     document.getElementById("pkknFilterGroup")?.addEventListener("change", (e) => {
       pk.group = e.target.value;
       renderPkknSpecsView();
@@ -13485,6 +13540,7 @@
       renderPkknSpecsView();
     });
     document.getElementById("pkknResetFilterBtn")?.addEventListener("click", () => {
+      pk.stockMode = "in_stock";
       pk.group = "";
       pk.brand = "";
       pk.inputPort = "";
@@ -13493,6 +13549,8 @@
       pk.matchedSkus.clear();
       const sInp = document.getElementById("pkknSearchInput");
       if (sInp) sInp.value = "";
+      const stSel = document.getElementById("pkknFilterStockMode");
+      if (stSel) stSel.value = "in_stock";
       populatePkknFilters();
       renderPkknSpecsView();
     });

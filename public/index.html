@@ -8,10 +8,10 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600;700&family=Chakra+Petch:wght@600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="./styles.css?v=20261127h" />
+  <link rel="stylesheet" href="./styles.css?v=20261127i" />
   <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.1/dist/echarts.min.js" defer></script>
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js" defer></script>
-  <script src="./app.js?v=20261127h" defer></script>
+  <script src="./app.js?v=20261127i" defer></script>
 </head>
 <body>
   <div class="app-shell" id="appShell">
@@ -1394,7 +1394,12 @@
         <!-- TOP ACTION & FILTER BAR -->
         <div class="inv-filter-bar pkkn-top-filter-bar">
           <div class="topbar-filters">
-            <span class="local-filter-tag">🔌 NH11-01-04 • PHỤ KIỆN KẾT NỐI (CÓ TỒN KHO):</span>
+            <span class="local-filter-tag">🔌 NH11-01-04 • PHỤ KIỆN KẾT NỐI:</span>
+            <select id="pkknFilterStockMode" class="dark-select" title="Chuyển đổi giữa: Chỉ xem mã Có tồn kho (>0), Toàn bộ mã Master Product (cả hết tồn), hoặc Chỉ mã Hết tồn kho (=0)">
+              <option value="in_stock">📦 Đang có tồn kho (116 SKU)</option>
+              <option value="all">🗂️ Toàn bộ Master (641 SKU — Cả hết tồn)</option>
+              <option value="out_of_stock">⚠️ Đã có mã PV nhưng Hết tồn (525 SKU)</option>
+            </select>
             <select id="pkknFilterGroup" class="dark-select" title="Lọc theo Nhóm sản phẩm (Bộ chia/Hub, Cáp HDMI, Cáp DP, Bộ chuyển LAN...)">
               <option value="">Tất cả Nhóm SP</option>
             </select>

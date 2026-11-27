@@ -1333,8 +1333,18 @@
       if (!wasOpen) {
         searchQuery = "";
         rebuildPopoverStructure();
+        popover.classList.remove("align-right");
         wrap.classList.add("open");
-        setTimeout(() => popover.querySelector(".ms-search")?.focus(), 20);
+        // Keep popover inside viewport on mobile / narrow screens
+        const rect = popover.getBoundingClientRect();
+        if (rect.right > window.innerWidth - 8 && rect.left > 8) {
+          popover.classList.add("align-right");
+        }
+        setTimeout(() => {
+          if (window.innerWidth > 768) {
+            popover.querySelector(".ms-search")?.focus();
+          }
+        }, 20);
       }
     });
 
@@ -1873,6 +1883,12 @@
       ensurePriceCompareLoaded();
     }
 
+    // Auto-scroll active rail button into view on mobile horizontal nav
+    const activeRailBtn = document.querySelector(`#railMenu .rail-item[data-view="${view}"]`);
+    if (activeRailBtn && window.innerWidth <= 960) {
+      activeRailBtn.scrollIntoView({ behavior: "smooth", block: "nearest", inline: "center" });
+    }
+
     const filtered = getFilteredRows(false);
     const filteredTime = state.clickedMonth ? getFilteredRows(true) : filtered;
     renderSidebarForView(filtered);
@@ -1962,6 +1978,23 @@
     document.getElementById("resetFiltersBtn").addEventListener("click", () => {
       if (state.activeView === "inventory") resetInvFilters(true);
       else resetFilters();
+    });
+
+    // Mobile KPI Sidebar Collapsible Toggle
+    document.getElementById("mobileKpiToggleBtn")?.addEventListener("click", () => {
+      const sb = document.getElementById("kpiSidebar");
+      const btn = document.getElementById("mobileKpiToggleBtn");
+      const lbl = document.getElementById("mobileKpiToggleLabel");
+      if (!sb) return;
+      const expanded = sb.classList.toggle("mobile-expanded");
+      if (btn) btn.setAttribute("aria-expanded", expanded ? "true" : "false");
+      if (lbl) lbl.textContent = expanded ? "Ẩn KPI" : "📊 Xem KPI";
+      if (expanded) {
+        setTimeout(() => {
+          charts.gaugeRing?.resize();
+          charts.gaugeSemi?.resize();
+        }, 45);
+      }
     });
 
     // Segmented group helper
@@ -2388,6 +2421,7 @@
   function applySidebarSpec(spec) {
     const set = (id, txt) => { const el = document.getElementById(id); if (el) el.textContent = txt; };
     set("sidebarTitle", spec.title);
+    set("sidebarMobileQuickVal", `${spec.bar1Val || ""} • ${spec.g1Big || ""}`);
     set("sbGauge1Label", spec.g1Label);
     set("sidebarSalesShareTag", spec.g1Tag);
     set("gaugeGmValue", spec.g1Big);

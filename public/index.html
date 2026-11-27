@@ -8,10 +8,10 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600;700&family=Chakra+Petch:wght@600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="./styles.css?v=20261127e" />
+  <link rel="stylesheet" href="./styles.css?v=20261127f" />
   <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.1/dist/echarts.min.js" defer></script>
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js" defer></script>
-  <script src="./app.js?v=20261127e" defer></script>
+  <script src="./app.js?v=20261127f" defer></script>
 </head>
 <body>
   <div class="app-shell" id="appShell">
@@ -95,10 +95,20 @@
     <!-- 2. LEFT KPI & GAUGE TELEMETRY PANEL (CONTEXT-AWARE PER TAB) -->
     <aside class="kpi-sidebar" id="kpiSidebar" aria-label="Chỉ số tổng quan">
       <div class="sidebar-top">
-        <h1 class="sidebar-title" id="sidebarTitle">Dashboard</h1>
-        <button class="btn-reset-mini" id="resetFiltersBtn" title="Đặt lại toàn bộ bộ lọc">↺ Reset</button>
+        <div class="sidebar-title-wrap">
+          <h1 class="sidebar-title" id="sidebarTitle">Dashboard</h1>
+          <span class="sidebar-mobile-quick-val mono" id="sidebarMobileQuickVal"></span>
+        </div>
+        <div class="sidebar-top-actions">
+          <button type="button" class="btn-mobile-kpi-toggle" id="mobileKpiToggleBtn" aria-expanded="false" title="Mở rộng hoặc thu gọn bảng chỉ số KPI tổng quan trên Mobile">
+            <span id="mobileKpiToggleLabel">📊 Xem KPI</span>
+            <span class="mobile-kpi-caret">▼</span>
+          </button>
+          <button class="btn-reset-mini" id="resetFiltersBtn" title="Đặt lại toàn bộ bộ lọc">↺ Reset</button>
+        </div>
       </div>
 
+      <div class="kpi-sidebar-body" id="kpiSidebarBody">
       <!-- GAUGE 1: CIRCULAR TICK RING -->
       <div class="sidebar-block">
         <div class="block-label">
@@ -191,6 +201,7 @@
           <div class="inset-val mono" id="mReturnRows">--</div>
           <div class="metric-delta pos mono" id="mReturnPct">TB ngày năm 2026</div>
         </div>
+      </div>
       </div>
     </aside>
 

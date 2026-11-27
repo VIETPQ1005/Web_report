@@ -8,10 +8,10 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600;700&family=Chakra+Petch:wght@600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="./styles.css?v=20261127b" />
+  <link rel="stylesheet" href="./styles.css?v=20261127c" />
   <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.1/dist/echarts.min.js" defer></script>
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js" defer></script>
-  <script src="./app.js?v=20261127b" defer></script>
+  <script src="./app.js?v=20261127c" defer></script>
 </head>
 <body>
   <div class="app-shell" id="appShell">
@@ -1345,6 +1345,10 @@
               <span class="panel-hint" id="pcTableCountInfo">Mỗi dòng là 1 SKU Phong Vũ so sánh ngang giá bán thực tế với từng Website đối thủ • Click mã SKU để xem hồ sơ 360°</span>
             </div>
             <div class="panel-controls">
+              <label class="pill-toggle pc-has-stock-toggle" id="pcHasStockToggleLabel" title="Tích chọn để chỉ hiển thị các SKU đang Có Tồn Phong Vũ (Tồn kho PV > 0)">
+                <input type="checkbox" id="pcHasPvStockCheckbox" />
+                <span>📦 Có Tồn Phong Vũ</span>
+              </label>
               <input type="search" id="pcSearchInput" class="dark-search" placeholder="Tìm tên SP, SKU PV, Brand, Dung lượng..." />
               <button type="button" class="btn-primary-blue" id="pcExportCsvBtn">⬇ Export CSV</button>
             </div>

@@ -417,6 +417,7 @@
       brand: "",
       driveType: "",
       capacity: "",
+      hasPvStock: false,
       search: "",
       sortCol: "diffVsBestVnd",
       sortDir: "desc",
@@ -11485,6 +11486,11 @@
       pc.search = e.target.value.trim();
       renderPriceCompareView();
     });
+    document.getElementById("pcHasPvStockCheckbox")?.addEventListener("change", (e) => {
+      pc.hasPvStock = Boolean(e.target.checked);
+      document.getElementById("pcHasStockToggleLabel")?.classList.toggle("is-checked", pc.hasPvStock);
+      renderPriceCompareView();
+    });
     document.getElementById("pcResetBtn")?.addEventListener("click", () => {
       pc.mode = "matrix";
       pc.compFilter = "all";
@@ -11492,6 +11498,7 @@
       pc.brand = "";
       pc.driveType = "";
       pc.capacity = "";
+      pc.hasPvStock = false;
       pc.search = "";
       pc.sortCol = "diffVsBestVnd";
       pc.sortDir = "desc";
@@ -11502,6 +11509,8 @@
       const br = document.getElementById("pcFilterBrand"); if (br) br.value = "";
       const tp = document.getElementById("pcFilterType"); if (tp) tp.value = "";
       const cp = document.getElementById("pcFilterCap"); if (cp) cp.value = "";
+      const stChk = document.getElementById("pcHasPvStockCheckbox"); if (stChk) stChk.checked = false;
+      document.getElementById("pcHasStockToggleLabel")?.classList.remove("is-checked");
       const sr = document.getElementById("pcSearchInput"); if (sr) sr.value = "";
       renderPriceCompareView();
     });
@@ -11612,8 +11621,6 @@
             const iPvUrl = idxOf("link phong vũ");
             const iInv = idxOf("tồn kho pv") >= 0 ? idxOf("tồn kho pv") : 9;
             const iS7 = idxOf("bán 7d") >= 0 ? idxOf("bán 7d") : 10;
-            const iS30 = idxOf("bán 30d") >= 0 ? idxOf("bán 30d") : 11;
-
             const compCols = [
               { id: "tgdd", short: "TGDD", agent: "Trinh Sát TGDĐ → Wall•E", pIdx: idxOf("giá tgdđ") >= 0 ? idxOf("giá tgdđ") : 12 },
               { id: "cps", short: "CPS", agent: "Trinh Sát CellphoneS → Wall•E", pIdx: idxOf("giá cellphones") >= 0 ? idxOf("giá cellphones") : 16 },
@@ -11943,11 +11950,12 @@
       return m ? `${m[3]}/${m[2]}/${m[1]}` : iso;
     };
 
-    // Scoped matrix for KPIs (by Brand / Type / Cap)
+    // Scoped matrix for KPIs (by Brand / Type / Cap / Có Tồn Phong Vũ)
     const scopedMatrix = matrixAll.filter((r) => {
       if (pc.brand && r.pvBrand !== pc.brand) return false;
       if (pc.driveType && r.driveType !== pc.driveType) return false;
       if (pc.capacity && r.capacity !== pc.capacity) return false;
+      if (pc.hasPvStock && !(Number(r.pvInvQty) > 0)) return false;
       return true;
     });
 
@@ -11993,6 +12001,7 @@
     const chipsEl = document.getElementById("pcActiveChips");
     if (chipsEl) {
       const chips = [isLoa ? "Nhóm: 🔊 LOA" : "Nhóm: 💾 OCGN"];
+      if (pc.hasPvStock) chips.push("📦 Có Tồn Phong Vũ (>0)");
       if (pc.compFilter !== "all") chips.push(`Đối thủ: ${pc.compFilter === "both" ? "≥2 đối thủ" : pc.compFilter.toUpperCase()}`);
       if (pc.mode === "matrix" && pc.status !== "all") chips.push(pc.status === "pv_higher" ? "PV Cao hơn" : "PV Rẻ / Bằng");
       if (pc.brand) chips.push(`Brand: ${pc.brand}`);
@@ -12113,15 +12122,40 @@
         ...compsMeta.map((c) => ({ key: c.id, label: c.name, compId: c.id, cls: "num pc-comp-col", isLogo: true })),
         { key: "diffVsBestVnd", label: "PV vs Giá Thấp Nhất", cls: "num", isLogo: false },
         { key: "diffVsBestPct", label: "Vị thế Giá PV", cls: "", isLogo: false },
-        { key: "pvInvQty", label: "Tồn / 30D PV", cls: "num", isLogo: false },
+        { key: "pvInvQty", label: "Tồn / 30D PV", cls: "num", isLogo: false, isStockCol: true },
       ];
       thead.innerHTML = `<tr>${cols.map((c) => {
         const arrow = pc.sortCol === c.key ? (pc.sortDir === "asc" ? " ▲" : " ▼") : "";
-        const innerHtml = c.isLogo
-          ? `<div class="pc-th-logo-wrap">${renderCompLogoChip(c.compId, c.label)}<span class="pc-th-sort-arrow">${arrow}</span></div>`
-          : `${esc(c.label)}${arrow}`;
+        let innerHtml = `${esc(c.label)}${arrow}`;
+        if (c.isLogo) {
+          innerHtml = `<div class="pc-th-logo-wrap">${renderCompLogoChip(c.compId, c.label)}<span class="pc-th-sort-arrow">${arrow}</span></div>`;
+        } else if (c.isStockCol) {
+          innerHtml = `
+            <div class="pc-th-stock-wrap">
+              <span class="pc-th-stock-title">${esc(c.label)}${arrow}</span>
+              <label class="pc-th-stock-check ${pc.hasPvStock ? "is-checked" : ""}" title="Tick chọn để chỉ lọc các SKU đang Có Tồn Phong Vũ (Tồn > 0)">
+                <input type="checkbox" class="pc-th-stock-inp" ${pc.hasPvStock ? "checked" : ""} />
+                <span>Có Tồn Phong Vũ</span>
+              </label>
+            </div>`;
+        }
         return `<th class="${c.cls} sortable" data-pc-sort="${c.key}">${innerHtml}</th>`;
       }).join("")}</tr>`;
+      thead.querySelectorAll(".pc-th-stock-check").forEach((lbl) => {
+        lbl.addEventListener("click", (e) => {
+          e.stopPropagation();
+        });
+      });
+      thead.querySelectorAll(".pc-th-stock-inp").forEach((inp) => {
+        inp.addEventListener("change", (e) => {
+          e.stopPropagation();
+          pc.hasPvStock = Boolean(e.target.checked);
+          const topChk = document.getElementById("pcHasPvStockCheckbox");
+          if (topChk) topChk.checked = pc.hasPvStock;
+          document.getElementById("pcHasStockToggleLabel")?.classList.toggle("is-checked", pc.hasPvStock);
+          renderPriceCompareView();
+        });
+      });
       thead.querySelectorAll("th[data-pc-sort]").forEach((th) => {
         th.addEventListener("click", () => {
           const k = th.dataset.pcSort;

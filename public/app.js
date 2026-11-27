@@ -11905,12 +11905,20 @@
           <div class="pc-src-sub">Tổng danh mục: <strong>${fmtInt(pvTotal)} SKU</strong> • Đã khớp đối thủ: <strong>${fmtInt(matrixAll.length)} SKU</strong></div>
         </div>`;
       const compCardsHtml = compsMeta.map((c) => {
-        const host = String(c.url || "").replace(/^https?:\/\/(www\.)?/, "").split("/")[0] || c.short;
+        const urlsList = Array.isArray(c.urls) && c.urls.length ? c.urls : [c.url];
+        const linksHtml = urlsList.map((u, idx) => {
+          const host = String(u || "").replace(/^https?:\/\/(www\.)?/, "").split("/")[0] || c.short;
+          const pathShort = String(u || "").replace(/^https?:\/\/[^/]+/, "");
+          const lbl = urlsList.length > 1
+            ? (pathShort.includes("karaoke") ? "Loa Karaoke" : pathShort.includes("vi-tinh") ? "Loa vi tính" : "Loa Bluetooth")
+            : host;
+          return `<a href="${esc(u)}" target="_blank" rel="noopener noreferrer" class="pc-src-link">${esc(lbl)} ↗</a>`;
+        }).join(" • ");
         return `
           <div class="pc-source-card is-${esc(c.id)}">
             <div class="pc-src-head">
               ${renderCompLogoChip(c.id, c.name)}
-              <a href="${esc(c.url)}" target="_blank" rel="noopener noreferrer" class="pc-src-link">${esc(host)} ↗</a>
+              <div style="text-align:right;font-size:11px">${linksHtml}</div>
             </div>
             <div class="pc-src-val mono">${fmtInt(c.totalCount || 0)} SKU quét được</div>
             <div class="pc-src-sub">Khớp mã PV: <strong>${fmtInt(c.matchedCount || 0)} SKU</strong> • Chưa khớp: <strong>${fmtInt(c.unmatchedCount || 0)} SP</strong></div>

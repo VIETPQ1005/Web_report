@@ -4,10 +4,12 @@ Multi-Competitor Price Scraper for Phong Vũ Subcat 2: NH06-03-01-Loa
 Strictly restricted to the 7 target speaker brands requested by the user:
   - Sony, Alpha Works, Havit, Microlab, SoundMax, Tronsmart, Marshall
 
-Scrapes the 5 target competitor speaker URLs assigned to the 4 Scouts:
+Scrapes the 7 target competitor speaker URLs assigned to the 4 Scouts:
   1. Trinh Sát TGDĐ       — https://www.thegioididong.com/loa-laptop#o=1&pi=2 (Cate 69)
-  2. Trinh Sát CellphoneS — https://cellphones.com.vn/thiet-bi-am-thanh/loa/loa-bluetooth.html (GraphQL Cate 112)
-  3. Trinh Sát FPT        — https://fptshop.com.vn/phu-kien/loa (+ 7 brand subpages)
+  2. Trinh Sát CellphoneS — https://cellphones.com.vn/thiet-bi-am-thanh/loa/loa-bluetooth.html (Cate 112)
+                          & https://cellphones.com.vn/thiet-bi-am-thanh/loa/karaoke.html (Cate 2475)
+  3. Trinh Sát FPT        — https://fptshop.com.vn/phu-kien/loa
+                          & https://fptshop.com.vn/phu-kien/loa?loai-san-pham=loa-karaoke&sortMethod=noi-bat&sort=noi-bat (+ 7 brand subpages)
   4. Trinh Sát Hacom      — https://hacom.vn/loa-bluetooth & https://hacom.vn/loa-vi-tinh
 
 Outputs:
@@ -32,9 +34,11 @@ REPORT_DATA = BASE_DIR / "public" / "data" / "report_data.json"
 TGDD_BASE = "https://www.thegioididong.com"
 TGDD_LOA_URL = f"{TGDD_BASE}/loa-laptop#o=1&pi=2"
 CPS_LOA_URL = "https://cellphones.com.vn/thiet-bi-am-thanh/loa/loa-bluetooth.html"
+CPS_KARAOKE_URL = "https://cellphones.com.vn/thiet-bi-am-thanh/loa/karaoke.html"
 CPS_GQL_URL = "https://api.cellphones.com.vn/v2/graphql/query"
 FPT_BASE = "https://fptshop.com.vn"
 FPT_LOA_URL = f"{FPT_BASE}/phu-kien/loa"
+FPT_KARAOKE_URL = f"{FPT_BASE}/phu-kien/loa?loai-san-pham=loa-karaoke&sortMethod=noi-bat&sort=noi-bat"
 HACOM_BASE = "https://hacom.vn"
 HACOM_LOA_BT_URL = f"{HACOM_BASE}/loa-bluetooth"
 HACOM_LOA_VT_URL = f"{HACOM_BASE}/loa-vi-tinh"
@@ -109,6 +113,8 @@ def detect_target_brand(brand_raw: str, name: str = "") -> str:
 
 def classify_speaker_type(name: str, subcat3: str = "") -> str:
     hay = f"{name or ''} {subcat3 or ''}".lower()
+    if any(k in hay for k in ("karaoke", "loa kéo", "ult tower", "xv500", "xv800", "xv900", "xp500", "xp700", "ikon", "genbeat", "sonik", "halo")):
+        return "Loa Karaoke"
     if any(k in hay for k in ("vi tính", "2.0", "2.1", "4.1", "5.1", "soundbar pc", "loa dàn")):
         return "Loa vi tính"
     return "Loa Bluetooth"
@@ -140,6 +146,7 @@ NAMED_SPEAKER_PATTERNS = [
     ("sony_ult_field_7", [r"ult\s*field\s*7\b", r"srs-?ult70\b"]),
     ("sony_ult_tower_5", [r"ult\s*tower\s*5\b", r"srs-?ult500\b"]),
     ("sony_ult_tower_7", [r"ult\s*tower\s*7\b", r"srs-?ult700\b"]),
+    ("sony_ult_tower_9", [r"ult\s*tower\s*9\b", r"srs-?ult900\b"]),
     ("sony_ult_tower_10", [r"ult\s*tower\s*10\b", r"srs-?ult1000\b"]),
     ("sony_ult_tower_max", [r"ult\s*tower\s*max\b", r"srs-?ult3000\b"]),
     ("sony_xb100", [r"srs-?xb100\b", r"\bxb100\b"]),
@@ -369,76 +376,81 @@ def scrape_tgdd_loa() -> list:
 
 def scrape_cps_loa() -> list:
     all_prods = {}
-    for page in range(1, 6):
-        gql = {
-            "query": f"""
-            query GetProductsByCateId {{
-              products(
-                filter: {{ static: {{ categories: ["112"], province_id: 30, stock: {{ from: 0 }} }}, dynamic: {{}} }}
-                page: {page}
-                size: 100
-                sort: [{{ view: desc }}]
-              ) {{
-                general {{ product_id name sku url_path manufacturer }}
-                filterable {{ price special_price stock_available_id company_stock_id }}
-              }}
-            }}
-            """
-        }
-        try:
-            raw = fetch_url(
-                CPS_GQL_URL,
-                data=json.dumps(gql).encode("utf-8"),
-                extra_headers={
-                    "Content-Type": "application/json",
-                    "Origin": "https://cellphones.com.vn",
-                    "Referer": CPS_LOA_URL,
-                },
-            )
-            prods = (json.loads(raw).get("data") or {}).get("products") or []
-            added = 0
-            for p in prods:
-                g = p.get("general") or {}
-                f = p.get("filterable") or {}
-                pid = str(g.get("product_id") or g.get("sku") or "").strip()
-                name = str(g.get("name") or "").strip()
-                url_path = str(g.get("url_path") or "").strip().lstrip("/")
-                if not pid or not name or pid in all_prods:
-                    continue
-                brand = detect_target_brand(str(g.get("manufacturer") or ""), name)
-                if not brand:
-                    continue
-                sp = int(round(float(f.get("special_price") or 0)))
-                rp = int(round(float(f.get("price") or 0)))
-                price = sp if sp > 0 else rp
-                old_price = rp if (sp > 0 and rp > sp) else 0
-                disc_pct = int(round((old_price - price) / old_price * 100)) if old_price > price > 0 else 0
-                stock_id = f.get("stock_available_id")
-                comp_stock_id = f.get("company_stock_id")
-                is_listed_active = (stock_id in (46, 56, 152, 4920)) or (comp_stock_id in (46, 56, 152, 4920))
-                if not is_listed_active or price <= 0:
-                    continue
-                in_stock = (stock_id == 46) or (comp_stock_id == 46)
-                all_prods[pid] = {
-                    "compId": "cps",
-                    "compShort": "CPS",
-                    "code": pid,
-                    "name": name,
-                    "brand": brand,
-                    "price": price,
-                    "oldPrice": old_price,
-                    "discountPct": disc_pct,
-                    "inStock": in_stock,
-                    "sold": "" if in_stock else "Hàng sắp về",
-                    "url": f"https://cellphones.com.vn/{url_path}",
-                }
-                added += 1
-            print(f"  [CPS LOA page={page}] returned={len(prods)}, target_added={added}, total={len(all_prods)}")
-            if len(prods) < 100:
+    cps_cates = [
+        ("112", "loa-bluetooth", CPS_LOA_URL),
+        ("2475", "loa-karaoke", CPS_KARAOKE_URL),
+    ]
+    for cate_id, cate_label, ref_url in cps_cates:
+        for page in range(1, 6):
+            gql = {
+                "query": f"""
+                query GetProductsByCateId {{
+                  products(
+                    filter: {{ static: {{ categories: ["{cate_id}"], province_id: 30, stock: {{ from: 0 }} }}, dynamic: {{}} }}
+                    page: {page}
+                    size: 100
+                    sort: [{{ view: desc }}]
+                  ) {{
+                    general {{ product_id name sku url_path manufacturer }}
+                    filterable {{ price special_price stock_available_id company_stock_id }}
+                  }}
+                }}
+                """
+            }
+            try:
+                raw = fetch_url(
+                    CPS_GQL_URL,
+                    data=json.dumps(gql).encode("utf-8"),
+                    extra_headers={
+                        "Content-Type": "application/json",
+                        "Origin": "https://cellphones.com.vn",
+                        "Referer": ref_url,
+                    },
+                )
+                prods = (json.loads(raw).get("data") or {}).get("products") or []
+                added = 0
+                for p in prods:
+                    g = p.get("general") or {}
+                    f = p.get("filterable") or {}
+                    pid = str(g.get("product_id") or g.get("sku") or "").strip()
+                    name = str(g.get("name") or "").strip()
+                    url_path = str(g.get("url_path") or "").strip().lstrip("/")
+                    if not pid or not name or pid in all_prods:
+                        continue
+                    brand = detect_target_brand(str(g.get("manufacturer") or ""), name)
+                    if not brand:
+                        continue
+                    sp = int(round(float(f.get("special_price") or 0)))
+                    rp = int(round(float(f.get("price") or 0)))
+                    price = sp if sp > 0 else rp
+                    old_price = rp if (sp > 0 and rp > sp) else 0
+                    disc_pct = int(round((old_price - price) / old_price * 100)) if old_price > price > 0 else 0
+                    stock_id = f.get("stock_available_id")
+                    comp_stock_id = f.get("company_stock_id")
+                    is_listed_active = (stock_id in (46, 56, 152, 4920)) or (comp_stock_id in (46, 56, 152, 4920))
+                    if not is_listed_active or price <= 0:
+                        continue
+                    in_stock = (stock_id == 46) or (comp_stock_id == 46)
+                    all_prods[pid] = {
+                        "compId": "cps",
+                        "compShort": "CPS",
+                        "code": pid,
+                        "name": name,
+                        "brand": brand,
+                        "price": price,
+                        "oldPrice": old_price,
+                        "discountPct": disc_pct,
+                        "inStock": in_stock,
+                        "sold": "" if in_stock else "Hàng sắp về",
+                        "url": f"https://cellphones.com.vn/{url_path}",
+                    }
+                    added += 1
+                print(f"  [CPS {cate_label} page={page}] returned={len(prods)}, target_added={added}, total={len(all_prods)}")
+                if len(prods) < 100:
+                    break
+            except Exception as exc:
+                print(f"  [CPS {cate_label} page={page}] error: {exc}")
                 break
-        except Exception as exc:
-            print(f"  [CPS LOA page={page}] error: {exc}")
-            break
     return list(all_prods.values())
 
 
@@ -447,6 +459,7 @@ def scrape_fpt_loa() -> list:
     decoder = json.JSONDecoder()
     brand_urls = [
         (FPT_LOA_URL, "main"),
+        (FPT_KARAOKE_URL, "loa-karaoke"),
         (f"{FPT_LOA_URL}/sony", "sony"),
         (f"{FPT_LOA_URL}/marshall", "marshall"),
         (f"{FPT_LOA_URL}/alpha-works", "alpha-works"),
@@ -938,6 +951,7 @@ def main():
                     "name": "Thế Giới Di Động",
                     "short": "TGDD",
                     "url": TGDD_LOA_URL,
+                    "urls": [TGDD_LOA_URL],
                     "totalCount": len(tgdd_prods),
                     "matchedCount": len(tgdd_matched),
                     "unmatchedCount": len(tgdd_unmatched),
@@ -947,6 +961,7 @@ def main():
                     "name": "CellphoneS",
                     "short": "CPS",
                     "url": CPS_LOA_URL,
+                    "urls": [CPS_LOA_URL, CPS_KARAOKE_URL],
                     "totalCount": len(cps_prods),
                     "matchedCount": len(cps_matched),
                     "unmatchedCount": len(cps_unmatched),
@@ -956,6 +971,7 @@ def main():
                     "name": "FPT Shop",
                     "short": "FPT",
                     "url": FPT_LOA_URL,
+                    "urls": [FPT_LOA_URL, FPT_KARAOKE_URL],
                     "totalCount": len(fpt_prods),
                     "matchedCount": len(fpt_matched),
                     "unmatchedCount": len(fpt_unmatched),
@@ -965,6 +981,7 @@ def main():
                     "name": "Hacom",
                     "short": "HACOM",
                     "url": HACOM_LOA_BT_URL,
+                    "urls": [HACOM_LOA_BT_URL, HACOM_LOA_VT_URL],
                     "totalCount": len(hacom_prods),
                     "matchedCount": len(hacom_matched),
                     "unmatchedCount": len(hacom_unmatched),

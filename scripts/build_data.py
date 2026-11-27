@@ -122,12 +122,12 @@ def _parse_price_num(raw_val) -> int:
 def build_price_report_map(data_dir: Path, known_skus: set, extra_sources: list = None) -> tuple:
     """
     Parse Bao_cao_quan_ly_gia.xlsx (Price change report):
-      - New promotion price (Priority 1 if > 0)
-      - Current Normal selling pricen (VAT)
-      - New Normal selling price n(VAT)
-      - Active date (for Normal selling price)
+      - Col 17 (`Giá KM cũ` / `New promotion price`) — Priority 1 if > 0
+      - Col 18 (`Giá KM mới` / `Old promotion price`) — Priority 2 if > 0
+      - Col 12 (`Current Normal selling pricen (VAT)`) / Col 13 (`New Normal selling price n(VAT)`)
+      - Col 14 (`Active date` for Normal selling price)
     Returns (price_by_sku_dict, source_filenames).
-    Each value is [cur_normal_price, new_normal_price, active_date_iso, new_promo_price].
+    Each value is [cur_normal_price, new_normal_price, active_date_iso, new_promo_price, old_promo_price].
     """
     if extra_sources:
         price_files = list(extra_sources)
@@ -151,6 +151,7 @@ def build_price_report_map(data_dir: Path, known_skus: set, extra_sources: list 
         new_idx = 13
         ad_idx = 14
         promo_idx = 17
+        old_promo_idx = 18
         header_found = False
 
         for _tag, r in stream_xlsx_rows(fp, only_sheet=sf):
@@ -171,6 +172,11 @@ def build_price_report_map(data_dir: Path, known_skus: set, extra_sources: list 
                     found_promo = next((i for i, h in enumerate(low) if "new promotion price" in h), None)
                     if found_promo is not None:
                         promo_idx = found_promo
+                    found_old_promo = next((i for i, h in enumerate(low) if "old promotion price" in h or "giá km mới" in h), None)
+                    if found_old_promo is not None:
+                        old_promo_idx = found_old_promo
+                    elif found_promo is not None:
+                        old_promo_idx = found_promo + 1
                     found_sku = next((i for i, h in enumerate(low) if h == "sku"), None)
                     if found_sku is not None:
                         sku_idx = found_sku
@@ -193,8 +199,9 @@ def build_price_report_map(data_dir: Path, known_skus: set, extra_sources: list 
             new_p = _parse_price_num(r[new_idx])
             ad_iso = _parse_price_date_iso(r[ad_idx]) if ad_idx < len(r) else ""
             promo_p = _parse_price_num(r[promo_idx]) if promo_idx < len(r) else 0
-            if cur_p > 0 or new_p > 0 or promo_p > 0:
-                price_by_sku[sku] = [cur_p, new_p, ad_iso, promo_p]
+            old_promo_p = _parse_price_num(r[old_promo_idx]) if old_promo_idx < len(r) else 0
+            if cur_p > 0 or new_p > 0 or promo_p > 0 or old_promo_p > 0:
+                price_by_sku[sku] = [cur_p, new_p, ad_iso, promo_p, old_promo_p]
 
     return price_by_sku, sources
 

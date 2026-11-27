@@ -8369,12 +8369,16 @@
     const curNormalP = priceRec ? Number(priceRec[0] || 0) : 0;
     const newNormalP = priceRec ? Number(priceRec[1] || 0) : 0;
     const activeDateIso = priceRec ? String(priceRec[2] || "") : "";
-    const newPromoP = priceRec ? Number(priceRec[3] || 0) : 0;
+    const col17PromoP = priceRec ? Number(priceRec[3] || 0) : 0;
+    const col18PromoP = priceRec ? Number(priceRec[4] || 0) : 0;
+    // Priority 1: Col 18 (`Giá KM mới` / `Old promotion price`) if > 0
+    // Priority 2: Col 17 (`Giá KM cũ` / `New promotion price`) if > 0
+    const activePromoP = col18PromoP > 0 ? col18PromoP : col17PromoP;
     const isNewActive = newNormalP > 0 && Boolean(activeDateIso) && activeDateIso <= todayIso;
     const isNewUpcoming = newNormalP > 0 && Boolean(activeDateIso) && activeDateIso > todayIso;
     const normalEffectiveP = isNewActive ? newNormalP : curNormalP;
-    // Priority 1: New promotion price (if > 0), fallback to Normal selling price order
-    const currentSellingP = newPromoP > 0 ? newPromoP : normalEffectiveP;
+    // Fallback to Normal selling price order if no promotion price > 0
+    const currentSellingP = activePromoP > 0 ? activePromoP : normalEffectiveP;
 
     const alertBox = document.getElementById("lkPriceAlertBox");
     if (alertBox) {
@@ -8411,11 +8415,12 @@
     }
 
     const subParts = [];
-    if (newPromoP > 0) {
+    if (activePromoP > 0) {
+      const promoLbl = col18PromoP > 0 ? "🏷️ Giá KM mới" : "🏷️ Giá KM";
       subParts.push(
-        normalEffectiveP > 0 && newPromoP !== normalEffectiveP
-          ? `🏷️ Giá KM • Normal: ${fmtVndFull(normalEffectiveP)}`
-          : `🏷️ Giá KM (New Promo)`
+        normalEffectiveP > 0 && activePromoP !== normalEffectiveP
+          ? `${promoLbl} • Normal: ${fmtVndFull(normalEffectiveP)}`
+          : promoLbl
       );
     } else if (isNewActive) {
       subParts.push(`Đã hiệu lực từ ${fmtIsoDmy(activeDateIso)}` + (curNormalP && curNormalP !== newNormalP ? ` • Cũ: ${fmtVndFull(curNormalP)}` : ""));

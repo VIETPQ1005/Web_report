@@ -639,7 +639,12 @@ def load_pv_loa() -> list:
         cur_p = int(pr[0]) if pr and len(pr) > 0 else 0
         new_p = int(pr[1]) if pr and len(pr) > 1 else 0
         ad_iso = str(pr[2] or "") if pr and len(pr) > 2 else ""
-        promo_p = int(pr[3]) if pr and len(pr) > 3 else 0
+        col17_promo_p = int(pr[3]) if pr and len(pr) > 3 else 0
+        col18_promo_p = int(pr[4]) if pr and len(pr) > 4 else 0
+        # Prioritize promotion prices from Bao_cao_quan_ly_gia:
+        #   1. Col 18 (`Giá KM mới` / `Old promotion price`) if > 0
+        #   2. Col 17 (`Giá KM cũ` / `New promotion price`) if > 0
+        promo_p = col18_promo_p if col18_promo_p > 0 else col17_promo_p
 
         is_new_active = new_p > 0 and bool(ad_iso) and ad_iso <= today_iso
         is_new_upcoming = new_p > 0 and bool(ad_iso) and ad_iso > today_iso

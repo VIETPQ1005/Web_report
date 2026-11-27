@@ -8,10 +8,10 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600;700&family=Chakra+Petch:wght@600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="./styles.css?v=20261127f" />
+  <link rel="stylesheet" href="./styles.css?v=20261127g" />
   <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.1/dist/echarts.min.js" defer></script>
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js" defer></script>
-  <script src="./app.js?v=20261127f" defer></script>
+  <script src="./app.js?v=20261127g" defer></script>
 </head>
 <body>
   <div class="app-shell" id="appShell">
@@ -77,6 +77,11 @@
           <span class="rail-featured-dot" aria-hidden="true"></span>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v18"/><path d="M5 7h14"/><path d="M3 14l2-7 2 7a2 2 0 0 1-4 0z"/><path d="M17 14l2-7 2 7a2 2 0 0 1-4 0z"/><path d="M8 21h8"/></svg>
           <span>So Sánh<br/>Giá</span>
+        </button>
+        <button class="rail-item rail-item-pkkn" data-view="pkknspecs" title="Bảng Thông Số Kỹ Thuật &amp; Đánh Giá Sản Phẩm Mới NCC Chào Hàng — Subcat NH11-01-04 Phụ kiện kết nối (Có tồn kho)">
+          <span class="rail-pkkn-dot" aria-hidden="true"></span>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M12 2v5"/><path d="M9 4h6"/><rect x="7" y="7" width="10" height="6" rx="2"/><path d="M10 13v4a2 2 0 0 0 4 0v-4"/><path d="M12 19v3"/></svg>
+          <span>Thông Số<br/>PK Kết Nối</span>
         </button>
       </nav>
 
@@ -593,14 +598,21 @@
       <section class="view-pane" id="view-channel">
         <div class="channel-special-bar">
           <div class="channel-special-info">
-            <span class="badge-blue">CHUYÊN ĐỀ LƯU TRỮ</span>
-            <span>Báo cáo riêng theo <strong>Dung lượng • Hãng • Khoảng giá</strong> (Doanh số &amp; Qty) cho <strong>Ổ cứng gắn ngoài</strong> &amp; <strong>Phụ kiện lưu trữ (USB, Thẻ nhớ)</strong></span>
+            <span class="badge-blue">CHUYÊN ĐỀ LƯU TRỮ &amp; KẾT NỐI</span>
+            <span>Báo cáo riêng theo <strong>Dung lượng • Hãng • Khoảng giá</strong> (OCGN &amp; PK Lưu trữ) và <strong>Bảng Thông Số &amp; Đánh Giá SP Mới NCC</strong> cho <strong>Phụ kiện kết nối</strong></span>
           </div>
-          <button type="button" class="btn-storage-special" id="openStorageReportBtn" title="Mở báo cáo chuyên sâu Dung lượng / Brand / Khoảng giá cho OCGN &amp; PK Lưu trữ">
-            <span>💾</span>
-            <span>Báo cáo Dung lượng / Brand (OCGN &amp; PK Lưu trữ)</span>
-            <span class="btn-arrow">↗</span>
-          </button>
+          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+            <button type="button" class="btn-storage-special" id="openStorageReportBtn" title="Mở báo cáo chuyên sâu Dung lượng / Brand / Khoảng giá cho OCGN &amp; PK Lưu trữ">
+              <span>💾</span>
+              <span>Báo cáo Dung lượng / Brand (OCGN &amp; PK Lưu trữ)</span>
+              <span class="btn-arrow">↗</span>
+            </button>
+            <button type="button" class="btn-storage-special" id="jumpToPkknSpecsBtn" style="background:linear-gradient(135deg,#059669 0%,#0284C7 100%);border-color:rgba(16,185,129,0.75)" title="Mở Bảng Thông Số Kỹ Thuật &amp; Đánh giá SP Mới NCC chào hàng (NH11-01-04 Phụ kiện kết nối)">
+              <span>🔌</span>
+              <span>Bảng Thông Số &amp; Đánh Giá NCC (Phụ kiện kết nối)</span>
+              <span class="btn-arrow">↗</span>
+            </button>
+          </div>
         </div>
 
         <div class="two-col-deep">
@@ -1369,6 +1381,141 @@
             <table class="dark-table pc-compare-table">
               <thead id="pcTableHead"></thead>
               <tbody id="pcTableBody"></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- ================================================================
+           VIEW 11: PHỤ KIỆN KẾT NỐI (NH11-01-04) — IN-STOCK TECHNICAL SPECS &
+                    SUPPLIER NEW PRODUCT OFFER EVALUATOR
+           ================================================================ -->
+      <section class="view-pane" id="view-pkknspecs">
+        <!-- TOP ACTION & FILTER BAR -->
+        <div class="inv-filter-bar pkkn-top-filter-bar">
+          <div class="topbar-filters">
+            <span class="local-filter-tag">🔌 NH11-01-04 • PHỤ KIỆN KẾT NỐI (CÓ TỒN KHO):</span>
+            <select id="pkknFilterGroup" class="dark-select" title="Lọc theo Nhóm sản phẩm (Bộ chia/Hub, Cáp HDMI, Cáp DP, Bộ chuyển LAN...)">
+              <option value="">Tất cả Nhóm SP</option>
+            </select>
+            <select id="pkknFilterBrand" class="dark-select" title="Lọc theo Thương hiệu (Ugreen, Baseus, Orico, TP-Link...)">
+              <option value="">Tất cả Thương hiệu</option>
+            </select>
+            <select id="pkknFilterInputPort" class="dark-select" title="Lọc theo Cổng Đầu vào (Input Port)">
+              <option value="">Tất cả Cổng Đầu vào</option>
+            </select>
+            <select id="pkknFilterResolution" class="dark-select" title="Lọc theo Độ phân giải / Chuẩn (8K, 4K@60Hz, 4K@30Hz, 1080P...)">
+              <option value="">Tất cả Độ phân giải</option>
+            </select>
+            <button type="button" class="btn-reset-mini" id="pkknResetFilterBtn" title="Xóa bộ lọc bảng thông số">↺ Reset</button>
+            <button type="button" class="btn-pkkn-refresh" id="pkknRefreshStockBtn" title="Quét kiểm tra mã có tồn kho mới của Subcat Phụ kiện kết nối và Deepsearch cập nhật vào bảng thông số">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/><path d="M16 16h5v5"/></svg>
+              <span id="pkknRefreshBtnText">🔄 Refresh (Quét mã có tồn kho mới)</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- CHIPS & STATUS INSIGHT STRIP -->
+        <div class="chips-strip">
+          <div class="chips-list" id="pkknActiveChips"></div>
+          <div class="insight-inline" id="pkknInsightText">Đang tải bảng thông số kỹ thuật Phụ kiện kết nối...</div>
+        </div>
+
+        <!-- 4 SUMMARY KPI CARDS -->
+        <div class="bs-kpi-grid">
+          <div class="inv-kpi-card accent-cyan">
+            <div class="inv-kpi-lbl">Tổng SKU Có Tồn Kho (PK Kết Nối)</div>
+            <div class="inv-kpi-val mono" id="pkknKpiSkuCount">-- SKU</div>
+            <div class="inv-kpi-sub mono" id="pkknKpiSkuSub">-- nhóm • -- thương hiệu</div>
+          </div>
+          <div class="inv-kpi-card accent-blue">
+            <div class="inv-kpi-lbl">Tổng Tồn Kho &amp; Giá Trị Tồn</div>
+            <div class="inv-kpi-val mono" id="pkknKpiInvQty">-- sp</div>
+            <div class="inv-kpi-sub mono" id="pkknKpiInvVal">Giá trị: --</div>
+          </div>
+          <div class="inv-kpi-card accent-emerald">
+            <div class="inv-kpi-lbl">Biên Lợi Nhuận Gộp TB (GM% / Markup)</div>
+            <div class="inv-kpi-val mono" id="pkknKpiAvgGm">--%</div>
+            <div class="inv-kpi-sub mono pos" id="pkknKpiAvgGmSub">Giá nhập TB: -- → Giá bán TB: --</div>
+          </div>
+          <div class="inv-kpi-card accent-amber">
+            <div class="inv-kpi-lbl">Sức Bán 30 Ngày &amp; 90 Ngày</div>
+            <div class="inv-kpi-val mono" id="pkknKpiSales30d">-- sp / 30D</div>
+            <div class="inv-kpi-sub mono" id="pkknKpiSales90d">90D: -- sp • Stock Days TB: -- ngày</div>
+          </div>
+        </div>
+
+        <!-- ================================================================
+             SUPPLIER NEW PRODUCT OFFER EVALUATOR (ĐÁNH GIÁ SP MỚI NCC CHÀO HÀNG)
+             ================================================================ -->
+        <div class="panel-block pkkn-eval-panel" id="pkknSupplierEvalPanel">
+          <div class="panel-header">
+            <div class="panel-title-group">
+              <h2 class="panel-title">
+                🧪 Công cụ So Sánh &amp; Đánh Giá Sản Phẩm Mới Nhà Cung Cấp (NCC) Chào Hàng
+                <span class="badge-blue">BUYER DECISION ASSISTANT</span>
+              </h2>
+              <span class="panel-hint">Nhập Tên sản phẩm mới, Thông số kỹ thuật NCC, Giá nhập &amp; Giá bán dự kiến để đối chiếu tự động với các SKU Phong Vũ đang kinh doanh cùng phân khúc kỹ thuật</span>
+            </div>
+            <div class="panel-controls">
+              <button type="button" class="btn-mini" id="pkknFillSampleHubBtn" title="Điền mẫu thử Hub USB-C 6 in 1">Mẫu thử: Hub 6-in-1</button>
+              <button type="button" class="btn-mini" id="pkknFillSampleCableBtn" title="Điền mẫu thử Cáp HDMI 2.1 8K 2m">Mẫu thử: Cáp HDMI 2.1 8K</button>
+              <button type="button" class="btn-mini" id="pkknClearEvalBtn" title="Xóa thông tin sản phẩm NCC đang nhập">✕ Xóa form</button>
+            </div>
+          </div>
+
+          <!-- 4 REQUIRED INPUT BOXES FROM USER REQUEST -->
+          <div class="pkkn-eval-form-grid">
+            <div class="pkkn-field-box pkkn-field-name">
+              <label for="pkknNewProdName" class="pkkn-field-label">1. Tên Sản phẩm mới (NCC chào hàng) <span class="req-star">*</span></label>
+              <input type="text" id="pkknNewProdName" class="dark-search pkkn-input" placeholder="VD: Bộ chia Hub USB-C 6 in 1 sang HDMI 4K@60Hz + LAN Gigabit + PD 100W + 3xUSB 3.0..." autocomplete="off" />
+            </div>
+
+            <div class="pkkn-field-box pkkn-field-specs">
+              <label for="pkknNewProdSpecs" class="pkkn-field-label">2. Thông số kỹ thuật NCC <span class="req-star">*</span></label>
+              <input type="text" id="pkknNewProdSpecs" class="dark-search pkkn-input" placeholder="VD: Input USB-C, Output HDMI 4K@60Hz, RJ45 1000Mbps, USB 3.0 5Gbps, Sạc PD 100W, Vỏ nhôm, Dài 15cm, BH 18 tháng..." autocomplete="off" />
+            </div>
+
+            <div class="pkkn-field-box pkkn-field-cost">
+              <label for="pkknNewProdCost" class="pkkn-field-label">3. Giá nhập NCC chào (VND) <span class="req-star">*</span></label>
+              <input type="text" id="pkknNewProdCost" class="dark-search pkkn-input mono" inputmode="numeric" placeholder="VD: 310,000" autocomplete="off" />
+            </div>
+
+            <div class="pkkn-field-box pkkn-field-sell">
+              <label for="pkknNewProdSell" class="pkkn-field-label">4. Giá bán dự kiến tại PV (VND) <span class="req-star">*</span></label>
+              <div class="pkkn-sell-action-row">
+                <input type="text" id="pkknNewProdSell" class="dark-search pkkn-input mono" inputmode="numeric" placeholder="VD: 490,000" autocomplete="off" />
+                <button type="button" class="btn-primary-blue pkkn-eval-submit-btn" id="pkknRunEvalBtn">⚡ Phân tích &amp; Đánh giá</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- EVALUATION VERDICT & SIDE-BY-SIDE COMPARISON RESULT -->
+          <div class="pkkn-eval-result hidden" id="pkknEvalResultBox"></div>
+        </div>
+
+        <!-- ================================================================
+             DEEPSEARCH TECHNICAL SPECIFICATION TABLE (ALL IN-STOCK SKUS)
+             ================================================================ -->
+        <div class="panel-block">
+          <div class="panel-header">
+            <div class="panel-title-group">
+              <h2 class="panel-title">
+                📋 Bảng Thông Số Kỹ Thuật, Giá Nhập &amp; Giá Bán — Subcat Phụ Kiện Kết Nối (Có Tồn Kho)
+                <span class="badge-blue mono" id="pkknTableBadge">116 SKU</span>
+              </h2>
+              <span class="panel-hint" id="pkknTableHint">Dữ liệu thông số được Deepsearch từ PhongVu.vn &amp; chuẩn hóa theo Nhóm SP, Đầu vào, Đầu ra, Độ phân giải, Tốc độ/PD, Chiều dài • Click nút "So với SP này" trên dòng bất kỳ để nạp nhanh vào bộ so sánh NCC</span>
+            </div>
+            <div class="panel-controls">
+              <input type="search" id="pkknSearchInput" class="dark-search" placeholder="Tìm SKU, Tên SP, Model (15495, 80401...), Cổng, 4K/8K, 100W..." />
+              <button type="button" class="btn-primary-blue" id="pkknExportCsvBtn">⬇ Export CSV Thông Số</button>
+            </div>
+          </div>
+
+          <div class="table-wrap pc-table-wrap">
+            <table class="dark-table pkkn-spec-table">
+              <thead id="pkknTableHead"></thead>
+              <tbody id="pkknTableBody"></tbody>
             </table>
           </div>
         </div>

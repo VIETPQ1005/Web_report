@@ -23,9 +23,11 @@ PUBLIC_DIR = BASE_DIR / "public"
 UPDATE_DATA_DIR = BASE_DIR / "update data"
 SCRAPER_SCRIPT = BASE_DIR / "scripts" / "scrape_tgdd_ocgn.py"
 SCRAPER_LOA_SCRIPT = BASE_DIR / "scripts" / "scrape_loa.py"
+PKKN_SCRIPT = BASE_DIR / "scripts" / "build_pkkn_specs.py"
 BUILD_SCRIPT = BASE_DIR / "scripts" / "build_data.py"
 PRICE_JSON = PUBLIC_DIR / "data" / "price_compare_ocgn.json"
 PRICE_LOA_JSON = PUBLIC_DIR / "data" / "price_compare_loa.json"
+PKKN_JSON = PUBLIC_DIR / "data" / "pkkn_specs.json"
 REPORT_JSON = PUBLIC_DIR / "data" / "report_data.json"
 
 _scan_lock = threading.Lock()
@@ -126,6 +128,27 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
                 return self._send_json(500, {"ok": False, "error": str(exc)})
             finally:
                 _etl_lock.release()
+
+        if self.path.startswith("/api/refresh-pkkn-specs"):
+            if not _scan_lock.acquire(blocking=False):
+                return self._send_json(409, {"ok": False, "error": "Đang có tiến trình quét dữ liệu khác đang chạy, vui lòng đợi giây lát."})
+            try:
+                proc = subprocess.run(
+                    [sys.executable, str(PKKN_SCRIPT)],
+                    cwd=str(BASE_DIR),
+                    capture_output=True,
+                    text=True,
+                    timeout=120,
+                )
+                if proc.returncode != 0:
+                    err_msg = (proc.stderr or proc.stdout or "PKKN spec builder exited with error").strip()[-500:]
+                    return self._send_json(500, {"ok": False, "error": err_msg})
+                data = json.loads(PKKN_JSON.read_text(encoding="utf-8"))
+                return self._send_json(200, {"ok": True, "data": data})
+            except Exception as exc:
+                return self._send_json(500, {"ok": False, "error": str(exc)})
+            finally:
+                _scan_lock.release()
 
         if self.path.startswith("/api/save-price-compare"):
             try:

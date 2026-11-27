@@ -5,6 +5,7 @@ import { gunzipSync } from "node:zlib";
 const BLOB_KEY = "latest-v3-storage";
 const PRICE_BLOB_KEY = "latest-price-compare-ocgn";
 const PRICE_LOA_BLOB_KEY = "latest-price-compare-loa";
+const PKKN_SPECS_BLOB_KEY = "latest-pkkn-specs";
 const MAX_PAYLOAD_BYTES = 15_000_000; // Allow up to 15 MB uncompressed JSON (POST body itself can be gzip-compressed ~2 MB)
 
 interface ReportPayload {
@@ -147,8 +148,13 @@ export default async (req: Request, context: Context) => {
   const store = getReportStore(context);
   const authRequired = Boolean((Netlify.env.get("UPDATE_DATA_KEY") || "").trim());
   const reqType = url.searchParams.get("type") || "";
-  const isPriceCompare = reqType === "price-compare" || reqType === "price-compare-loa";
-  const priceBlobKey = reqType === "price-compare-loa" ? PRICE_LOA_BLOB_KEY : PRICE_BLOB_KEY;
+  const isPriceCompare = reqType === "price-compare" || reqType === "price-compare-loa" || reqType === "pkkn-specs";
+  const priceBlobKey =
+    reqType === "price-compare-loa"
+      ? PRICE_LOA_BLOB_KEY
+      : reqType === "pkkn-specs"
+        ? PKKN_SPECS_BLOB_KEY
+        : PRICE_BLOB_KEY;
 
   // GET /api/report-data or GET /api/report-data?meta=1 or GET /api/report-data?type=price-compare[-loa]
   if (req.method === "GET") {

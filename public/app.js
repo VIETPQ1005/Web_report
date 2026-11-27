@@ -423,6 +423,21 @@
       sortDir: "desc",
       lastExport: { headers: [], rows: [], filename: "so_sanh_gia_ocgn.csv" },
     },
+    // Phụ kiện kết nối (NH11-01-04) In-Stock Technical Specs & Supplier New Product Evaluator
+    pkknSpecs: {
+      loaded: false,
+      loading: false,
+      data: null,
+      group: "",
+      brand: "",
+      inputPort: "",
+      resolution: "",
+      search: "",
+      sortCol: "invQty",
+      sortDir: "desc",
+      matchedSkus: new Set(),
+      lastExport: { headers: [], rows: [], filename: "thong_so_phu_kien_ket_noi.csv" },
+    },
     // Filters
     region: "",
     site: "",
@@ -1856,8 +1871,8 @@
     const pane = document.getElementById(`view-${view}`);
     if (pane) pane.classList.add("active");
 
-    const isInvOrLookup = view === "inventory" || view === "lookup" || view === "badstock" || view === "pricecompare";
-    const hideSidebar = view === "lookup" || view === "badstock" || view === "pricecompare";
+    const isInvOrLookup = view === "inventory" || view === "lookup" || view === "badstock" || view === "pricecompare" || view === "pkknspecs";
+    const hideSidebar = view === "lookup" || view === "badstock" || view === "pricecompare" || view === "pkknspecs";
     document.getElementById("appShell")?.classList.toggle("hide-sidebar", hideSidebar);
     document.getElementById("salesTopFilters")?.classList.toggle("hidden", isInvOrLookup);
     document.getElementById("activeChipsBar")?.classList.toggle("hidden", isInvOrLookup);
@@ -1871,7 +1886,9 @@
           ? "⚠️ BÁO CÁO CHUYÊN SÂU BAD STOCK (TỒN XẤU / TỒN RẤT XẤU)"
           : view === "pricecompare"
             ? "⚖️ SO SÁNH GIÁ ĐA ĐỐI THỦ:"
-            : "📦 BÁO CÁO TỒN KHO & BAD STOCK";
+            : view === "pkknspecs"
+              ? "🔌 THÔNG SỐ KỸ THUẬT & ĐÁNH GIÁ SP MỚI NCC — SUBCAT PHỤ KIỆN KẾT NỐI"
+              : "📦 BÁO CÁO TỒN KHO & BAD STOCK";
     }
     document.getElementById("pcTopBannerCatSwitch")?.classList.toggle("hidden", view !== "pricecompare");
     document.getElementById("jumpToLookupBtn")?.classList.toggle("hidden", view === "lookup");
@@ -1881,6 +1898,9 @@
     }
     if (view === "pricecompare" && !state.priceCompare.loaded) {
       ensurePriceCompareLoaded();
+    }
+    if (view === "pkknspecs" && !state.pkknSpecs.loaded) {
+      ensurePkknSpecsLoaded();
     }
 
     // Auto-scroll active rail button into view on mobile horizontal nav
@@ -2097,6 +2117,8 @@
 
     // Special Storage Report Modal (OCGN & PK Lưu trữ)
     document.getElementById("openStorageReportBtn")?.addEventListener("click", () => openStorageReportModal());
+    document.getElementById("jumpToPkknSpecsBtn")?.addEventListener("click", () => switchView("pkknspecs"));
+    bindPkknSpecsEvents();
     document.getElementById("closeStorageReportModal")?.addEventListener("click", () => closeStorageReportModal());
     document.getElementById("storageReportModal")?.addEventListener("click", (e) => {
       if (e.target.id === "storageReportModal") closeStorageReportModal();
@@ -2352,6 +2374,8 @@
       renderBadStockView();
     } else if (state.activeView === "pricecompare") {
       renderPriceCompareView();
+    } else if (state.activeView === "pkknspecs") {
+      renderPkknSpecsView();
     } else if (state.activeView === "lookup") {
       if (state.lookup.selectedSku) {
         renderLookupProfile(state.lookup.selectedSku, state.lookup.selectedSerial);
@@ -12331,6 +12355,1051 @@
       ]),
       filename: `ma_tran_so_sanh_gia_${pc.cat || "ocgn"}_${new Date().toISOString().slice(0, 10)}.csv`,
     };
+  }
+
+  // =========================================================================
+  // 11. PHỤ KIỆN KẾT NỐI (NH11-01-04) — IN-STOCK TECHNICAL SPECS &
+  //     SUPPLIER NEW PRODUCT OFFER EVALUATOR
+  // =========================================================================
+  const PKKN_IDB_KEY = "latest_pkkn_specs_v1";
+
+  function parseSpecsFromTextClient(name, rawSpecs, brand = "Khác", warrantyMo = 18) {
+    const nl = String(name || "").toLowerCase();
+    const cl = `${name || ""} ${rawSpecs || ""}`.toLowerCase();
+
+    // 1. Model / Part Number
+    let model = "Tiêu chuẩn";
+    const parenM = String(name || "").match(/\(([A-Za-z0-9\-\s/\.]{3,28})\)/);
+    if (parenM && !["đen", "trắng", "xám", "bạc", "xám bạc", "màu đen", "1.8m"].includes(parenM[1].trim().toLowerCase())) {
+      model = parenM[1].trim();
+    } else {
+      const codeM = `${name} ${rawSpecs}`.match(/\b(UG-\d+|\d{5}|HD\d{3}[A-Z0-9\-]*|DP\d{3}|HM\d{2}[A-Z0-9\-]*|UH\d{4}C|UA\d{3}C|UE\d{3}C?|XD\d{2,3}|DC\d{3}|DOCK\d{3}[A-Z]*|V-V\d{3}|KY-[A-Z0-9\-]+|8TH72AA|8WW45AA|8G9Q9AA|CAC-[A-Z0-9]+|UT[JK]-U3-BK|PAPW[A-Z0-9\-]+|PW11-[A-Z0-9\-]+|AH-12F[A-Z0-9\-]*|CAHUB-[A-Z0-9]+|CM\d{3})\b/i);
+      if (codeM) model = codeM[1].toUpperCase();
+    }
+
+    // 2. Product Group
+    let productGroup = "Cáp & Phụ kiện kết nối";
+    if (cl.includes("docking")) productGroup = "Docking Station";
+    else if (cl.includes("bộ chia") || cl.includes("hub")) {
+      if (cl.includes("hdmi sang") || cl.includes("multi hdmi") || cl.includes("splitter")) productGroup = "Bộ chia HDMI (Splitter)";
+      else productGroup = "Bộ chia / Hub đa năng";
+    } else if ((cl.includes("lan") || cl.includes("rj45")) && !cl.includes(" in 1") && !cl.includes("-in-1")) {
+      productGroup = "Bộ chuyển USB/Type-C sang LAN";
+    } else if (cl.includes("dây nguồn") || cl.includes("cáp nguồn")) productGroup = "Dây / Cáp nguồn";
+    else if (cl.includes("máy in")) productGroup = "Cáp USB Máy in";
+    else if (cl.includes("audio") || cl.includes("3.5")) productGroup = "Cáp âm thanh AUX 3.5mm";
+    else if (cl.includes("rs232") || cl.includes(" com ")) productGroup = "Cáp điều khiển USB to RS232/COM";
+    else if (cl.includes("nối dài") || cl.includes("cáp nối")) productGroup = "Cáp nối dài (Extension)";
+    else if (cl.includes("bộ chuyển") || cl.includes("đầu chuyển") || cl.includes("cáp chuyển") || cl.includes(" sang ") || cl.includes(" to ") || cl.includes("->")) {
+      if (cl.includes("hdmi") || cl.includes("displayport") || cl.includes("vga") || cl.includes("dp")) productGroup = "Cáp / Bộ chuyển Tín hiệu Hình ảnh";
+      else productGroup = "Cáp / Đầu chuyển Dữ liệu & OTG";
+    } else if (cl.includes("hdmi")) productGroup = "Cáp HDMI";
+    else if (cl.includes("displayport") || cl.includes(" dp ")) productGroup = "Cáp DisplayPort";
+    else if (cl.includes("vga")) productGroup = "Cáp VGA";
+
+    // 3. Port Count
+    let portCount = 1;
+    const inOneM = cl.match(/\b(\d{1,2})\s*(?:in|-in-|trong)\s*1\b/);
+    if (inOneM) portCount = Number(inOneM[1]);
+    else if (cl.includes("1 ra 8") || cl.includes("8xhdmi")) portCount = 8;
+    else if (cl.includes("4xusb") || cl.includes("4 cổng")) portCount = 4;
+    else if (cl.includes("1 ra 2")) portCount = 2;
+
+    // 4. Input Port & Output Ports
+    let inputPort = "Tiêu chuẩn";
+    const outputPorts = [];
+    if (cl.includes("usb-c") || cl.includes("type-c") || cl.includes("type c")) inputPort = "USB Type-C";
+    else if (cl.includes("mini displayport") || cl.includes("minidp")) inputPort = "Mini DisplayPort";
+    else if (cl.includes("micro hdmi")) inputPort = "Micro HDMI";
+    else if (cl.includes("displayport") && (cl.includes("to hdmi") || cl.includes("sang hdmi") || cl.includes("sang vga") || productGroup === "Cáp DisplayPort")) {
+      inputPort = cl.includes("2.1") ? "DisplayPort 2.1 Male" : cl.includes("1.4") ? "DisplayPort 1.4 Male" : "DisplayPort";
+    } else if (cl.includes("usb 3.0") || cl.includes("usb-a")) inputPort = "USB-A 3.0";
+    else if (cl.includes("hdmi")) inputPort = cl.includes("2.1") ? "HDMI 2.1 Male" : cl.includes("2.0") ? "HDMI 2.0 Male" : "HDMI Male";
+    else if (cl.includes("vga")) inputPort = "VGA (DB15 Male)";
+    else if (cl.includes("máy in")) inputPort = "USB-A 2.0";
+
+    if (cl.includes("hdmi")) outputPorts.push(cl.includes("8k") ? "HDMI 8K" : cl.includes("4k") ? "HDMI 4K" : "HDMI");
+    if (cl.includes("displayport") || cl.includes(" dp")) outputPorts.push("DisplayPort");
+    if (cl.includes("vga")) outputPorts.push("VGA");
+    if (cl.includes("lan") || cl.includes("rj45") || cl.includes("1000mbps") || cl.includes("gigabit")) outputPorts.push("LAN Gigabit RJ45");
+    if (cl.includes("sd") || cl.includes("tf") || cl.includes("msd")) outputPorts.push("Khe thẻ SD/microSD");
+    if (cl.includes("3.5")) outputPorts.push("Audio 3.5mm");
+    if (cl.includes("pd") || cl.includes("100w") || cl.includes("65w") || cl.includes("85w")) outputPorts.push("USB-C PD");
+    if (cl.includes("usb 3.0") || cl.includes("usb-a") || cl.includes("5gbps")) outputPorts.push("USB-A 3.0");
+    if (cl.includes("máy in")) outputPorts.push("USB-B 2.0 (Máy in)");
+    if (!outputPorts.length) outputPorts.push(productGroup);
+
+    // 5. Resolution
+    let resolution = "—";
+    if (cl.includes("16k")) resolution = "16K@60Hz / 8K@120Hz";
+    else if (cl.includes("8k")) resolution = "8K@60Hz / 4K@120Hz-240Hz";
+    else if (cl.includes("4k@60") || cl.includes("4k 60hz") || cl.includes("hdmi 2.0")) resolution = "4K@60Hz (3840×2160)";
+    else if (cl.includes("4k")) resolution = "4K@30Hz / Full HD 1080P@60Hz";
+    else if (cl.includes("1080p") || cl.includes("full hd") || cl.includes("vga")) resolution = "Full HD 1080P@60Hz";
+
+    // 6. Speed & Power
+    const sp = [];
+    if (cl.includes("80gbps")) sp.push("Băng thông 80Gbps");
+    else if (cl.includes("48gbps") || cl.includes("hdmi 2.1")) sp.push("Băng thông 48Gbps");
+    else if (cl.includes("32.4gbps") || cl.includes("dp 1.4") || cl.includes("displayport 1.4")) sp.push("Băng thông 32.4Gbps");
+    else if (cl.includes("18gbps") || cl.includes("hdmi 2.0")) sp.push("Băng thông 18Gbps");
+
+    if (cl.includes("1000mbps") || cl.includes("gigabit") || cl.includes("1gbps")) sp.push("LAN Gigabit 1000Mbps");
+    else if (cl.includes("100mbps")) sp.push("LAN 100Mbps");
+
+    if (cl.includes("10gbps") || cl.includes("gen 2")) sp.push("USB 3.1 Gen 2 (10Gbps)");
+    else if (cl.includes("5gbps") || cl.includes("usb 3.0") || cl.includes("usb 3.2")) sp.push("USB 3.0 (5Gbps)");
+    else if (cl.includes("480mbps") || cl.includes("usb 2.0")) sp.push("USB 2.0 (480Mbps)");
+
+    const pdM = cl.match(/\b(\d{2,3})\s*w\b/);
+    if (pdM || cl.includes("pd")) sp.push(`Sạc nhanh PD ${pdM ? `${pdM[1]}W` : "100W"}`);
+
+    // 7. Cable Length
+    let cableLength = "—";
+    const lenM = cl.match(/\b(\d+(?:\.\d+)?)\s*(m|cm)\b/);
+    if (lenM) cableLength = `${lenM[1]}${lenM[2]}`;
+    else if (productGroup.includes("Hub") || productGroup.includes("LAN")) cableLength = "15cm (Hub/Adapter)";
+
+    // 8. Material & Warranty
+    let material = "Lõi đồng nguyên chất, vỏ PVC/ABS bền bỉ";
+    if (cl.includes("nhôm") || cl.includes("aluminum")) material = "Vỏ hợp kim nhôm Aluminum tản nhiệt";
+    else if (cl.includes("bọc dù") || cl.includes("bện")) material = "Dây bọc dù nylon chống đứt, đầu mạ vàng";
+    else if (cl.includes("mạ vàng")) material = "Đầu kết nối mạ vàng 24K, lõi đồng nguyên chất";
+
+    const wM = cl.match(/(\d{1,2})\s*tháng/);
+    const warranty = wM ? `${wM[1]} tháng` : `${warrantyMo || 18} tháng`;
+
+    return {
+      model,
+      productGroup,
+      portCount,
+      inputPort,
+      outputPorts: Array.from(new Set(outputPorts)).join(", "),
+      resolution,
+      speedAndPower: sp.length ? sp.join(" • ") : "Tiêu chuẩn",
+      cableLength,
+      material,
+      warranty,
+      deepSpecs: rawSpecs || `${productGroup} | ${inputPort} → ${outputPorts.join(", ")} | ${resolution}`,
+    };
+  }
+
+  async function ensurePkknSpecsLoaded(forceReload = false) {
+    const pk = state.pkknSpecs;
+    if (pk.loaded && pk.data && !forceReload) return true;
+    if (pk.loading) return false;
+    pk.loading = true;
+    try {
+      const isHttp = location.protocol === "http:" || location.protocol === "https:";
+      const [baseRes, cloudRes, idbData] = await Promise.all([
+        fetch("./data/pkkn_specs.json", { cache: "no-store" }).catch(() => null),
+        isHttp ? fetchWithTimeout("/api/report-data?type=pkkn-specs", { cache: "no-store" }, 3500).catch(() => null) : Promise.resolve(null),
+        idbGetKey(PKKN_IDB_KEY),
+      ]);
+
+      let baseJson = null;
+      if (baseRes && baseRes.ok) {
+        baseJson = await baseRes.json().catch(() => null);
+      }
+      let cloudJson = null;
+      if (cloudRes && cloudRes.ok) {
+        cloudJson = await cloudRes.json().catch(() => null);
+      }
+
+      const pickNewest = (a, b) => {
+        if (!a || !Array.isArray(a.items)) return b;
+        if (!b || !Array.isArray(b.items)) return a;
+        const ta = Date.parse(a.meta?.updatedAt || "") || 0;
+        const tb = Date.parse(b.meta?.updatedAt || "") || 0;
+        return tb > ta ? b : a;
+      };
+
+      let chosen = pickNewest(baseJson, cloudJson);
+      chosen = pickNewest(chosen, idbData);
+
+      if (chosen && Array.isArray(chosen.items)) {
+        pk.data = chosen;
+        pk.loaded = true;
+        populatePkknFilters();
+        if (state.activeView === "pkknspecs") {
+          renderPkknSpecsView();
+        }
+        return true;
+      }
+      return false;
+    } finally {
+      pk.loading = false;
+    }
+  }
+
+  async function refreshPkknInStockSpecs() {
+    const btn = document.getElementById("pkknRefreshStockBtn");
+    const txt = document.getElementById("pkknRefreshBtnText");
+    if (btn) {
+      btn.disabled = true;
+      btn.classList.add("is-syncing");
+    }
+    if (txt) txt.textContent = "Đang quét mã có tồn kho mới...";
+
+    try {
+      // 1. Try local Python deepsearch endpoint first (`POST /api/refresh-pkkn-specs`)
+      const isHttp = location.protocol === "http:" || location.protocol === "https:";
+      if (isHttp) {
+        const res = await fetchWithTimeout("/api/refresh-pkkn-specs", { method: "POST" }, 45000).catch(() => null);
+        if (res && res.ok) {
+          const json = await res.json().catch(() => null);
+          if (json && json.ok && json.data && Array.isArray(json.data.items)) {
+            const prevCount = state.pkknSpecs.data?.items?.length || 0;
+            state.pkknSpecs.data = json.data;
+            state.pkknSpecs.loaded = true;
+            await idbSetKey(PKKN_IDB_KEY, json.data);
+            populatePkknFilters();
+            renderPkknSpecsView();
+            const newCount = json.data.items.length;
+            const diff = newCount - prevCount;
+            showToast(
+              diff > 0
+                ? `Đã quét & Deepsearch thành công ${newCount} SKU có tồn kho (+${diff} mã mới)!`
+                : `Đã làm mới Bảng Thông Số Phụ kiện kết nối: ${newCount} SKU đang có tồn kho.`
+            );
+            return;
+          }
+        }
+      }
+
+      // 2. Client-side live sync from currently loaded Master Product & Inventory data (works on Netlify after Update Data)
+      if (!state.shardsLoaded) {
+        await ensureLookupShardsLoaded();
+      }
+      if (!state.pkknSpecs.loaded) {
+        await ensurePkknSpecsLoaded();
+      }
+
+      const existingMap = new Map();
+      (state.pkknSpecs.data?.items || []).forEach((it) => existingMap.set(String(it.sku), it));
+
+      const mp = state.raw?.masterProducts;
+      if (mp && Array.isArray(mp.rows)) {
+        const lk = mp.lookups || {};
+        const pbs = mp.priceBySku || {};
+        const subIdx = (lk.subcats || []).indexOf("NH11-01-04-Phụ kiện kết nối");
+        if (subIdx !== -1) {
+          const velMap = new Map();
+          ((state.raw?.invSkuLevel?.rows) || []).forEach((sr) => {
+            velMap.set(String(sr[0]), {
+              s7d: Number(sr[6] || 0),
+              s30d: Number(sr[7] || 0),
+              s90d: Number(sr[8] || 0),
+              s180d: Number(sr[9] || 0),
+              stockDays: Number(sr[11] || 0),
+            });
+          });
+
+          const todayIso = new Date().toISOString().slice(0, 10);
+          const freshItems = [];
+          let addedNewCount = 0;
+
+          mp.rows.forEach((r) => {
+            if (r[MP_C.SUBCAT] !== subIdx) return;
+            const invQty = Math.round(Number(r[MP_C.INV_QTY] || 0));
+            if (invQty <= 0) return;
+
+            const sku = String(r[MP_C.SKU]).trim();
+            const name = String(r[MP_C.NAME] || "").trim();
+            const brand = (lk.brands || [])[r[MP_C.BRAND]] || "Khác";
+            const subcat3 = (lk.subcat3s || [])[r[MP_C.SUBCAT3]] || "";
+            const status = (lk.purchaseStatuses || [])[r[MP_C.STATUS]] || "Normal";
+            const range = (lk.ranges || [])[r[MP_C.RANGE]] || "";
+
+            const wcogs = Math.round(Number(r[MP_C.WCOGS] || 0));
+            const lastPur = Math.round(Number(r[MP_C.LAST_PUR] || 0));
+            const latestQuote = Math.round(Number(r[MP_C.LATEST_QUOTE] || 0));
+            const costPrice = wcogs > 0 ? wcogs : (lastPur > 0 ? lastPur : latestQuote);
+
+            let listedPrice = Math.round(Number(r[MP_C.LISTED_PRICE] || 0));
+            const srPromo = Math.round(Number(r[MP_C.SR_PROMO] || 0));
+            let sellingPrice = srPromo > 0 ? srPromo : listedPrice;
+            let priceSource = srPromo > 0 ? "Giá KM (Master)" : "Giá niêm yết";
+
+            const pArr = pbs[sku];
+            if (Array.isArray(pArr) && pArr.length >= 2) {
+              const curN = Math.round(Number(pArr[0] || 0));
+              const newN = Math.round(Number(pArr[1] || 0));
+              const actD = String(pArr[2] || "");
+              const c17 = Math.round(Number(pArr[3] || 0));
+              const c18 = Math.round(Number(pArr[4] || 0));
+              const normEff = (newN > 0 && actD && actD <= todayIso) ? newN : (curN || newN);
+              if (normEff > listedPrice) listedPrice = normEff;
+              if (c18 > 0) { sellingPrice = c18; priceSource = "Giá KM mới (QL Giá)"; }
+              else if (c17 > 0) { sellingPrice = c17; priceSource = "Giá KM (QL Giá)"; }
+              else if (srPromo > 0) { sellingPrice = srPromo; priceSource = "Giá KM (Master)"; }
+              else if (normEff > 0) { sellingPrice = normEff; priceSource = "Giá bán lẻ (QL Giá)"; }
+            }
+
+            const gpVnd = (sellingPrice > 0 && costPrice > 0) ? (sellingPrice - costPrice) : 0;
+            const gmPct = (sellingPrice > 0 && costPrice > 0) ? Number(((gpVnd / sellingPrice) * 100).toFixed(1)) : 0;
+            const markupPct = (costPrice > 0 && sellingPrice > 0) ? Number(((gpVnd / costPrice) * 100).toFixed(1)) : 0;
+
+            const vel = velMap.get(sku) || {};
+            const prev = existingMap.get(sku);
+            if (!prev) addedNewCount++;
+
+            const parsedSpecs = prev || parseSpecsFromTextClient(name, "", brand, Number(r[MP_C.WARRANTY_MO] || 18));
+
+            freshItems.push({
+              ...(prev || {}),
+              ...parsedSpecs,
+              sku,
+              name,
+              brand,
+              subcat: "NH11-01-04-Phụ kiện kết nối",
+              subcat3,
+              status,
+              range,
+              pvUrl: prev?.pvUrl || `https://phongvu.vn/--s${sku}`,
+              invQty,
+              invVal: Math.round(Number(r[MP_C.INV_VAL] || 0)),
+              s7d: vel.s7d ?? prev?.s7d ?? 0,
+              s30d: vel.s30d ?? Math.round(Number(r[MP_C.SALES_30D] || 0)),
+              s90d: vel.s90d ?? prev?.s90d ?? 0,
+              s180d: vel.s180d ?? prev?.s180d ?? 0,
+              stockDays: vel.stockDays ?? prev?.stockDays ?? 0,
+              costPrice,
+              wcogs,
+              lastPurPrice: lastPur,
+              latestQuote,
+              sellingPrice,
+              listedPrice: listedPrice || sellingPrice,
+              priceSource,
+              gpVnd,
+              gmPct,
+              markupPct,
+            });
+          });
+
+          freshItems.sort((a, b) => (b.invQty - a.invQty) || (b.s30d - a.s30d));
+          const groups = Array.from(new Set(freshItems.map((x) => x.productGroup))).filter(Boolean);
+          const brands = Array.from(new Set(freshItems.map((x) => x.brand))).filter(Boolean);
+
+          const newPayload = {
+            meta: {
+              subcat: "NH11-01-04-Phụ kiện kết nối",
+              updatedAt: new Date().toISOString().replace("T", " ").slice(0, 19),
+              totalInStockSkus: freshItems.length,
+              totalInvQty: freshItems.reduce((s, x) => s + (x.invQty || 0), 0),
+              totalInvVal: freshItems.reduce((s, x) => s + (x.invVal || 0), 0),
+              totalSales30d: freshItems.reduce((s, x) => s + (x.s30d || 0), 0),
+              productGroups: groups,
+              brands,
+            },
+            items: freshItems,
+          };
+
+          state.pkknSpecs.data = newPayload;
+          state.pkknSpecs.loaded = true;
+          await idbSetKey(PKKN_IDB_KEY, newPayload);
+          if (isHttp) {
+            fetchWithTimeout("/api/report-data?type=pkkn-specs", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(newPayload),
+            }, 6000).catch(() => null);
+          }
+          populatePkknFilters();
+          renderPkknSpecsView();
+          showToast(
+            addedNewCount > 0
+              ? `Đã phát hiện & cập nhật +${addedNewCount} SKU có tồn kho mới vào Bảng Thông Số (${freshItems.length} SKU)!`
+              : `Đã kiểm tra & đồng bộ tồn kho / giá mới nhất cho ${freshItems.length} SKU Phụ kiện kết nối!`
+          );
+          return;
+        }
+      }
+      showToast("Đã làm mới dữ liệu Bảng Thông Số Phụ kiện kết nối.");
+    } finally {
+      if (btn) {
+        btn.disabled = false;
+        btn.classList.remove("is-syncing");
+      }
+      if (txt) txt.textContent = "🔄 Refresh (Quét mã có tồn kho mới)";
+    }
+  }
+
+  function populatePkknFilters() {
+    const items = state.pkknSpecs.data?.items || [];
+    const fillSelect = (id, placeholder, values, curVal) => {
+      const el = document.getElementById(id);
+      if (!el) return;
+      el.innerHTML = `<option value="">${esc(placeholder)} (${values.length})</option>`;
+      values.forEach((v) => el.add(new Option(v, v)));
+      el.value = values.includes(curVal) ? curVal : "";
+    };
+
+    const groups = Array.from(new Set(items.map((x) => x.productGroup).filter(Boolean))).sort();
+    const brands = Array.from(new Set(items.map((x) => x.brand).filter(Boolean))).sort();
+    const inPorts = Array.from(new Set(items.map((x) => x.inputPort).filter((v) => v && v !== "—"))).sort();
+    const resList = Array.from(new Set(items.map((x) => x.resolution).filter((v) => v && v !== "—"))).sort();
+
+    fillSelect("pkknFilterGroup", "Tất cả Nhóm SP", groups, state.pkknSpecs.group);
+    fillSelect("pkknFilterBrand", "Tất cả Thương hiệu", brands, state.pkknSpecs.brand);
+    fillSelect("pkknFilterInputPort", "Tất cả Cổng Đầu vào", inPorts, state.pkknSpecs.inputPort);
+    fillSelect("pkknFilterResolution", "Tất cả Độ phân giải", resList, state.pkknSpecs.resolution);
+  }
+
+  function parseVndNumberInput(str) {
+    const digits = String(str || "").replace(/[^\d]/g, "");
+    return digits ? Number(digits) : 0;
+  }
+
+  function formatVndInputOnBlur(inp) {
+    if (!inp) return;
+    const val = parseVndNumberInput(inp.value);
+    inp.value = val > 0 ? val.toLocaleString("vi-VN") : "";
+  }
+
+  function computeSimilarityScore(newSpec, newCost, newSell, item) {
+    let score = 0;
+    const reasons = [];
+
+    // 1. Same Product Group (+42 pts)
+    if (newSpec.productGroup === item.productGroup) {
+      score += 42;
+      reasons.push(`Cùng nhóm ${item.productGroup}`);
+    } else if (
+      (newSpec.productGroup.includes("HDMI") && item.productGroup.includes("HDMI")) ||
+      (newSpec.productGroup.includes("DisplayPort") && item.productGroup.includes("DisplayPort")) ||
+      (newSpec.productGroup.includes("Hub") && item.productGroup.includes("Hub"))
+    ) {
+      score += 22;
+    }
+
+    // 2. Same Input Port (+18 pts)
+    const normIn = (s) => String(s || "").toLowerCase().replace(/\s+/g, "");
+    if (normIn(newSpec.inputPort) && normIn(newSpec.inputPort) === normIn(item.inputPort)) {
+      score += 18;
+      reasons.push(`Cùng đầu vào ${item.inputPort}`);
+    } else if (normIn(newSpec.inputPort).includes("type-c") && normIn(item.inputPort).includes("type-c")) {
+      score += 15;
+    }
+
+    // 3. Output Ports overlap (+16 pts)
+    const newOuts = String(newSpec.outputPorts || "").toLowerCase().split(/[,+]/).map((s) => s.trim()).filter(Boolean);
+    const itemOutsStr = String(item.outputPorts || "").toLowerCase();
+    let hitOuts = 0;
+    newOuts.forEach((o) => {
+      const key = o.replace(/^\d+×/, "").trim().split(" ")[0];
+      if (key && itemOutsStr.includes(key)) hitOuts++;
+    });
+    if (newOuts.length > 0 && hitOuts > 0) {
+      score += Math.min(16, Math.round((hitOuts / newOuts.length) * 16));
+    }
+
+    // 4. Port Count similarity for Hubs (+10 pts)
+    if (newSpec.portCount > 1 && item.portCount > 1) {
+      const diffPorts = Math.abs(newSpec.portCount - item.portCount);
+      if (diffPorts === 0) {
+        score += 10;
+        reasons.push(`Cùng ${item.portCount} cổng (${item.portCount}-in-1)`);
+      } else if (diffPorts === 1) {
+        score += 6;
+      }
+    }
+
+    // 5. Resolution / Standard match (+8 pts)
+    if (newSpec.resolution !== "—" && item.resolution !== "—") {
+      const nr = newSpec.resolution.slice(0, 2);
+      if (item.resolution.includes(nr)) {
+        score += 8;
+        reasons.push(`Cùng chuẩn ${nr}`);
+      }
+    }
+
+    // 6. Cable Length match (+6 pts)
+    if (newSpec.cableLength !== "—" && newSpec.cableLength === item.cableLength) {
+      score += 6;
+      reasons.push(`Cùng độ dài ${item.cableLength}`);
+    }
+
+    return { score, reasons };
+  }
+
+  function evaluateSupplierNewProduct() {
+    const nameInp = document.getElementById("pkknNewProdName");
+    const specsInp = document.getElementById("pkknNewProdSpecs");
+    const costInp = document.getElementById("pkknNewProdCost");
+    const sellInp = document.getElementById("pkknNewProdSell");
+    const box = document.getElementById("pkknEvalResultBox");
+    if (!box) return;
+
+    const newName = (nameInp?.value || "").trim();
+    const newSpecsText = (specsInp?.value || "").trim();
+    const newCost = parseVndNumberInput(costInp?.value);
+    const newSell = parseVndNumberInput(sellInp?.value);
+
+    if (!newName && !newSpecsText) {
+      showToast("Vui lòng nhập Tên Sản phẩm mới và Thông số kỹ thuật NCC để đánh giá.", true);
+      nameInp?.focus();
+      return;
+    }
+
+    const items = state.pkknSpecs.data?.items || [];
+    if (!items.length) {
+      showToast("Đang tải dữ liệu bảng thông số, vui lòng thử lại sau giây lát.", true);
+      return;
+    }
+
+    const parsedNew = parseSpecsFromTextClient(newName, newSpecsText);
+    const newGp = (newSell > 0 && newCost > 0) ? (newSell - newCost) : 0;
+    const newGmPct = (newSell > 0 && newCost > 0) ? ((newGp / newSell) * 100) : 0;
+    const newMarkupPct = (newCost > 0 && newSell > 0) ? ((newGp / newCost) * 100) : 0;
+
+    // Score all 116 in-stock SKUs to find the closest comparable peers
+    const scored = items.map((it) => {
+      const sim = computeSimilarityScore(parsedNew, newCost, newSell, it);
+      return { item: it, score: sim.score, reasons: sim.reasons };
+    }).sort((a, b) => (b.score - a.score) || (b.item.s30d - a.item.s30d));
+
+    const comparablePeers = scored.filter((x) => x.score >= 38).slice(0, 6);
+    const activePeers = comparablePeers.length ? comparablePeers : scored.slice(0, 5);
+
+    // Highlight matched SKUs in the main table below
+    state.pkknSpecs.matchedSkus = new Set(activePeers.map((x) => x.item.sku));
+
+    // Calculate Peer Benchmarks (Weighted by 30D sales or simple average of valid peers)
+    const pricedPeers = activePeers.map((x) => x.item).filter((it) => it.costPrice > 0 && it.sellingPrice > 0);
+    const avgPeerCost = pricedPeers.length
+      ? Math.round(pricedPeers.reduce((s, it) => s + it.costPrice, 0) / pricedPeers.length)
+      : 0;
+    const avgPeerSell = pricedPeers.length
+      ? Math.round(pricedPeers.reduce((s, it) => s + it.sellingPrice, 0) / pricedPeers.length)
+      : 0;
+    const avgPeerGm = pricedPeers.length
+      ? Number((pricedPeers.reduce((s, it) => s + it.gmPct, 0) / pricedPeers.length).toFixed(1))
+      : 32.0;
+    const totalPeerInv = activePeers.reduce((s, x) => s + (x.item.invQty || 0), 0);
+    const totalPeerS30d = activePeers.reduce((s, x) => s + (x.item.s30d || 0), 0);
+    const peerStockDays = totalPeerS30d > 0 ? Math.round((totalPeerInv / totalPeerS30d) * 30) : 999;
+
+    const costDiffPct = (avgPeerCost > 0 && newCost > 0) ? (((newCost - avgPeerCost) / avgPeerCost) * 100) : 0;
+    const sellDiffPct = (avgPeerSell > 0 && newSell > 0) ? (((newSell - avgPeerSell) / avgPeerSell) * 100) : 0;
+    const gmDiffPt = (newSell > 0 && newCost > 0) ? (newGmPct - avgPeerGm) : 0;
+
+    // Decision scoring (0 - 100) & Verdict classification
+    let fitScore = 70;
+    const evalNotes = [];
+
+    if (newCost > 0 && newSell > 0) {
+      // 1. Margin Evaluation
+      if (newGmPct >= avgPeerGm + 2 && newGmPct >= 28) {
+        fitScore += 14;
+        evalNotes.push(`✅ <strong>Biên lợi nhuận gộp rất tốt (${newGmPct.toFixed(1)}% | Markup +${newMarkupPct.toFixed(0)}%):</strong> Cao hơn mức trung bình phân khúc tại Phong Vũ (${avgPeerGm.toFixed(1)}%) là <strong>+${gmDiffPt.toFixed(1)} điểm %</strong> (Lãi gộp ${fmtVndFull(newGp)}/sp).`);
+      } else if (newGmPct >= 22) {
+        fitScore += 4;
+        evalNotes.push(`⚖️ <strong>Biên lợi nhuận đạt chuẩn (${newGmPct.toFixed(1)}%):</strong> Tương đương mặt bằng nhóm ${parsedNew.productGroup} hiện tại (${avgPeerGm.toFixed(1)}%).`);
+      } else {
+        fitScore -= 22;
+        evalNotes.push(`⚠️ <strong>Biên lợi nhuận thấp (${newGmPct.toFixed(1)}%):</strong> Thấp hơn trung bình nhóm đang kinh doanh (${avgPeerGm.toFixed(1)}%). Cần đàm phán giảm Giá nhập NCC xuống khoảng <strong>${fmtVndFull(Math.round(newSell * (1 - avgPeerGm / 100)))}</strong> để đạt chuẩn GM%.`);
+      }
+
+      // 2. Cost Price Competitiveness vs Existing SKUs
+      if (avgPeerCost > 0) {
+        if (costDiffPct <= -5) {
+          fitScore += 10;
+          evalNotes.push(`✅ <strong>Giá nhập NCC cạnh tranh (${fmtVndFull(newCost)}):</strong> Thấp hơn ${Math.abs(costDiffPct).toFixed(1)}% so với giá vốn TB các mã tương đương đang tồn kho (${fmtVndFull(avgPeerCost)}).`);
+        } else if (costDiffPct <= 10) {
+          evalNotes.push(`⚖️ <strong>Giá nhập NCC ở mức hợp lý (${fmtVndFull(newCost)}):</strong> Chênh lệch ${costDiffPct >= 0 ? "+" : ""}${costDiffPct.toFixed(1)}% so với giá vốn TB các SKU tương đồng (${fmtVndFull(avgPeerCost)}).`);
+        } else {
+          fitScore -= 14;
+          evalNotes.push(`⚠️ <strong>Giá nhập NCC cao hơn mặt bằng (+${costDiffPct.toFixed(1)}%):</strong> Giá chào ${fmtVndFull(newCost)} cao hơn đáng kể so với giá vốn TB nhóm tương đương (${fmtVndFull(avgPeerCost)}).`);
+        }
+      }
+
+      // 3. Selling Price Competitiveness
+      if (avgPeerSell > 0) {
+        if (sellDiffPct <= 5) {
+          fitScore += 6;
+          evalNotes.push(`✅ <strong>Giá bán dự kiến dễ ra hàng (${fmtVndFull(newSell)}):</strong> ${sellDiffPct <= 0 ? `Rẻ hơn ${Math.abs(sellDiffPct).toFixed(1)}%` : "Tương đương"} so với giá bán lẻ TB các mã cùng cấu hình (${fmtVndFull(avgPeerSell)}).`);
+        } else if (sellDiffPct > 15) {
+          fitScore -= 10;
+          evalNotes.push(`⚠️ <strong>Giá bán dự kiến khá cao (${fmtVndFull(newSell)}):</strong> Cao hơn +${sellDiffPct.toFixed(1)}% so với các SKU cùng phân khúc (${fmtVndFull(avgPeerSell)}), có thể khó cạnh tranh nếu không có tính năng vượt trội.`);
+        }
+      }
+    } else {
+      evalNotes.push(`💡 Bạn có thể nhập thêm <strong>Giá nhập NCC</strong> và <strong>Giá bán dự kiến</strong> để hệ thống chấm điểm Biên lợi nhuận (GM%) & đề xuất mức giá đàm phán tối ưu.`);
+    }
+
+    // 4. Assortment & Inventory Health Assessment
+    if (totalPeerS30d >= 60 && peerStockDays <= 75) {
+      fitScore += 8;
+      evalNotes.push(`🔥 <strong>Phân khúc có sức bán rất tốt:</strong> ${activePeers.length} mã tương đương đang bán <strong>${fmtInt(totalPeerS30d)} sp / 30 ngày</strong> (Tồn ${fmtInt(totalPeerInv)} sp ~ ${peerStockDays} ngày bán). Phù hợp nhập bổ sung nguồn hàng.`);
+    } else if (peerStockDays > 150 && totalPeerInv > 80) {
+      fitScore -= 12;
+      evalNotes.push(`📦 <strong>Lưu ý tồn kho phân khúc:</strong> Các mã tương đương đang tồn <strong>${fmtInt(totalPeerInv)} sp</strong> trong khi sức bán 30D là ${fmtInt(totalPeerS30d)} sp (~${peerStockDays} ngày tồn). Chỉ nên nhập số lượng test nhỏ (MOQ thấp) hoặc yêu cầu NCC hỗ trợ công nợ/đổi trả.`);
+    } else {
+      evalNotes.push(`📊 <strong>Sức mua phân khúc ổn định:</strong> Nhóm ${activePeers.length} SKU tương đương đang tồn <strong>${fmtInt(totalPeerInv)} sp</strong>, bán <strong>${fmtInt(totalPeerS30d)} sp / 30 ngày</strong>.`);
+    }
+
+    fitScore = Math.max(15, Math.min(98, Math.round(fitScore)));
+
+    let verdictCls = "verdict-good";
+    let verdictBadge = "✅ ĐÁNH GIÁ: PHÙ HỢP NHẬP KINH DOANH";
+    let verdictAction = "Biên lợi nhuận và cấu hình kỹ thuật cạnh tranh tốt so với danh mục Phụ kiện kết nối hiện hữu.";
+    if (fitScore < 55 || (newSell > 0 && newCost > 0 && newGmPct < 18)) {
+      verdictCls = "verdict-bad";
+      verdictBadge = "🚨 ĐÁNH GIÁ: CHƯA PHÙ HỢP — CẦN ĐÀM PHÁN LẠI GIÁ NHẬP";
+      verdictAction = "Biên lợi nhuận thấp hoặc giá nhập NCC cao hơn các mã tương đương đang có sẵn tồn kho tại Phong Vũ.";
+    } else if (fitScore < 72) {
+      verdictCls = "verdict-warn";
+      verdictBadge = "⚖️ ĐÁNH GIÁ: CÂN NHẮC / ĐÀM PHÁN THÊM VỚI NCC";
+      verdictAction = "Thông số phù hợp nhưng nên thương lượng giảm thêm 5%–10% giá nhập hoặc nhập test số lượng nhỏ.";
+    }
+
+    box.classList.remove("hidden");
+    box.innerHTML = `
+      <div class="pkkn-verdict-banner ${verdictCls}">
+        <div class="pkkn-verdict-main">
+          <div class="pkkn-verdict-title">
+            <span>${verdictBadge}</span>
+            <span class="badge-blue mono">${esc(parsedNew.productGroup)}</span>
+          </div>
+          <div class="pkkn-verdict-sub">
+            <strong>${esc(newName || "Sản phẩm NCC chào hàng")}</strong> — ${esc(verdictAction)}
+          </div>
+        </div>
+        <div class="pkkn-verdict-score-box">
+          <span style="font-size:10px;color:var(--text-muted);font-weight:700">ĐIỂM PHÙ HỢP</span>
+          <span class="pkkn-score-num">${fitScore}/100</span>
+        </div>
+      </div>
+
+      <div class="pkkn-eval-metrics-grid">
+        <div class="pkkn-eval-card">
+          <span class="inv-kpi-lbl">Thông số kỹ thuật bóc tách từ NCC</span>
+          <div style="font-size:12px;font-weight:700;color:var(--text-main)">${esc(parsedNew.inputPort)} → ${esc(parsedNew.outputPorts)}</div>
+          <div class="inv-kpi-sub mono">${esc(parsedNew.resolution !== "—" ? parsedNew.resolution : parsedNew.speedAndPower)} • Dài: ${esc(parsedNew.cableLength)}</div>
+        </div>
+        <div class="pkkn-eval-card">
+          <span class="inv-kpi-lbl">Giá nhập NCC vs TB Đang Kinh Doanh</span>
+          <div class="inv-kpi-val mono" style="font-size:1.15rem">${newCost > 0 ? esc(fmtVndFull(newCost)) : "Chưa nhập"}</div>
+          <div class="inv-kpi-sub mono ${costDiffPct <= 0 ? "pos" : "neg"}">
+            TB PV: ${avgPeerCost > 0 ? esc(fmtVndFull(avgPeerCost)) : "—"} ${newCost > 0 && avgPeerCost > 0 ? `(${costDiffPct >= 0 ? "+" : ""}${costDiffPct.toFixed(1)}%)` : ""}
+          </div>
+        </div>
+        <div class="pkkn-eval-card">
+          <span class="inv-kpi-lbl">Giá bán dự kiến vs TB Đang Kinh Doanh</span>
+          <div class="inv-kpi-val mono" style="font-size:1.15rem">${newSell > 0 ? esc(fmtVndFull(newSell)) : "Chưa nhập"}</div>
+          <div class="inv-kpi-sub mono ${sellDiffPct <= 5 ? "pos" : "warn"}">
+            TB PV: ${avgPeerSell > 0 ? esc(fmtVndFull(avgPeerSell)) : "—"} ${newSell > 0 && avgPeerSell > 0 ? `(${sellDiffPct >= 0 ? "+" : ""}${sellDiffPct.toFixed(1)}%)` : ""}
+          </div>
+        </div>
+        <div class="pkkn-eval-card">
+          <span class="inv-kpi-lbl">Lãi gộp (GP) &amp; Biên GM% Dự Kiến</span>
+          <div class="inv-kpi-val mono" style="font-size:1.15rem;color:${newGmPct >= avgPeerGm ? "#12D37A" : "#F59E0B"}">
+            ${newSell > 0 && newCost > 0 ? `${newGmPct.toFixed(1)}% (${esc(fmtCompactVnd(newGp))})` : "—"}
+          </div>
+          <div class="inv-kpi-sub mono">
+            Chuẩn phân khúc PV: <strong>${avgPeerGm.toFixed(1)}%</strong> • Markup: ${newMarkupPct > 0 ? `+${newMarkupPct.toFixed(1)}%` : "—"}
+          </div>
+        </div>
+      </div>
+
+      <div>
+        <div style="font-size:12px;font-weight:700;margin-bottom:6px;color:var(--text-main)">📌 Phân tích chi tiết &amp; Khuyến nghị nhập hàng:</div>
+        <ul class="pkkn-eval-reasons">
+          ${evalNotes.map((n) => `<li>${n}</li>`).join("")}
+        </ul>
+      </div>
+
+      <div>
+        <div style="font-size:12px;font-weight:700;margin-bottom:6px;color:var(--text-main)">
+          🔍 Top ${activePeers.length} SKU Phong Vũ đang kinh doanh có thông số gần nhất (Đã tô xanh trong bảng bên dưới):
+        </div>
+        <div class="table-wrap">
+          <table class="dark-table" style="font-size:11.5px">
+            <thead>
+              <tr>
+                <th>Độ khớp</th>
+                <th>SKU &amp; Tên sản phẩm đang KD tại Phong Vũ</th>
+                <th>Thông số kỹ thuật (Đầu vào → Đầu ra • Chuẩn)</th>
+                <th class="num">Giá nhập PV</th>
+                <th class="num">Giá bán PV</th>
+                <th class="num">GM% (Lãi gộp)</th>
+                <th class="num">Tồn / Bán 30D</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${activePeers.map(({ item, score }) => {
+                const cDiff = newCost > 0 && item.costPrice > 0 ? newCost - item.costPrice : 0;
+                const sDiff = newSell > 0 && item.sellingPrice > 0 ? newSell - item.sellingPrice : 0;
+                return `
+                  <tr>
+                    <td class="mono"><span class="inv-badge bad-normal">${score}%</span></td>
+                    <td style="white-space:normal;min-width:220px">
+                      <a href="${esc(item.pvUrl)}" target="_blank" rel="noopener noreferrer" class="pc-tgdd-link">${esc(item.sku)} ↗</a>
+                      <span class="inv-badge other">${esc(item.brand)}</span>
+                      <div style="margin-top:2px;color:var(--text-secondary)">${esc(item.name)}</div>
+                    </td>
+                    <td style="white-space:normal;min-width:210px">
+                      <div><strong style="color:#38BDF8">${esc(item.inputPort)}</strong> → <strong style="color:#6EE7B7">${esc(item.outputPorts)}</strong></div>
+                      <div class="muted" style="font-size:10.5px">${esc(item.resolution !== "—" ? item.resolution : "")} ${esc(item.speedAndPower)} • Dài: ${esc(item.cableLength)}</div>
+                    </td>
+                    <td class="num mono">
+                      <div><strong>${esc(fmtVndFull(item.costPrice))}</strong></div>
+                      ${newCost > 0 && item.costPrice > 0
+                        ? `<div style="font-size:10px" class="${cDiff <= 0 ? "pc-diff-neg" : "pc-diff-pos"}">NCC ${cDiff >= 0 ? "+" : ""}${esc(fmtCompactVnd(cDiff))}</div>`
+                        : ""}
+                    </td>
+                    <td class="num mono">
+                      <div><strong>${esc(fmtVndFull(item.sellingPrice))}</strong></div>
+                      ${newSell > 0 && item.sellingPrice > 0
+                        ? `<div style="font-size:10px" class="${sDiff <= 0 ? "pc-diff-neg" : "pc-diff-pos"}">NCC ${sDiff >= 0 ? "+" : ""}${esc(fmtCompactVnd(sDiff))}</div>`
+                        : ""}
+                    </td>
+                    <td class="num mono">
+                      <strong style="color:${item.gmPct >= 30 ? "#12D37A" : "#38BDF8"}">${item.gmPct.toFixed(1)}%</strong>
+                      <div class="muted" style="font-size:10px">+${esc(fmtCompactVnd(item.gpVnd))}</div>
+                    </td>
+                    <td class="num mono">
+                      <div style="color:#00E5FF"><strong>${fmtInt(item.invQty)}</strong> tồn</div>
+                      <div style="color:#12D37A;font-size:10.5px">${fmtInt(item.s30d)} / 30D</div>
+                    </td>
+                  </tr>`;
+              }).join("")}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    `;
+
+    renderPkknSpecsView();
+  }
+
+  function renderPkknSpecsView() {
+    const pk = state.pkknSpecs;
+    if (!pk.loaded && !pk.loading) {
+      ensurePkknSpecsLoaded();
+      return;
+    }
+    const data = pk.data;
+    if (!data || !Array.isArray(data.items)) return;
+
+    const allItems = data.items;
+    const q = (pk.search || "").trim().toLowerCase();
+
+    const filtered = allItems.filter((it) => {
+      if (pk.group && it.productGroup !== pk.group) return false;
+      if (pk.brand && it.brand !== pk.brand) return false;
+      if (pk.inputPort && it.inputPort !== pk.inputPort) return false;
+      if (pk.resolution && it.resolution !== pk.resolution) return false;
+      if (q) {
+        const hay = `${it.sku} ${it.name} ${it.brand} ${it.model} ${it.productGroup} ${it.inputPort} ${it.outputPorts} ${it.resolution} ${it.speedAndPower} ${it.cableLength} ${it.deepSpecs}`.toLowerCase();
+        if (!hay.includes(q)) return false;
+      }
+      return true;
+    });
+
+    const dir = pk.sortDir === "asc" ? 1 : -1;
+    filtered.sort((a, b) => {
+      // If supplier comparison is active, optionally float matched SKUs or sort normally
+      const col = pk.sortCol;
+      if (col === "name" || col === "brand" || col === "productGroup" || col === "model") {
+        return dir * String(a[col] || "").localeCompare(String(b[col] || ""));
+      }
+      return dir * ((Number(a[col]) || 0) - (Number(b[col]) || 0));
+    });
+
+    // Update 4 KPI Cards
+    const totInvQty = filtered.reduce((s, x) => s + (x.invQty || 0), 0);
+    const totInvVal = filtered.reduce((s, x) => s + (x.invVal || 0), 0);
+    const totS30d = filtered.reduce((s, x) => s + (x.s30d || 0), 0);
+    const totS90d = filtered.reduce((s, x) => s + (x.s90d || 0), 0);
+    const priced = filtered.filter((x) => x.costPrice > 0 && x.sellingPrice > 0);
+    const avgCost = priced.length ? Math.round(priced.reduce((s, x) => s + x.costPrice, 0) / priced.length) : 0;
+    const avgSell = priced.length ? Math.round(priced.reduce((s, x) => s + x.sellingPrice, 0) / priced.length) : 0;
+    const avgGm = priced.length ? (priced.reduce((s, x) => s + x.gmPct, 0) / priced.length) : 0;
+    const avgMarkup = priced.length ? (priced.reduce((s, x) => s + x.markupPct, 0) / priced.length) : 0;
+    const grpSet = new Set(filtered.map((x) => x.productGroup));
+    const brSet = new Set(filtered.map((x) => x.brand));
+    const avgStockDays = totS30d > 0 ? Math.round((totInvQty / totS30d) * 30) : 0;
+
+    const setTxt = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
+    setTxt("pkknKpiSkuCount", `${fmtInt(filtered.length)} / ${fmtInt(allItems.length)} SKU`);
+    setTxt("pkknKpiSkuSub", `${grpSet.size} nhóm kỹ thuật • ${brSet.size} thương hiệu`);
+    setTxt("pkknKpiInvQty", `${fmtInt(totInvQty)} sản phẩm`);
+    setTxt("pkknKpiInvVal", `Giá trị tồn: ${fmtCompactVnd(totInvVal)} (${fmtVndFull(totInvVal)})`);
+    setTxt("pkknKpiAvgGm", `${avgGm.toFixed(1)}% (Markup +${avgMarkup.toFixed(0)}%)`);
+    setTxt("pkknKpiAvgGmSub", `Giá nhập TB: ${fmtCompactVnd(avgCost)} → Giá bán TB: ${fmtCompactVnd(avgSell)}`);
+    setTxt("pkknKpiSales30d", `${fmtInt(totS30d)} sp / 30D`);
+    setTxt("pkknKpiSales90d", `90D: ${fmtInt(totS90d)} sp • Stock Days TB: ~${fmtInt(avgStockDays)} ngày`);
+    setTxt("pkknTableBadge", `${fmtInt(filtered.length)} SKU CÓ TỒN`);
+
+    // Active Chips & Insight
+    const chipsEl = document.getElementById("pkknActiveChips");
+    if (chipsEl) {
+      const chips = ["Subcat: NH11-01-04-Phụ kiện kết nối", "Trạng thái: Có tồn kho (>0)"];
+      if (pk.group) chips.push(`Nhóm: ${pk.group}`);
+      if (pk.brand) chips.push(`Hãng: ${pk.brand}`);
+      if (pk.inputPort) chips.push(`Đầu vào: ${pk.inputPort}`);
+      if (pk.resolution) chips.push(`Độ phân giải: ${pk.resolution}`);
+      if (pk.search) chips.push(`Tìm: "${pk.search}"`);
+      chipsEl.innerHTML = chips.map((c) => `<span class="chip">${esc(c)}</span>`).join("");
+    }
+    const insightEl = document.getElementById("pkknInsightText");
+    if (insightEl) {
+      insightEl.innerHTML = `Cập nhật Deepsearch: <strong class="mono">${esc(data.meta?.updatedAt || "—")}</strong> • Giá bán ưu tiên <strong>Giá KM mới (Bao_cao_quan_ly_gia)</strong> • Giá nhập lấy theo <strong>WCOGS / Giá mua gần nhất</strong>`;
+    }
+
+    // Render Table Header
+    const thead = document.getElementById("pkknTableHead");
+    const tbody = document.getElementById("pkknTableBody");
+    const cols = [
+      { key: "name", label: "SKU • Thương hiệu • Tên sản phẩm & Model", cls: "pkkn-col-prod" },
+      { key: "productGroup", label: "Nhóm SP & Kết nối (Đầu vào → Đầu ra)", cls: "pkkn-col-ports" },
+      { key: "resolution", label: "Thông số kỹ thuật (Chuẩn • Tốc độ/PD • Dài)", cls: "pkkn-col-tech" },
+      { key: "deepSpecs", label: "Chi tiết Deepsearch & Chất liệu / Bảo hành", cls: "pkkn-col-deep" },
+      { key: "costPrice", label: "Giá Nhập (Vốn)", cls: "num" },
+      { key: "sellingPrice", label: "Giá Bán PV", cls: "num" },
+      { key: "gmPct", label: "Lãi Gộp & GM%", cls: "num" },
+      { key: "invQty", label: "Tồn Kho", cls: "num" },
+      { key: "s30d", label: "Bán 30D / 90D", cls: "num" },
+    ];
+
+    if (thead) {
+      thead.innerHTML = `<tr>${cols.map((c) => {
+        const arrow = pk.sortCol === c.key ? (pk.sortDir === "asc" ? " ▲" : " ▼") : "";
+        return `<th class="${c.cls} sortable" data-pkkn-sort="${c.key}">${esc(c.label)}${arrow}</th>`;
+      }).join("")}</tr>`;
+
+      thead.querySelectorAll("th[data-pkkn-sort]").forEach((th) => {
+        th.addEventListener("click", () => {
+          const k = th.dataset.pkknSort;
+          if (pk.sortCol === k) pk.sortDir = pk.sortDir === "asc" ? "desc" : "asc";
+          else {
+            pk.sortCol = k;
+            pk.sortDir = (k === "name" || k === "productGroup") ? "asc" : "desc";
+          }
+          renderPkknSpecsView();
+        });
+      });
+    }
+
+    if (tbody) {
+      if (!filtered.length) {
+        tbody.innerHTML = `<tr><td colspan="${cols.length}" class="muted">Không có SKU Phụ kiện kết nối nào khớp bộ lọc.</td></tr>`;
+      } else {
+        tbody.innerHTML = filtered.map((it) => {
+          const isMatched = pk.matchedSkus && pk.matchedSkus.has(it.sku);
+          const hasPromo = it.listedPrice > it.sellingPrice && it.sellingPrice > 0;
+          const discPct = hasPromo ? Math.round(((it.listedPrice - it.sellingPrice) / it.listedPrice) * 100) : 0;
+          const gmColor = it.gmPct >= 35 ? "#12D37A" : it.gmPct >= 22 ? "#38BDF8" : "#F59E0B";
+
+          return `
+            <tr class="${isMatched ? "pkkn-row-matched-highlight" : ""}">
+              <td class="pkkn-col-prod">
+                <div class="pc-pv-head">
+                  <button type="button" class="link-sku-btn" data-pkkn-jump-sku="${esc(it.sku)}" title="Mở Hồ sơ Tra cứu 360° SKU ${esc(it.sku)}">${esc(it.sku)}</button>
+                  <span class="inv-badge other">${esc(it.brand)}</span>
+                  ${it.model && it.model !== "Tiêu chuẩn" ? `<span class="inv-badge listing-active mono">Model: ${esc(it.model)}</span>` : ""}
+                  <span class="inv-badge ${statusBadgeClass(it.status)}">${esc(it.status)}</span>
+                </div>
+                <div class="pc-pv-name-wrap">
+                  <a href="${esc(it.pvUrl)}" target="_blank" rel="noopener noreferrer" class="pc-comp-price-link" title="Mở trang sản phẩm trên PhongVu.vn">
+                    <strong>${esc(it.name)}</strong> ↗
+                  </a>
+                </div>
+                <button type="button" class="btn-pkkn-pick" data-pkkn-compare-sku="${esc(it.sku)}" title="Đưa thông số &amp; giá của SKU này lên khung So sánh NCC phía trên để làm mốc tham chiếu">
+                  ⚖️ Nạp làm mẫu so sánh NCC
+                </button>
+              </td>
+              <td class="pkkn-col-ports">
+                <div style="margin-bottom:4px">
+                  <span class="inv-badge normal">${esc(it.productGroup)}</span>
+                  ${it.portCount > 1 ? `<span class="inv-badge serial-yes mono">${it.portCount} cổng</span>` : ""}
+                </div>
+                <div class="pkkn-port-flow">
+                  <span class="pkkn-port-in">▸ In: ${esc(it.inputPort)}</span>
+                  <span class="pkkn-port-out">▸ Out: ${esc(it.outputPorts)}</span>
+                </div>
+              </td>
+              <td class="pkkn-col-tech">
+                ${it.resolution && it.resolution !== "—" ? `<div><strong>Độ phân giải:</strong> <span class="mono" style="color:#38BDF8">${esc(it.resolution)}</span></div>` : ""}
+                <div><strong>Tốc độ / PD:</strong> <span>${esc(it.speedAndPower)}</span></div>
+                <div><strong>Chiều dài:</strong> <span class="mono">${esc(it.cableLength)}</span></div>
+              </td>
+              <td class="pkkn-col-deep">
+                <div>${esc(it.deepSpecs)}</div>
+                <div class="muted" style="margin-top:4px;font-size:10.5px">
+                  🛠️ ${esc(it.material)} • 🛡️ BH: <strong>${esc(it.warranty)}</strong>
+                </div>
+              </td>
+              <td class="num mono">
+                <div><strong style="color:#FBBF24">${it.costPrice > 0 ? esc(fmtVndFull(it.costPrice)) : "—"}</strong></div>
+                ${it.lastPurPrice > 0 && it.lastPurPrice !== it.costPrice
+                  ? `<div class="muted" style="font-size:10px">Mua cuối: ${esc(fmtVndFull(it.lastPurPrice))}</div>`
+                  : `<div class="muted" style="font-size:10px">WCOGS (Vốn)</div>`}
+              </td>
+              <td class="num mono">
+                <div>
+                  <a href="${esc(it.pvUrl)}" target="_blank" rel="noopener noreferrer" class="pc-comp-price-link">
+                    <strong>${it.sellingPrice > 0 ? esc(fmtVndFull(it.sellingPrice)) : "—"}</strong> ↗
+                  </a>
+                </div>
+                ${hasPromo ? `<div class="pc-old-price">${esc(fmtVndFull(it.listedPrice))} <span class="pc-disc-tag">-${discPct}%</span></div>` : ""}
+                <div class="muted" style="font-size:9.5px">${esc(it.priceSource)}</div>
+              </td>
+              <td class="num mono">
+                <div style="color:${gmColor}"><strong>${it.gmPct.toFixed(1)}%</strong></div>
+                <div style="font-size:10.5px;color:var(--text-secondary)">+${esc(fmtCompactVnd(it.gpVnd))}</div>
+                <div class="muted" style="font-size:9.5px">Markup +${it.markupPct.toFixed(0)}%</div>
+              </td>
+              <td class="num mono">
+                <div style="color:#00E5FF"><strong>${fmtInt(it.invQty)}</strong> sp</div>
+                <div class="muted" style="font-size:10px">${esc(fmtCompactVnd(it.invVal))}</div>
+              </td>
+              <td class="num mono">
+                <div style="color:#12D37A"><strong>${fmtInt(it.s30d)}</strong> / 30D</div>
+                <div class="muted" style="font-size:10px">${fmtInt(it.s90d)} / 90D</div>
+              </td>
+            </tr>`;
+        }).join("");
+
+        tbody.querySelectorAll("[data-pkkn-jump-sku]").forEach((btn) => {
+          btn.addEventListener("click", async () => {
+            const sku = btn.dataset.pkknJumpSku;
+            if (!sku) return;
+            switchView("lookup");
+            if (!state.shardsLoaded) await ensureLookupShardsLoaded();
+            const inp = document.getElementById("lookupSearchInput");
+            if (inp) inp.value = sku;
+            renderLookupProfile(sku, "", false);
+          });
+        });
+
+        tbody.querySelectorAll("[data-pkkn-compare-sku]").forEach((btn) => {
+          btn.addEventListener("click", () => {
+            const sku = btn.dataset.pkknCompareSku;
+            const item = allItems.find((x) => x.sku === sku);
+            if (!item) return;
+            const nEl = document.getElementById("pkknNewProdName");
+            const sEl = document.getElementById("pkknNewProdSpecs");
+            const cEl = document.getElementById("pkknNewProdCost");
+            const pEl = document.getElementById("pkknNewProdSell");
+            if (nEl) nEl.value = `[NCC Chào] Tương đương ${item.name}`;
+            if (sEl) sEl.value = `${item.productGroup} | Đầu vào: ${item.inputPort} -> Đầu ra: ${item.outputPorts} | ${item.resolution !== "—" ? item.resolution + " | " : ""}${item.speedAndPower} | Dài: ${item.cableLength}`;
+            if (cEl) cEl.value = item.costPrice > 0 ? item.costPrice.toLocaleString("vi-VN") : "";
+            if (pEl) pEl.value = item.sellingPrice > 0 ? item.sellingPrice.toLocaleString("vi-VN") : "";
+            evaluateSupplierNewProduct();
+            document.getElementById("pkknSupplierEvalPanel")?.scrollIntoView({ behavior: "smooth", block: "start" });
+          });
+        });
+      }
+    }
+
+    pk.lastExport = {
+      headers: [
+        "SKU", "Tên sản phẩm", "Brand", "Model", "Nhóm sản phẩm", "Số cổng", "Đầu vào (Input)",
+        "Đầu ra (Output)", "Độ phân giải", "Tốc độ / Công suất PD", "Chiều dài", "Chất liệu",
+        "Bảo hành", "Thông số Deepsearch", "Giá nhập (WCOGS)", "Giá mua gần nhất", "Giá bán PV",
+        "Giá niêm yết", "Nguồn giá", "Lãi gộp (VND)", "GM (%)", "Markup (%)", "Tồn kho (QTY)",
+        "Giá trị tồn (VND)", "Bán 7D", "Bán 30D", "Bán 90D", "Bán 180D", "Link Phong Vũ",
+      ],
+      rows: filtered.map((it) => [
+        it.sku, it.name, it.brand, it.model, it.productGroup, it.portCount, it.inputPort,
+        it.outputPorts, it.resolution, it.speedAndPower, it.cableLength, it.material,
+        it.warranty, it.deepSpecs, it.costPrice, it.lastPurPrice, it.sellingPrice,
+        it.listedPrice, it.priceSource, it.gpVnd, it.gmPct, it.markupPct, it.invQty,
+        it.invVal, it.s7d, it.s30d, it.s90d, it.s180d, it.pvUrl,
+      ]),
+      filename: `thong_so_phu_kien_ket_noi_${new Date().toISOString().slice(0, 10)}.csv`,
+    };
+  }
+
+  function bindPkknSpecsEvents() {
+    const pk = state.pkknSpecs;
+    document.getElementById("pkknFilterGroup")?.addEventListener("change", (e) => {
+      pk.group = e.target.value;
+      renderPkknSpecsView();
+    });
+    document.getElementById("pkknFilterBrand")?.addEventListener("change", (e) => {
+      pk.brand = e.target.value;
+      renderPkknSpecsView();
+    });
+    document.getElementById("pkknFilterInputPort")?.addEventListener("change", (e) => {
+      pk.inputPort = e.target.value;
+      renderPkknSpecsView();
+    });
+    document.getElementById("pkknFilterResolution")?.addEventListener("change", (e) => {
+      pk.resolution = e.target.value;
+      renderPkknSpecsView();
+    });
+    document.getElementById("pkknSearchInput")?.addEventListener("input", (e) => {
+      pk.search = e.target.value;
+      renderPkknSpecsView();
+    });
+    document.getElementById("pkknResetFilterBtn")?.addEventListener("click", () => {
+      pk.group = "";
+      pk.brand = "";
+      pk.inputPort = "";
+      pk.resolution = "";
+      pk.search = "";
+      pk.matchedSkus.clear();
+      const sInp = document.getElementById("pkknSearchInput");
+      if (sInp) sInp.value = "";
+      populatePkknFilters();
+      renderPkknSpecsView();
+    });
+    document.getElementById("pkknRefreshStockBtn")?.addEventListener("click", () => {
+      refreshPkknInStockSpecs();
+    });
+    document.getElementById("pkknExportCsvBtn")?.addEventListener("click", () => {
+      const { headers, rows, filename } = pk.lastExport;
+      if (rows && rows.length) downloadCsv(headers, rows, filename);
+    });
+
+    // Supplier Evaluator Form Events
+    const costInp = document.getElementById("pkknNewProdCost");
+    const sellInp = document.getElementById("pkknNewProdSell");
+    costInp?.addEventListener("blur", () => formatVndInputOnBlur(costInp));
+    sellInp?.addEventListener("blur", () => formatVndInputOnBlur(sellInp));
+
+    document.getElementById("pkknRunEvalBtn")?.addEventListener("click", () => {
+      evaluateSupplierNewProduct();
+    });
+
+    ["pkknNewProdName", "pkknNewProdSpecs", "pkknNewProdCost", "pkknNewProdSell"].forEach((id) => {
+      document.getElementById(id)?.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") {
+          e.preventDefault();
+          evaluateSupplierNewProduct();
+        }
+      });
+    });
+
+    document.getElementById("pkknFillSampleHubBtn")?.addEventListener("click", () => {
+      document.getElementById("pkknNewProdName").value = "Bộ chia Hub USB-C 6 in 1 sang HDMI 4K@60Hz + LAN Gigabit + PD 100W + 3xUSB 3.0";
+      document.getElementById("pkknNewProdSpecs").value = "Input: USB Type-C | Output: HDMI 4K@60Hz, RJ45 Gigabit 1000Mbps, USB-C PD 100W, 3xUSB-A 3.0 5Gbps | Vỏ hợp kim nhôm | Dài 15cm | BH 18 tháng";
+      document.getElementById("pkknNewProdCost").value = "320.000";
+      document.getElementById("pkknNewProdSell").value = "549.000";
+      evaluateSupplierNewProduct();
+    });
+
+    document.getElementById("pkknFillSampleCableBtn")?.addEventListener("click", () => {
+      document.getElementById("pkknNewProdName").value = "Cáp HDMI 2.1 Ultra High Speed 8K@60Hz / 4K@120Hz dài 2m bọc dù";
+      document.getElementById("pkknNewProdSpecs").value = "Chuẩn HDMI 2.1 Male to Male, độ phân giải 8K@60Hz / 4K@120Hz, băng thông 48Gbps, hỗ trợ eARC/VRR/HDR, dây bọc dù, đầu hợp kim nhôm, dài 2m, BH 18 tháng";
+      document.getElementById("pkknNewProdCost").value = "125.000";
+      document.getElementById("pkknNewProdSell").value = "229.000";
+      evaluateSupplierNewProduct();
+    });
+
+    document.getElementById("pkknClearEvalBtn")?.addEventListener("click", () => {
+      ["pkknNewProdName", "pkknNewProdSpecs", "pkknNewProdCost", "pkknNewProdSell"].forEach((id) => {
+        const el = document.getElementById(id);
+        if (el) el.value = "";
+      });
+      pk.matchedSkus.clear();
+      document.getElementById("pkknEvalResultBox")?.classList.add("hidden");
+      renderPkknSpecsView();
+    });
   }
 
   document.addEventListener("DOMContentLoaded", init);

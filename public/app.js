@@ -2118,7 +2118,6 @@
 
     // Special Storage Report Modal (OCGN & PK Lưu trữ)
     document.getElementById("openStorageReportBtn")?.addEventListener("click", () => openStorageReportModal());
-    document.getElementById("jumpToPkknSpecsBtn")?.addEventListener("click", () => switchView("pkknspecs"));
     bindPkknSpecsEvents();
     document.getElementById("closeStorageReportModal")?.addEventListener("click", () => closeStorageReportModal());
     document.getElementById("storageReportModal")?.addEventListener("click", (e) => {
@@ -11631,7 +11630,6 @@
     });
 
     // Option 1: Admin Inserts Form Excel `so_sanh_gia.xlsx`
-    const pcInsertBtn = document.getElementById("pcInsertExcelBtn");
     const pcFileInp = document.getElementById("pcExcelFileInput");
     if (pcInsertBtn && pcFileInp) {
       pcInsertBtn.addEventListener("click", () => {

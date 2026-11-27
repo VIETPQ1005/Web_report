@@ -8,10 +8,10 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600;700&family=Chakra+Petch:wght@600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="./styles.css?v=20261127i" />
+  <link rel="stylesheet" href="./styles.css?v=20261127j" />
   <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.1/dist/echarts.min.js" defer></script>
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js" defer></script>
-  <script src="./app.js?v=20261127i" defer></script>
+  <script src="./app.js?v=20261127j" defer></script>
 </head>
 <body>
   <div class="app-shell" id="appShell">
@@ -598,21 +598,14 @@
       <section class="view-pane" id="view-channel">
         <div class="channel-special-bar">
           <div class="channel-special-info">
-            <span class="badge-blue">CHUYÊN ĐỀ LƯU TRỮ &amp; KẾT NỐI</span>
-            <span>Báo cáo riêng theo <strong>Dung lượng • Hãng • Khoảng giá</strong> (OCGN &amp; PK Lưu trữ) và <strong>Bảng Thông Số &amp; Đánh Giá SP Mới NCC</strong> cho <strong>Phụ kiện kết nối</strong></span>
+            <span class="badge-blue">CHUYÊN ĐỀ LƯU TRỮ</span>
+            <span>Báo cáo riêng theo <strong>Dung lượng • Hãng • Khoảng giá</strong> (Doanh số &amp; Qty) cho <strong>Ổ cứng gắn ngoài</strong> &amp; <strong>Phụ kiện lưu trữ (USB, Thẻ nhớ)</strong></span>
           </div>
-          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-            <button type="button" class="btn-storage-special" id="openStorageReportBtn" title="Mở báo cáo chuyên sâu Dung lượng / Brand / Khoảng giá cho OCGN &amp; PK Lưu trữ">
-              <span>💾</span>
-              <span>Báo cáo Dung lượng / Brand (OCGN &amp; PK Lưu trữ)</span>
-              <span class="btn-arrow">↗</span>
-            </button>
-            <button type="button" class="btn-storage-special" id="jumpToPkknSpecsBtn" style="background:linear-gradient(135deg,#059669 0%,#0284C7 100%);border-color:rgba(16,185,129,0.75)" title="Mở Bảng Thông Số Kỹ Thuật &amp; Đánh giá SP Mới NCC chào hàng (NH11-01-04 Phụ kiện kết nối)">
-              <span>🔌</span>
-              <span>Bảng Thông Số &amp; Đánh Giá NCC (Phụ kiện kết nối)</span>
-              <span class="btn-arrow">↗</span>
-            </button>
-          </div>
+          <button type="button" class="btn-storage-special" id="openStorageReportBtn" title="Mở báo cáo chuyên sâu Dung lượng / Brand / Khoảng giá cho OCGN &amp; PK Lưu trữ">
+            <span>💾</span>
+            <span>Báo cáo Dung lượng / Brand (OCGN &amp; PK Lưu trữ)</span>
+            <span class="btn-arrow">↗</span>
+          </button>
         </div>
 
         <div class="two-col-deep">

@@ -12366,38 +12366,43 @@
   function parseSpecsFromTextClient(name, rawSpecs, brand = "Khác", warrantyMo = 18) {
     const nl = String(name || "").toLowerCase();
     const cl = `${name || ""} ${rawSpecs || ""}`.toLowerCase();
+    const fullRaw = `${name || ""} ${rawSpecs || ""}`;
 
-    // 1. Model / Part Number
-    let model = "Tiêu chuẩn";
-    const parenM = String(name || "").match(/\(([A-Za-z0-9\-\s/\.]{3,28})\)/);
-    if (parenM && !["đen", "trắng", "xám", "bạc", "xám bạc", "màu đen", "1.8m"].includes(parenM[1].trim().toLowerCase())) {
-      model = parenM[1].trim();
-    } else {
-      const codeM = `${name} ${rawSpecs}`.match(/\b(UG-\d+|\d{5}|HD\d{3}[A-Z0-9\-]*|DP\d{3}|HM\d{2}[A-Z0-9\-]*|UH\d{4}C|UA\d{3}C|UE\d{3}C?|XD\d{2,3}|DC\d{3}|DOCK\d{3}[A-Z]*|V-V\d{3}|KY-[A-Z0-9\-]+|8TH72AA|8WW45AA|8G9Q9AA|CAC-[A-Z0-9]+|UT[JK]-U3-BK|PAPW[A-Z0-9\-]+|PW11-[A-Z0-9\-]+|AH-12F[A-Z0-9\-]*|CAHUB-[A-Z0-9]+|CM\d{3})\b/i);
-      if (codeM) model = codeM[1].toUpperCase();
+    // 0. Brand detection from name/specs if not explicitly passed
+    let detectedBrand = brand && brand !== "Khác" ? brand : "";
+    const knownBrands = [
+      ["ugreen", "Ugreen"], ["baseus", "Baseus"], ["orico", "Orico"], ["tp-link", "Tplink"],
+      ["tplink", "Tplink"], ["tp link", "Tplink"], ["kingmaster", "Kingmaster"], ["rapoo", "Rapoo"],
+      ["unitek", "Unitek"], ["asus", "Asus"], ["hyperdrive", "HyperDrive"], ["targus", "Targus"],
+      ["elecom", "Elecom"], ["letouch", "Letouch"], ["philips", "Philips"], ["veggieg", "VegGieg"],
+      ["hp ", "HP"], ["belkin", "Belkin"], ["anker", "Anker"], ["mazer", "Mazer"],
+    ];
+    if (!detectedBrand) {
+      for (const [kw, bName] of knownBrands) {
+        if (cl.includes(kw)) {
+          detectedBrand = bName;
+          break;
+        }
+      }
     }
 
-    // 2. Product Group
-    let productGroup = "Cáp & Phụ kiện kết nối";
-    if (cl.includes("docking")) productGroup = "Docking Station";
-    else if (cl.includes("bộ chia") || cl.includes("hub")) {
-      if (cl.includes("hdmi sang") || cl.includes("multi hdmi") || cl.includes("splitter")) productGroup = "Bộ chia HDMI (Splitter)";
-      else productGroup = "Bộ chia / Hub đa năng";
-    } else if ((cl.includes("lan") || cl.includes("rj45")) && !cl.includes(" in 1") && !cl.includes("-in-1")) {
-      productGroup = "Bộ chuyển USB/Type-C sang LAN";
-    } else if (cl.includes("dây nguồn") || cl.includes("cáp nguồn")) productGroup = "Dây / Cáp nguồn";
-    else if (cl.includes("máy in")) productGroup = "Cáp USB Máy in";
-    else if (cl.includes("audio") || cl.includes("3.5")) productGroup = "Cáp âm thanh AUX 3.5mm";
-    else if (cl.includes("rs232") || cl.includes(" com ")) productGroup = "Cáp điều khiển USB to RS232/COM";
-    else if (cl.includes("nối dài") || cl.includes("cáp nối")) productGroup = "Cáp nối dài (Extension)";
-    else if (cl.includes("bộ chuyển") || cl.includes("đầu chuyển") || cl.includes("cáp chuyển") || cl.includes(" sang ") || cl.includes(" to ") || cl.includes("->")) {
-      if (cl.includes("hdmi") || cl.includes("displayport") || cl.includes("vga") || cl.includes("dp")) productGroup = "Cáp / Bộ chuyển Tín hiệu Hình ảnh";
-      else productGroup = "Cáp / Đầu chuyển Dữ liệu & OTG";
-    } else if (cl.includes("hdmi")) productGroup = "Cáp HDMI";
-    else if (cl.includes("displayport") || cl.includes(" dp ")) productGroup = "Cáp DisplayPort";
-    else if (cl.includes("vga")) productGroup = "Cáp VGA";
+    // 1. Model / Part Number (extract all model tokens like CM511, 15596, UH6120C, HD175, 45430...)
+    const modelTokens = [];
+    const parenMatches = String(name || "").matchAll(/\(([A-Za-z0-9\-\s/\.]{3,28})\)/g);
+    for (const pm of parenMatches) {
+      const tok = pm[1].trim();
+      if (!["đen", "trắng", "xám", "bạc", "xám bạc", "màu đen", "1.8m", "4k", "8k", "pd 100w"].includes(tok.toLowerCase())) {
+        modelTokens.push(tok.toUpperCase());
+      }
+    }
+    const regexTokens = fullRaw.matchAll(/\b(UG-\d+|\d{5}|CM\d{3}|CR\d{3}|MM\d{3}|US\d{3}|HD\d{3}[A-Z0-9\-]*|DP\d{3}|HM\d{2}[A-Z0-9\-]*|UH\d{4}C|UA\d{3}C|UE\d{3}C?|XD\d{2,3}|DC\d{3}|DOCK\d{3}[A-Z]*|V-V\d{3}|KY-[A-Z0-9\-]+|8TH72AA|8WW45AA|8G9Q9AA|CAC-[A-Z0-9]+|UT[JK]-U3-BK|PAPW[A-Z0-9\-]+|PW11-[A-Z0-9\-]+|AH-12F[A-Z0-9\-]*|CAHUB-[A-Z0-9]+|DLK\d+[A-Z0-9/]*)\b/gi);
+    for (const rm of regexTokens) {
+      const tok = rm[1].trim().toUpperCase();
+      if (!modelTokens.includes(tok)) modelTokens.push(tok);
+    }
+    const model = modelTokens.length ? modelTokens.join(" / ") : "Tiêu chuẩn";
 
-    // 3. Port Count
+    // 2. Port Count & Multi-port detection
     let portCount = 1;
     const inOneM = cl.match(/\b(\d{1,2})\s*(?:in|-in-|trong)\s*1\b/);
     if (inOneM) portCount = Number(inOneM[1]);
@@ -12405,28 +12410,77 @@
     else if (cl.includes("4xusb") || cl.includes("4 cổng")) portCount = 4;
     else if (cl.includes("1 ra 2")) portCount = 2;
 
-    // 4. Input Port & Output Ports
+    // 3. Input Port & Output Ports (Split input vs output context accurately)
+    let inputText = nl;
+    let outputText = cl;
+    const outSplit = cl.split(/\b(?:output|đầu ra|cổng ra|sang|->)\s*:?/i);
+    if (outSplit.length > 1) {
+      inputText = outSplit[0];
+      outputText = outSplit.slice(1).join(" ");
+    }
+
     let inputPort = "Tiêu chuẩn";
-    const outputPorts = [];
-    if (cl.includes("usb-c") || cl.includes("type-c") || cl.includes("type c")) inputPort = "USB Type-C";
-    else if (cl.includes("mini displayport") || cl.includes("minidp")) inputPort = "Mini DisplayPort";
-    else if (cl.includes("micro hdmi")) inputPort = "Micro HDMI";
-    else if (cl.includes("displayport") && (cl.includes("to hdmi") || cl.includes("sang hdmi") || cl.includes("sang vga") || productGroup === "Cáp DisplayPort")) {
+    if (inputText.includes("usb-c") || inputText.includes("type-c") || inputText.includes("type c")) inputPort = "USB Type-C";
+    else if (inputText.includes("mini displayport") || inputText.includes("minidp")) inputPort = "Mini DisplayPort";
+    else if (inputText.includes("micro hdmi")) inputPort = "Micro HDMI";
+    else if (inputText.includes("displayport")) {
       inputPort = cl.includes("2.1") ? "DisplayPort 2.1 Male" : cl.includes("1.4") ? "DisplayPort 1.4 Male" : "DisplayPort";
-    } else if (cl.includes("usb 3.0") || cl.includes("usb-a")) inputPort = "USB-A 3.0";
-    else if (cl.includes("hdmi")) inputPort = cl.includes("2.1") ? "HDMI 2.1 Male" : cl.includes("2.0") ? "HDMI 2.0 Male" : "HDMI Male";
-    else if (cl.includes("vga")) inputPort = "VGA (DB15 Male)";
+    } else if (inputText.includes("usb 3.0") || inputText.includes("usb-a")) inputPort = "USB-A 3.0";
+    else if (cl.includes("usb-c") || cl.includes("type-c") || cl.includes("type c")) inputPort = "USB Type-C";
+    else if (inputText.includes("hdmi")) inputPort = cl.includes("2.1") ? "HDMI 2.1 Male" : cl.includes("2.0") ? "HDMI 2.0 Male" : "HDMI Male";
+    else if (inputText.includes("vga")) inputPort = "VGA (DB15 Male)";
     else if (cl.includes("máy in")) inputPort = "USB-A 2.0";
 
-    if (cl.includes("hdmi")) outputPorts.push(cl.includes("8k") ? "HDMI 8K" : cl.includes("4k") ? "HDMI 4K" : "HDMI");
-    if (cl.includes("displayport") || cl.includes(" dp")) outputPorts.push("DisplayPort");
-    if (cl.includes("vga")) outputPorts.push("VGA");
-    if (cl.includes("lan") || cl.includes("rj45") || cl.includes("1000mbps") || cl.includes("gigabit")) outputPorts.push("LAN Gigabit RJ45");
-    if (cl.includes("sd") || cl.includes("tf") || cl.includes("msd")) outputPorts.push("Khe thẻ SD/microSD");
-    if (cl.includes("3.5")) outputPorts.push("Audio 3.5mm");
-    if (cl.includes("pd") || cl.includes("100w") || cl.includes("65w") || cl.includes("85w")) outputPorts.push("USB-C PD");
-    if (cl.includes("usb 3.0") || cl.includes("usb-a") || cl.includes("5gbps")) outputPorts.push("USB-A 3.0");
+    const outputPorts = [];
+    if (outputText.includes("hdmi")) outputPorts.push(cl.includes("8k") ? "HDMI 8K" : cl.includes("4k") ? "HDMI 4K" : "HDMI");
+    if (outputText.includes("displayport") || /\bdp\b/.test(outputText)) outputPorts.push("DisplayPort");
+    if (outputText.includes("vga")) outputPorts.push("VGA");
+    if (outputText.includes("lan") || outputText.includes("rj45") || outputText.includes("1000mbps") || outputText.includes("gigabit")) outputPorts.push("LAN Gigabit RJ45");
+    if (outputText.includes("sd") || outputText.includes("tf") || outputText.includes("msd")) outputPorts.push("Khe thẻ SD/microSD");
+    if (outputText.includes("3.5")) outputPorts.push("Audio 3.5mm");
+    if (outputText.includes("pd") || outputText.includes("100w") || outputText.includes("65w") || outputText.includes("85w") || /1\s*(?:x\s*)?(?:usb[\s\-]*)?type[\s\-]*c/i.test(outputText) || /\+\s*\d*c\b/i.test(outputText)) {
+      outputPorts.push("1×USB-C (PD/Data)");
+    }
+    const usbACountM = outputText.match(/(\d+)\s*(?:x\s*|cổng\s*)?(?:usb[\s\-]*a|usb\s*3\.0|usb\s*2\.0|\+\s*(\d+)a\b)/i);
+    if (usbACountM) {
+      const cnt = usbACountM[1] || usbACountM[2] || "";
+      outputPorts.push(cnt ? `${cnt}×USB-A 3.0` : "USB-A 3.0");
+    } else if (outputText.includes("usb 3.0") || outputText.includes("usb-a") || outputText.includes("5gbps")) {
+      outputPorts.push("USB-A 3.0");
+    }
     if (cl.includes("máy in")) outputPorts.push("USB-B 2.0 (Máy in)");
+
+    // 4. Product Group (accurately classify multi-port Adapter/Hub vs single video cable)
+    let productGroup = "Cáp & Phụ kiện kết nối";
+    const isMultiPortHub = Boolean(
+      inOneM ||
+      portCount >= 3 ||
+      cl.includes("bộ chia") ||
+      cl.includes("hub") ||
+      modelTokens.some((t) => /^(CM\d{3}|UH\d{4}C|XD\d{2,3}|DC\d{3}|CAHUB)/i.test(t)) ||
+      (outputPorts.length >= 2 && (cl.includes("usb 3.0") || cl.includes("usb-a") || cl.includes("pd") || cl.includes("sd")))
+    );
+
+    if (cl.includes("docking")) productGroup = "Docking Station";
+    else if (cl.includes("hdmi sang") || cl.includes("multi hdmi") || cl.includes("splitter") || cl.includes("1 ra 2") || cl.includes("1 ra 8")) {
+      productGroup = "Bộ chia HDMI (Splitter)";
+    } else if (isMultiPortHub) {
+      productGroup = "Bộ chia / Hub đa năng";
+      if (portCount <= 1 && outputPorts.length > 1) portCount = outputPorts.length;
+    } else if ((cl.includes("lan") || cl.includes("rj45")) && !inOneM) {
+      productGroup = "Bộ chuyển USB/Type-C sang LAN";
+    } else if (cl.includes("dây nguồn") || cl.includes("cáp nguồn")) productGroup = "Dây / Cáp nguồn";
+    else if (cl.includes("máy in")) productGroup = "Cáp USB Máy in";
+    else if (cl.includes("audio") || cl.includes("3.5")) productGroup = "Cáp âm thanh AUX 3.5mm";
+    else if (cl.includes("rs232") || cl.includes(" com ")) productGroup = "Cáp điều khiển USB to RS232/COM";
+    else if (cl.includes("nối dài") || cl.includes("cáp nối")) productGroup = "Cáp nối dài (Extension)";
+    else if (cl.includes("adapter") || cl.includes("bộ chuyển") || cl.includes("đầu chuyển") || cl.includes("cáp chuyển") || cl.includes(" sang ") || cl.includes(" to ") || cl.includes("->")) {
+      if (cl.includes("hdmi") || cl.includes("displayport") || cl.includes("vga") || cl.includes("dp")) productGroup = "Cáp / Bộ chuyển Tín hiệu Hình ảnh";
+      else productGroup = "Cáp / Đầu chuyển Dữ liệu & OTG";
+    } else if (cl.includes("hdmi")) productGroup = "Cáp HDMI";
+    else if (cl.includes("displayport") || cl.includes(" dp ")) productGroup = "Cáp DisplayPort";
+    else if (cl.includes("vga")) productGroup = "Cáp VGA";
+
     if (!outputPorts.length) outputPorts.push(productGroup);
 
     // 5. Resolution
@@ -12470,7 +12524,9 @@
     const warranty = wM ? `${wM[1]} tháng` : `${warrantyMo || 18} tháng`;
 
     return {
+      brand: detectedBrand || "Khác",
       model,
+      modelTokens,
       productGroup,
       portCount,
       inputPort,
@@ -12757,70 +12813,134 @@
     inp.value = val > 0 ? val.toLocaleString("vi-VN") : "";
   }
 
+  function extractOutputCapabilities(outputStr, speedStr = "", nameStr = "") {
+    const s = `${outputStr || ""} ${speedStr || ""} ${nameStr || ""}`.toLowerCase();
+    const caps = new Set();
+    if (s.includes("hdmi")) caps.add("HDMI");
+    if (s.includes("displayport") || /\bdp\b/.test(s)) caps.add("DP");
+    if (s.includes("vga")) caps.add("VGA");
+    if (s.includes("lan") || s.includes("rj45") || s.includes("1000mbps") || s.includes("gigabit")) caps.add("LAN");
+    if (s.includes("sd") || s.includes("tf") || s.includes("msd")) caps.add("SD/TF");
+    if (s.includes("3.5") || s.includes("audio")) caps.add("AUX3.5");
+    if (s.includes("pd") || s.includes("100w") || s.includes("65w") || s.includes("1×usb-c") || s.includes("2×usb-c") || /\+\s*\d*c\b/.test(s)) caps.add("USB-C/PD");
+    if (s.includes("usb-a") || s.includes("usb 3.0") || s.includes("usb 2.0") || /\+\s*\d*a\b/.test(s) || /\d+xusb/i.test(s)) caps.add("USB-A");
+    if (s.includes("máy in") || s.includes("usb-b")) caps.add("USB-B");
+    if (s.includes("rs232") || s.includes("db9")) caps.add("RS232");
+    return caps;
+  }
+
   function computeSimilarityScore(newSpec, newCost, newSell, item) {
     let score = 0;
     const reasons = [];
+    let isExactModel = false;
 
-    // 1. Same Product Group (+42 pts)
-    if (newSpec.productGroup === item.productGroup) {
-      score += 42;
-      reasons.push(`Cùng nhóm ${item.productGroup}`);
-    } else if (
-      (newSpec.productGroup.includes("HDMI") && item.productGroup.includes("HDMI")) ||
-      (newSpec.productGroup.includes("DisplayPort") && item.productGroup.includes("DisplayPort")) ||
-      (newSpec.productGroup.includes("Hub") && item.productGroup.includes("Hub"))
-    ) {
-      score += 22;
+    // 0. Exact SKU / Model / Part Number match (e.g., 15596, CM511, 15495, UH6120C, 80401)
+    const itemTextUpper = `${item.sku || ""} ${item.model || ""} ${item.name || ""}`.toUpperCase();
+    const matchedTokens = (newSpec.modelTokens || []).filter((tok) => {
+      if (!tok || tok.length < 3) return false;
+      const escTok = tok.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      return new RegExp(`(?:^|[^A-Z0-9])${escTok}(?:$|[^A-Z0-9])`, "i").test(itemTextUpper);
+    });
+    if (matchedTokens.length > 0) {
+      isExactModel = true;
+      reasons.push(`🎯 Trùng đúng mã Model/SKU: ${matchedTokens.join(" / ")}`);
     }
 
-    // 2. Same Input Port (+18 pts)
+    // 1. Product Group compatibility (Strict separation: never mix Hub/Adapter with single HDMI/DP/VGA cables)
+    const isNewHub = newSpec.productGroup === "Bộ chia / Hub đa năng" || newSpec.productGroup === "Docking Station";
+    const isItemHub = item.productGroup === "Bộ chia / Hub đa năng" || item.productGroup === "Docking Station";
+    const isItemPlainCable = ["Cáp HDMI", "Cáp DisplayPort", "Cáp VGA", "Cáp USB Máy in", "Dây / Cáp nguồn", "Cáp âm thanh AUX 3.5mm"].includes(item.productGroup);
+    const isNewPlainCable = ["Cáp HDMI", "Cáp DisplayPort", "Cáp VGA", "Cáp USB Máy in", "Dây / Cáp nguồn", "Cáp âm thanh AUX 3.5mm"].includes(newSpec.productGroup);
+
+    if (newSpec.productGroup === item.productGroup) {
+      score += 38;
+      reasons.push(`Cùng nhóm ${item.productGroup}`);
+    } else if (isNewHub && item.productGroup === "Cáp / Bộ chuyển Tín hiệu Hình ảnh" && item.inputPort === newSpec.inputPort) {
+      score += 14;
+    } else if (isNewHub && isItemPlainCable) {
+      // Prevent plain HDMI/VGA/DP cables from appearing when searching for a Multi-port Hub
+      return { score: isExactModel ? 95 : 0, reasons, isExactModel };
+    } else if (isNewPlainCable && isItemHub) {
+      return { score: isExactModel ? 95 : 0, reasons, isExactModel };
+    } else if (newSpec.productGroup !== item.productGroup) {
+      // Different functional group (e.g. HDMI cable vs DP cable) -> reject unless exact model
+      if (!isExactModel) return { score: 5, reasons, isExactModel: false };
+    }
+
+    // 2. Input Port match (+18 pts)
     const normIn = (s) => String(s || "").toLowerCase().replace(/\s+/g, "");
     if (normIn(newSpec.inputPort) && normIn(newSpec.inputPort) === normIn(item.inputPort)) {
       score += 18;
-      reasons.push(`Cùng đầu vào ${item.inputPort}`);
+      reasons.push(`Đầu vào ${item.inputPort}`);
     } else if (normIn(newSpec.inputPort).includes("type-c") && normIn(item.inputPort).includes("type-c")) {
-      score += 15;
+      score += 16;
+      reasons.push(`Đầu vào USB-C`);
+    } else if (normIn(newSpec.inputPort).includes("hdmi") && normIn(item.inputPort).includes("hdmi")) {
+      score += 14;
+    } else if (normIn(newSpec.inputPort) !== "tiêuchuẩn" && normIn(item.inputPort) !== "—") {
+      // Different input port (e.g. USB-C vs USB-A or HDMI) -> penalize
+      score -= 12;
     }
 
-    // 3. Output Ports overlap (+16 pts)
-    const newOuts = String(newSpec.outputPorts || "").toLowerCase().split(/[,+]/).map((s) => s.trim()).filter(Boolean);
-    const itemOutsStr = String(item.outputPorts || "").toLowerCase();
-    let hitOuts = 0;
-    newOuts.forEach((o) => {
-      const key = o.replace(/^\d+×/, "").trim().split(" ")[0];
-      if (key && itemOutsStr.includes(key)) hitOuts++;
-    });
-    if (newOuts.length > 0 && hitOuts > 0) {
-      score += Math.min(16, Math.round((hitOuts / newOuts.length) * 16));
-    }
-
-    // 4. Port Count similarity for Hubs (+10 pts)
-    if (newSpec.portCount > 1 && item.portCount > 1) {
-      const diffPorts = Math.abs(newSpec.portCount - item.portCount);
-      if (diffPorts === 0) {
-        score += 10;
-        reasons.push(`Cùng ${item.portCount} cổng (${item.portCount}-in-1)`);
-      } else if (diffPorts === 1) {
-        score += 6;
+    // 3. Normalized Output Capabilities match (+22 pts)
+    const newCaps = extractOutputCapabilities(newSpec.outputPorts, newSpec.speedAndPower);
+    const itemCaps = extractOutputCapabilities(item.outputPorts, item.speedAndPower, item.name);
+    if (newCaps.size > 0) {
+      let hitCaps = 0;
+      const hitNames = [];
+      newCaps.forEach((c) => {
+        if (itemCaps.has(c)) {
+          hitCaps++;
+          hitNames.push(c);
+        }
+      });
+      const capRatio = hitCaps / Math.max(newCaps.size, itemCaps.size || 1);
+      const recallRatio = hitCaps / newCaps.size;
+      const capPts = Math.round((recallRatio * 0.65 + capRatio * 0.35) * 22);
+      score += capPts;
+      if (hitNames.length) {
+        reasons.push(`Cổng ra: ${hitNames.join(" + ")}`);
       }
     }
 
-    // 5. Resolution / Standard match (+8 pts)
+    // 4. Port Count similarity for Hubs (+12 pts)
+    if (newSpec.portCount > 1 || item.portCount > 1) {
+      const diffPorts = Math.abs((newSpec.portCount || 1) - (item.portCount || 1));
+      if (diffPorts === 0 && newSpec.portCount > 1) {
+        score += 12;
+        reasons.push(`Đúng cấu hình ${item.portCount} in 1`);
+      } else if (diffPorts === 1) {
+        score += 7;
+        reasons.push(`Gần cấu hình (${item.portCount} in 1)`);
+      } else if (diffPorts === 2) {
+        score += 3;
+      }
+    }
+
+    // 5. Resolution / Standard / PD match (+6 pts)
     if (newSpec.resolution !== "—" && item.resolution !== "—") {
       const nr = newSpec.resolution.slice(0, 2);
       if (item.resolution.includes(nr)) {
-        score += 8;
-        reasons.push(`Cùng chuẩn ${nr}`);
+        score += 6;
+        reasons.push(`Chuẩn ${nr}`);
       }
     }
 
-    // 6. Cable Length match (+6 pts)
-    if (newSpec.cableLength !== "—" && newSpec.cableLength === item.cableLength) {
-      score += 6;
-      reasons.push(`Cùng độ dài ${item.cableLength}`);
+    // 6. Cable Length or Same Brand bonus (+4 pts)
+    if (newSpec.brand && newSpec.brand !== "Khác" && newSpec.brand.toLowerCase() === String(item.brand || "").toLowerCase()) {
+      score += 4;
+      reasons.push(`Cùng hãng ${item.brand}`);
+    } else if (newSpec.cableLength !== "—" && newSpec.cableLength === item.cableLength) {
+      score += 4;
     }
 
-    return { score, reasons };
+    if (isExactModel) {
+      score = 100;
+    } else {
+      score = Math.max(0, Math.min(96, Math.round(score)));
+    }
+
+    return { score, reasons, isExactModel };
   }
 
   function evaluateSupplierNewProduct() {
@@ -12853,14 +12973,15 @@
     const newGmPct = (newSell > 0 && newCost > 0) ? ((newGp / newSell) * 100) : 0;
     const newMarkupPct = (newCost > 0 && newSell > 0) ? ((newGp / newCost) * 100) : 0;
 
-    // Score all 116 in-stock SKUs to find the closest comparable peers
+    // Score all 116 in-stock SKUs to find exact model matches and closest comparable peers
     const scored = items.map((it) => {
       const sim = computeSimilarityScore(parsedNew, newCost, newSell, it);
-      return { item: it, score: sim.score, reasons: sim.reasons };
-    }).sort((a, b) => (b.score - a.score) || (b.item.s30d - a.item.s30d));
+      return { item: it, score: sim.score, reasons: sim.reasons, isExactModel: sim.isExactModel };
+    }).sort((a, b) => (Number(b.isExactModel) - Number(a.isExactModel)) || (b.score - a.score) || (b.item.s30d - a.item.s30d));
 
-    const comparablePeers = scored.filter((x) => x.score >= 38).slice(0, 6);
-    const activePeers = comparablePeers.length ? comparablePeers : scored.slice(0, 5);
+    const exactMatches = scored.filter((x) => x.isExactModel);
+    const comparablePeers = scored.filter((x) => x.score >= 52).slice(0, 6);
+    const activePeers = comparablePeers.length ? comparablePeers : scored.filter((x) => x.score >= 35).slice(0, 5);
 
     // Highlight matched SKUs in the main table below
     state.pkknSpecs.matchedSkus = new Set(activePeers.map((x) => x.item.sku));
@@ -12887,6 +13008,25 @@
     // Decision scoring (0 - 100) & Verdict classification
     let fitScore = 70;
     const evalNotes = [];
+
+    // 0. Exact SKU Already In Stock Check
+    if (exactMatches.length > 0) {
+      const ex = exactMatches[0].item;
+      evalNotes.push(
+        `🎯 <strong>PHÁT HIỆN TRÙNG ĐÚNG MÃ ĐANG KINH DOANH TẠI PHONG VŨ (Độ khớp 100%):</strong> Sản phẩm này chính là SKU <a href="${esc(ex.pvUrl)}" target="_blank" rel="noopener noreferrer" class="pc-tgdd-link"><strong>[${esc(ex.sku)}] ${esc(ex.name)}</strong> ↗</a> — Hiện đang có <strong>Giá nhập (WCOGS): ${fmtVndFull(ex.costPrice)}</strong>, <strong>Giá bán PV: ${fmtVndFull(ex.sellingPrice)}</strong> (GM <strong>${ex.gmPct.toFixed(1)}%</strong>), Tồn kho: <strong>${fmtInt(ex.invQty)} sp</strong>, Bán 30D: <strong>${fmtInt(ex.s30d)} sp</strong> (~${Math.round(ex.stockDays || 0)} ngày tồn).`
+      );
+      if (newCost > 0 && ex.costPrice > 0) {
+        const diffEx = newCost - ex.costPrice;
+        const diffExPct = (diffEx / ex.costPrice) * 100;
+        if (diffEx < -1000) {
+          fitScore += 12;
+          evalNotes.push(`✅ <strong>Giá chào mới của NCC tốt hơn giá vốn hiện tại:</strong> Thấp hơn <strong>${fmtVndFull(Math.abs(diffEx))} (${diffExPct.toFixed(1)}%)</strong> so với giá vốn SKU [${esc(ex.sku)}] đang tồn (${fmtVndFull(ex.costPrice)}).`);
+        } else if (diffEx > 1000) {
+          fitScore -= 18;
+          evalNotes.push(`🚨 <strong>Giá chào của NCC cao hơn giá vốn hiện tại của chính mã này:</strong> Cao hơn <strong>+${fmtVndFull(diffEx)} (+${diffExPct.toFixed(1)}%)</strong> so với SKU [${esc(ex.sku)}] (${fmtVndFull(ex.costPrice)}). Yêu cầu NCC giảm về tối đa <strong>${fmtVndFull(ex.costPrice)}</strong>.`);
+        }
+      }
+    }
 
     if (newCost > 0 && newSell > 0) {
       // 1. Margin Evaluation
@@ -13028,12 +13168,15 @@
               </tr>
             </thead>
             <tbody>
-              ${activePeers.map(({ item, score }) => {
+              ${activePeers.map(({ item, score, reasons, isExactModel }) => {
                 const cDiff = newCost > 0 && item.costPrice > 0 ? newCost - item.costPrice : 0;
                 const sDiff = newSell > 0 && item.sellingPrice > 0 ? newSell - item.sellingPrice : 0;
                 return `
-                  <tr>
-                    <td class="mono"><span class="inv-badge bad-normal">${score}%</span></td>
+                  <tr class="${isExactModel ? "pkkn-row-matched-highlight" : ""}">
+                    <td class="mono">
+                      <span class="inv-badge ${isExactModel ? "bad-normal" : score >= 75 ? "listing-active" : "other"}">${isExactModel ? "🎯 100% (Trùng mã)" : `${score}%`}</span>
+                      ${reasons && reasons.length ? `<div class="muted" style="font-size:9.5px;margin-top:3px;white-space:normal;max-width:140px">${esc(reasons.slice(0, 2).join(" • "))}</div>` : ""}
+                    </td>
                     <td style="white-space:normal;min-width:220px">
                       <a href="${esc(item.pvUrl)}" target="_blank" rel="noopener noreferrer" class="pc-tgdd-link">${esc(item.sku)} ↗</a>
                       <span class="inv-badge other">${esc(item.brand)}</span>
@@ -13100,7 +13243,12 @@
 
     const dir = pk.sortDir === "asc" ? 1 : -1;
     filtered.sort((a, b) => {
-      // If supplier comparison is active, optionally float matched SKUs or sort normally
+      // Float matched SKUs from Supplier Evaluator to the top of the table
+      if (pk.matchedSkus && pk.matchedSkus.size > 0) {
+        const am = pk.matchedSkus.has(a.sku) ? 1 : 0;
+        const bm = pk.matchedSkus.has(b.sku) ? 1 : 0;
+        if (am !== bm) return bm - am;
+      }
       const col = pk.sortCol;
       if (col === "name" || col === "brand" || col === "productGroup" || col === "model") {
         return dir * String(a[col] || "").localeCompare(String(b[col] || ""));

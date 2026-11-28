@@ -11630,6 +11630,7 @@
     });
 
     // Option 1: Admin Inserts Form Excel `so_sanh_gia.xlsx`
+    const pcInsertBtn = document.getElementById("pcInsertExcelBtn");
     const pcFileInp = document.getElementById("pcExcelFileInput");
     if (pcInsertBtn && pcFileInp) {
       pcInsertBtn.addEventListener("click", () => {
